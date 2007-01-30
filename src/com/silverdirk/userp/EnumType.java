@@ -19,11 +19,9 @@ public class EnumType extends UserpType.ResolvedType {
 	HashMap valueLookup= null;
 
 	public static class EnumDef extends TypeDef {
-		boolean symbolic;
-		Object[] members;
+		String[] members;
 
-		public EnumDef(boolean symbolic, Object[] members) {
-			this.symbolic= symbolic;
+		public EnumDef(String[] members) {
 			this.members= members;
 			scalarRange= BigInteger.valueOf(members.length);
 			scalarBitLen= Util.getBitLength(members.length);
@@ -47,8 +45,7 @@ public class EnumType extends UserpType.ResolvedType {
 		public boolean equals(Object other) {
 			if (!(other instanceof EnumDef)) return false;
 			EnumDef otherEnum= (EnumDef) other;
-			return symbolic == otherEnum.symbolic
-				&& Util.arrayEquals(true, members, otherEnum.members);
+			return Util.arrayEquals(true, members, otherEnum.members);
 		}
 
 		public boolean isScalar() {
@@ -72,14 +69,14 @@ public class EnumType extends UserpType.ResolvedType {
 		}
 	}
 
-	public EnumType(String name, boolean isSymbolic, Object[] members) {
-		this(nameToMeta(name), new EnumDef(isSymbolic, members));
+	public EnumType(String name, String[] members) {
+		this(nameToMeta(name), new EnumDef(members));
 	}
 
-	public EnumType(Object[] meta, boolean isSymbolic, Object[] members) {
-		this(meta, new EnumDef(isSymbolic, members));
-		finishInit();
+	public EnumType(Object[] meta, String[] members) {
+		this(meta, new EnumDef(members));
 	}
+
 	protected EnumType(Object[] meta, EnumDef def) {
 		super(meta, def);
 		this.enumDef= def;
@@ -94,31 +91,26 @@ public class EnumType extends UserpType.ResolvedType {
 		return result;
 	}
 
-//	protected void finishInit() {
-//	}
-
-	public boolean isSymbolic() {
-		return enumDef.symbolic;
-	}
-
-	public UserpType getMemberType() {
-		return enumDef.symbolic? (UserpType)CommonTypes.TSymbol : FundamentalTypes.TAny;
-	}
-
 	public int getMemberCount() {
 		return enumDef.members.length;
 	}
 
-	public Object getMember(int idx) {
+	public String getMember(int idx) {
 		return enumDef.members[idx];
 	}
 
-	public int getMemberIdxByValue(Object val) {
+	public int getMemberIdxByValue(String val) {
 		Integer idx= (Integer) valueLookup.get(val);
 		return idx != null? idx.intValue() : -1;
 	}
 
 	public boolean isEnum() {
 		return true;
+	}
+
+	protected void decode(UserpReader reader) {
+		reader.value32= Util.LongToInt(reader.stream.scalar64);
+		reader.valueObj= getMember(reader.value32);
+		reader.valueStorage= reader.NATIVETYPE_OBJECT;
 	}
 }
