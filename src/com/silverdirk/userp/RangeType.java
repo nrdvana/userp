@@ -13,10 +13,13 @@ import java.math.BigInteger;
  */
 public class RangeType extends UserpType.ResolvedType {
 	RangeDef rangeDef;
+	RangeTypeCoder coder;
 
 	public static class RangeDef extends TypeDef {
 		BigInteger from, to;
 		BigInteger min, max;
+		long min_l, max_l;
+		boolean invert;
 
 		public RangeDef(UserpType base, long from, long to) {
 			this(base, BigInteger.valueOf(from), BigInteger.valueOf(to));
@@ -30,15 +33,22 @@ public class RangeType extends UserpType.ResolvedType {
 			typeRefs= new UserpType[] { base };
 			this.from= from;
 			this.to= to;
-			boolean reverse= min.compareTo(max) > 0;
-			this.min= reverse? to : from;
-			this.max= reverse? from : to;
+			min= from;
+			max= to;
+			invert= false;
 			if (to != INFINITE) {
+				if (from.compareTo(to) > 0) {
+					invert= true;
+					min= from;
+					max= to;
+				}
 				BigInteger range= max.subtract(min).add(BigInteger.ONE);
 				setScalarRange(range);
 			}
 			else
 				setScalarRange(INFINITE);
+			min_l= min.longValue();
+			max_l= max.longValue();
 		}
 
 		public String toString() {
@@ -88,17 +98,21 @@ public class RangeType extends UserpType.ResolvedType {
 
 	public RangeType(Object[] meta, UserpType base, long from, long to) {
 		this(meta, new RangeDef(base, from, to));
-		finishInit();
 	}
 
 	public RangeType(Object[] meta, UserpType base, BigInteger from, BigInteger to) {
 		this(meta, new RangeDef(base, from, to));
-		finishInit();
 	}
 
 	protected RangeType(Object[] meta, RangeDef def) {
 		super(meta, def);
 		this.rangeDef= def;
+		if (rangeDef.from.bitLength() < 64 && rangeDef.invert == false)
+			coder= RangeTypeCoder_InfRange.INSTANCE;
+		else if (rangeDef.from.bitLength() < 64 && rangeDef.to.bitLength() < 64)
+			coder= RangeTypeCoder_Long.INSTANCE;
+		else
+			coder= RangeTypeCoder_BigInt.INSTANCE;
 	}
 
 	public UserpType makeSynonym(Object[] meta) {
@@ -120,4 +134,46 @@ public class RangeType extends UserpType.ResolvedType {
 	public boolean isRange() {
 		return true;
 	}
+
+//	void encode(UserpReader reader) {
+//		coder.encode(rangeDef, reader);
+//	}
+
+	void decode(UserpReader reader) {
+		coder.decode(rangeDef, reader);
+	}
+
+	static abstract class RangeTypeCoder {
+		abstract void decode(RangeDef def, UserpReader reader);
+	}
+
+	static class RangeTypeCoder_Long extends RangeTypeCoder {
+		void decode(RangeDef def, UserpReader reader) {
+			long val= reader.scalarBig == null? reader.scalar64
+				: Util.bigIntToLong(reader.scalarBig);
+			reader.scalar64= def.invert? def.max_l - val : val - def.min_l;
+			reader.scalarBig= null;
+		}
+		static final RangeTypeCoder_Long INSTANCE= new RangeTypeCoder_Long();
+	}
+
+	static class RangeTypeCoder_InfRange extends RangeTypeCoder {
+		void decode(RangeDef def, UserpReader reader) {
+			if (reader.scalarBig == null)
+				reader.scalar64-= def.min_l;
+			else
+				reader.scalarBig= reader.scalarBig.subtract(def.min);
+		}
+		static final RangeTypeCoder_InfRange INSTANCE= new RangeTypeCoder_InfRange();
+	}
+
+	static class RangeTypeCoder_BigInt extends RangeTypeCoder {
+		void decode(RangeDef def, UserpReader reader) {
+			BigInteger val= reader.scalarBig == null?
+				BigInteger.valueOf(reader.scalar64) : reader.scalarBig;
+			reader.scalarBig= def.invert? def.max.subtract(val) : val.subtract(def.min);
+		}
+		static final RangeTypeCoder_BigInt INSTANCE= new RangeTypeCoder_BigInt();
+	}
 }
+
