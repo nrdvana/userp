@@ -14,6 +14,7 @@ import java.util.HashMap;
  */
 public class UnionType extends UserpType.ResolvedType {
 	UnionDef unionDef;
+	UnionTypeCoder coder;
 	HashMap typeIdxMap= null; // remains null unless threshhold is exceeded
 
 	static final int
@@ -22,7 +23,8 @@ public class UnionType extends UserpType.ResolvedType {
 	public static class UnionDef extends TypeDef {
 		boolean bitpacked;
 		boolean[] inlined;
-		Object offsets;
+		BigInteger[] offsets;
+		long[] offsets_l;
 		boolean pureScalar;
 
 		public UnionDef(UserpType[] subTypes) {
@@ -97,11 +99,6 @@ public class UnionType extends UserpType.ResolvedType {
 			return new UnionType(pt.meta, this);
 		}
 
-		public boolean usesBigIntOffsets() {
-			BigInteger range= getScalarRange();
-			return range == INFINITE || range.bitLength() > 31;
-		}
-
 		private void calcScalarAndOffsets() {
 			pureScalar= true;
 			BigInteger offsetVal= BigInteger.ZERO;
@@ -130,14 +127,13 @@ public class UnionType extends UserpType.ResolvedType {
 					offsetCalc[i+1]= offsetVal;
 			}
 			setScalarRange(offsetVal);
-			if (!usesBigIntOffsets()) {
-				int[] intOffsets= new int[offsetCalc.length];
-				for (int i=0; i<intOffsets.length; i++)
-					intOffsets[i]= offsetCalc[i].intValue();
-				offsets= intOffsets;
-			}
-			else
-				offsets= offsetCalc;
+			offsets= offsetCalc;
+
+			offsets_l= new long[offsets.length];
+			for (int i=0; i<offsets.length; i++)
+				offsets_l[i]= offsets[i].bitLength() < 64? offsets[i].longValue() : Long.MAX_VALUE;
+			if (offsetVal == INFINITE)
+				offsets_l[offsets_l.length]= Long.MAX_VALUE;
 		}
 
 		static int findRangeIdxOf(BigInteger[] offsets, BigInteger val) {
@@ -150,7 +146,7 @@ public class UnionType extends UserpType.ResolvedType {
 			return max;
 		}
 
-		static int findRangeIdxOf(int[] offsets, int val) {
+		static int findRangeIdxOf(long[] offsets, long val) {
 			int min= 0, max= offsets.length-1, mid= 0;
 			while (min < max) {
 				mid= (min+max+1) >> 1;
@@ -208,6 +204,8 @@ public class UnionType extends UserpType.ResolvedType {
 	protected UnionType(Object[] meta, UnionDef def) {
 		super(meta, def);
 		unionDef= def;
+		boolean fitsInLong= unionDef.getScalarRange() != TypeDef.INFINITE && unionDef.getScalarRange().bitLength() < 64;
+		coder= fitsInLong? (UnionTypeCoder) UnionTypeCoder_Long.INSTANCE : UnionTypeCoder_BigInt.INSTANCE;
 	}
 
 	protected void finishInit() {
@@ -274,5 +272,47 @@ public class UnionType extends UserpType.ResolvedType {
 
 	public int getScalarBitLen() {
 		return unionDef.scalarBitLen;
+	}
+
+	void decode(UserpReader reader) {
+		int typeIdx= coder.decode(unionDef, reader);
+		reader.unionSubtype= getSubtype(typeIdx);
+	}
+
+	static abstract class UnionTypeCoder {
+		abstract int decode(UnionDef def, UserpReader reader);
+	}
+
+	static class UnionTypeCoder_Long extends UnionTypeCoder {
+		int decode(UnionDef def, UserpReader reader) {
+			long val= reader.scalarBig == null? reader.scalar64
+				: Util.bigIntToLong(reader.scalarBig);
+			reader.scalarBig= null;
+			int typeIdx= def.findRangeIdxOf(def.offsets_l, val);
+			if (def.inlined[typeIdx])
+				reader.scalar64-= def.offsets_l[typeIdx];
+			return typeIdx;
+		}
+		static final UnionTypeCoder_Long INSTANCE= new UnionTypeCoder_Long();
+	}
+
+	static class UnionTypeCoder_BigInt extends UnionTypeCoder {
+		int decode(UnionDef def, UserpReader reader) {
+			int typeIdx;
+			if (reader.scalarBig == null && reader.scalar64 < Long.MAX_VALUE) {
+				typeIdx= def.findRangeIdxOf(def.offsets_l, reader.scalar64);
+				if (def.inlined[typeIdx])
+					reader.scalar64-= def.offsets_l[typeIdx];
+			}
+			else {
+				if (reader.scalarBig == null)
+					reader.scalarBig= BigInteger.valueOf(reader.scalar64);
+				typeIdx= def.findRangeIdxOf(def.offsets, reader.scalarBig);
+				if (def.inlined[typeIdx])
+					reader.scalarBig= reader.scalarBig.subtract(def.offsets[typeIdx]);
+			}
+			return typeIdx;
+		}
+		static final UnionTypeCoder_BigInt INSTANCE= new UnionTypeCoder_BigInt();
 	}
 }
