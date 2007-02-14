@@ -4,15 +4,11 @@ import junit.framework.*;
 import java.io.*;
 
 /**
- * <p>Project: </p>
+ * <p>Project: Universal Serialization Protocol</p>
+ * <p>Title: TestForwardOptimizedIndexedByteSequence test cases</p>
+ * <p>Copyright Copyright (c) 2007</p>
  *
- * <p>Title: </p>
- *
- * <p>Description: </p>
- *
- * <p>Copyright Copyright (c) 2004</p>
- *
- * @author Michael Conrad / TheSilverDirk
+ * @author Michael Conrad
  * @version $Revision$
  */
 public class _TestForwardOptimizedIndexedByteSequence extends TestCase {
