@@ -3,12 +3,12 @@ package com.silverdirk.userp;
 import java.math.BigInteger;
 
 /**
- * <p>Project: </p>
- * <p>Title: </p>
- * <p>Description: </p>
- * <p>Copyright Copyright (c) 2004</p>
+ * <p>Project: Universal Serialization Protocol</p>
+ * <p>Title: Type Any</p>
+ * <p>Description: Type Any is the theoretical union of all definable types.</p>
+ * <p>Copyright Copyright (c) 2004-2007</p>
  *
- * @author Michael Conrad / TheSilverDirk
+ * @author Michael Conrad
  * @version $Revision$
  */
 public class AnyType extends UserpType.ResolvedType {
@@ -22,8 +22,10 @@ public class AnyType extends UserpType.ResolvedType {
 		}
 
 		public boolean hasScalarComponent() {
-			// it does, but we don't have a way to calculate it before
-			// seeing the output stream, so pretend we don't
+			// It does, but we don't have a way to calculate it before
+			//   seeing the output stream, so pretend we don't
+			// Also, we don't want the reader to get our scalar for us, since
+			//   readType() takes care of it.
 			return false;
 		}
 
@@ -44,6 +46,8 @@ public class AnyType extends UserpType.ResolvedType {
 
 	private AnyType(String name) {
 		super(nameToMeta(name), AnyDef.INSTANCE);
+		impl= AnyImpl.INSTANCE;
+		preferredNativeStorage= TypedData.class;
 	}
 
 	public UserpType makeSynonym(Object[] newName) {

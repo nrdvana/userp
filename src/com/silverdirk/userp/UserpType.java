@@ -2,18 +2,15 @@ package com.silverdirk.userp;
 
 import java.math.BigInteger;
 import java.util.WeakHashMap;
+import java.io.IOException;
 
 /**
- * <p>Project: </p>
- * <p>Title: </p>
- * <p>Description: </p>
- * <p>Copyright Copyright (c) 2004</p>
+ * <p>Project: Universal Serialization Protocol</p>
+ * <p>Title: Type</p>
+ * <p>Description: This class represents an encodable type.</p>
+ * <p>Copyright Copyright (c) 2006-2007</p>
  *
- *   The division of objects exists for technical
- * reasons, and so the UDTType class tries to make these pieces appear as a
- * single object.
- *
- * @author Michael Conrad / TheSilverDirk
+ * @author Michael Conrad
  * @version $Revision$
  */
 public abstract class UserpType {
@@ -21,6 +18,8 @@ public abstract class UserpType {
 	Object[] meta;
 	UserpType synOf;
 	TypeDef def;
+	ReaderWriterImpl impl;
+	Class preferredNativeStorage;
 
 	int hashCache= -1; // -1 == uninitialized, any other value is the actual hash
 	int staticProtocolTypeCode= -1;
@@ -44,24 +43,39 @@ public abstract class UserpType {
 	public Object[] getMeta() {
 		return meta;
 	}
-	private void initMeta(Object[] meta) {
-		String nameMetaEntry= null;
+	protected void initMeta(Object[] meta) {
+		byte[] nameMetaEntry= null;
 		if (meta != null)
 			for (int i=0; i<meta.length; i++)
 				if (meta[i] instanceof TypedData) {
 					TypedData td= (TypedData) meta[i];
-					if (td.dataType == ProtocolTypes.TTypeName) {
+					if (td.dataType == TypeNameSnafuTypes.TTypeName) {
 						if (nameMetaEntry != null)
 							throw new RuntimeException("two names specified in metadata for this type: "+nameMetaEntry+", "+((TypeName)meta[i]).name);
-						nameMetaEntry= (String) td.data;
+						nameMetaEntry= (byte[]) td.data;
 					}
 				}
-		this.name= nameMetaEntry != null? nameMetaEntry : "";
 		this.meta= meta;
+		this.name= nameMetaEntry != null? Util.bytesToReadableString(nameMetaEntry) : "";
 	}
+	void lateInitMeta(Object[] meta) {
+		initMeta(meta);
+		hashCache= -1;
+	}
+	UserpType overrideImpl(ReaderWriterImpl impl) {
+		this.impl= impl;
+		return this;
+	}
+
 	public static Object nameToMetaElement(String name) {
-		return new TypedData(ProtocolTypes.TTypeName, name);
+		try {
+			return new TypedData(TypeNameSnafuTypes.TTypeName, name.getBytes("UTF-8"));
+		}
+		catch (java.io.UnsupportedEncodingException ex) {
+			throw new RuntimeException();
+		}
 	}
+
 	public static Object[] nameToMeta(String name) {
 		return new Object[] { nameToMetaElement(name) };
 	}
@@ -71,6 +85,19 @@ public abstract class UserpType {
 	}
 	public UserpType getSynonymOrigin() {
 		return synOf;
+	}
+
+	public Class getNativeStoragePref() {
+		return preferredNativeStorage;
+	}
+
+	public void setNativeStoragePref(Class c) {
+		preferredNativeStorage= c;
+	}
+
+	public UserpType withStoPref(Class c) {
+		setNativeStoragePref(c);
+		return this;
 	}
 
 	protected abstract void typeSwap(UserpType from, UserpType to);
@@ -98,6 +125,10 @@ public abstract class UserpType {
 	public abstract int getScalarBitLen();
 
 	public abstract UserpType resolve();
+
+	final ReaderImpl getReaderImpl() {
+		return impl;
+	}
 
 	public UserpType makeSynonym(String newName) {
 		return makeSynonym(nameToMeta(newName));

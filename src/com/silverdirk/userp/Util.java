@@ -5,12 +5,12 @@ import java.lang.reflect.Array;
 import java.math.BigInteger;
 
 /**
- * <p>Project: Universal Data Trees</p>
+ * <p>Project: Universal Serialization Protocol</p>
  * <p>Title: Utility Functions</p>
- * <p>Description: Generic functions needed for the UDT library.</p>
- * <p>Copyright: Copyright (c) 2004-2006</p>
+ * <p>Description: Generic functions needed for the Userp library.</p>
+ * <p>Copyright: Copyright (c) 2004-2007</p>
  *
- * @author Michael Conrad / TheSilverDirk
+ * @author Michael Conrad
  * @version $Revision$
  */
 public class Util {
@@ -21,6 +21,22 @@ public class Util {
 		for (int i=0; i<keys.length; i++)
 			result.put(keys[i], values[i]);
 		return result;
+	}
+
+	public static String bytesToReadableString(byte[] bytes) {
+		try {
+			return new String(bytes, "UTF-8");
+		}
+		catch (Exception ex) {}
+		try {
+			return new String(bytes, "ISO-8859-1");
+		}
+		catch (Exception ex) {}
+		char[] hex= new char[] {'0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F'};
+		StringBuffer sb= new StringBuffer(bytes.length*2);
+		for (int i=0; i<bytes.length; i++)
+			sb.append(hex[(bytes[i]>>4)&0x7]).append(hex[bytes[i]&0x7]);
+		return sb.toString();
 	}
 
 	public static int getBitLength(long value) {

@@ -1,14 +1,15 @@
 package com.silverdirk.userp;
 
 import java.math.BigInteger;
+import java.io.IOException;
 
 /**
- * <p>Project: </p>
- * <p>Title: </p>
- * <p>Description: </p>
- * <p>Copyright Copyright (c) 2004</p>
+ * <p>Project: Universal Serialization Protocol</p>
+ * <p>Title: Type Type</p>
+ * <p>Description: The protocol type used for referring to a type.</p>
+ * <p>Copyright Copyright (c) 2006-2007</p>
  *
- * @author Michael Conrad / TheSilverDirk
+ * @author Michael Conrad
  * @version $Revision$
  */
 public class TypeType extends UserpType.ResolvedType {
@@ -22,8 +23,7 @@ public class TypeType extends UserpType.ResolvedType {
 		}
 
 		public boolean hasScalarComponent() {
-			// it does, but we don't have a way to calculate it before
-			// seeing the output stream, so pretend we don't
+			// It does technically, but the scalar-reading is built into readType()
 			return false;
 		}
 
@@ -44,6 +44,7 @@ public class TypeType extends UserpType.ResolvedType {
 
 	private TypeType(String name) {
 		super(nameToMeta(name), TypeTypeDef.INSTANCE);
+		impl= TypeImpl.INSTANCE;
 	}
 
 	public UserpType makeSynonym(Object[] newName) {

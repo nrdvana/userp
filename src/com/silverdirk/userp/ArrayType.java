@@ -3,27 +3,29 @@ package com.silverdirk.userp;
 import java.math.BigInteger;
 
 /**
- * <p>Project: </p>
- * <p>Title: </p>
- * <p>Description: </p>
- * <p>Copyright Copyright (c) 2004</p>
+ * <p>Project: Universal Serialization Protocol</p>
+ * <p>Title: Type Array</p>
+ * <p>Description: Type Array defines variable or fixed length arrays of elements.</p>
+ * <p>Copyright Copyright (c) 2004-2007</p>
  *
- * @author Michael Conrad / TheSilverDirk
+ * @author Michael Conrad
  * @version $Revision$
  */
 public class ArrayType extends TupleType {
 	ArrayDef arrayDef;
 
-	public static class ArrayDef extends TypeDef {
-		TupleCoding encoding;
+	public static final int
+		VARIABLE_LEN= TypeDef.VARIABLE_LEN;
+
+	public static class ArrayDef extends TupleDef {
 		int length;
 
 		public ArrayDef(UserpType elemType) {
-			this(TupleCoding.INHERIT, elemType, VARIABLE_LEN);
+			this(TupleCoding.TIGHT, elemType, VARIABLE_LEN);
 		}
 
 		public ArrayDef(UserpType elemType, int length) {
-			this(TupleCoding.INHERIT, elemType, length);
+			this(TupleCoding.TIGHT, elemType, length);
 		}
 
 		public ArrayDef(TupleCoding encoding, UserpType elemType, int length) {
@@ -32,6 +34,13 @@ public class ArrayType extends TupleType {
 			if (length < 0 && length != VARIABLE_LEN)
 				throw new RuntimeException("'length' parameter must be non-negative, or the value ArrayDef.VARIABLE_LEN");
 			this.length= length;
+			if (length == VARIABLE_LEN)
+				scalarBitLen= (encoding != TupleCoding.INDEFINITE)? VARIABLE_LEN : NONSCALAR;
+			else
+				scalarBitLen= (encoding == TupleCoding.BITPACK || encoding == TupleCoding.TIGHT)?
+					UNRESOLVED : NONSCALAR;
+			if (scalarBitLen == VARIABLE_LEN)
+				scalarRange= INFINITE;
 		}
 
 		public boolean equals(Object other) {
@@ -45,32 +54,6 @@ public class ArrayType extends TupleType {
 
 		public String toString() {
 			return "Array("+encoding+", "+typeRefs[0]+", "+(length==VARIABLE_LEN? "VARIABLE_LEN" : ""+length)+")";
-		}
-
-		public TupleCoding getEncodingMode() {
-			return encoding;
-		}
-
-		public boolean isScalar() {
-			return false;
-		}
-
-		public boolean hasScalarComponent() {
-			return length == VARIABLE_LEN;
-		}
-
-		public BigInteger getScalarRange() {
-			if (length == VARIABLE_LEN)
-				return INFINITE;
-			else
-				throw new UnsupportedOperationException();
-		}
-
-		public int getScalarBitLen() {
-			if (length == VARIABLE_LEN)
-				return VARIABLE_LEN;
-			else
-				throw new UnsupportedOperationException();
 		}
 
 		public UserpType resolve(PartialType pt) {
@@ -105,6 +88,10 @@ public class ArrayType extends TupleType {
 	protected ArrayType(Object[] meta, ArrayDef def) {
 		super(meta, def);
 		this.arrayDef= def;
+		this.impl= def.encoding.coder;
+		Class elemClass= arrayDef.typeRefs[0].preferredNativeStorage;
+		if (elemClass != null)
+			preferredNativeStorage= java.lang.reflect.Array.newInstance(elemClass, 0).getClass();
 	}
 
 	public UserpType makeSynonym(Object[] newMeta) {

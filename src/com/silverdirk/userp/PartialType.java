@@ -5,14 +5,15 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.Set;
 import java.util.HashSet;
+import java.io.IOException;
 
 /**
- * <p>Project: </p>
- * <p>Title: </p>
- * <p>Description: </p>
- * <p>Copyright Copyright (c) 2004</p>
+ * <p>Project: Universal Serialization Protocol</p>
+ * <p>Title: Partially-defined type</p>
+ * <p>Description: Partial types allow a type to be defined when it has references to other types that circularly refer back to it.</p>
+ * <p>Copyright Copyright (c) 2006-2007</p>
  *
- * @author Michael Conrad / TheSilverDirk
+ * @author Michael Conrad
  * @version $Revision$
  */
 public class PartialType extends UserpType {
@@ -30,6 +31,14 @@ public class PartialType extends UserpType {
 	public PartialType(Object[] meta, TypeDef def) {
 		super(meta);
 		this.def= def;
+	}
+
+	void setMeta(Object[] meta) {
+		super.initMeta(meta);
+	}
+
+	void setDef(TypeDef d) {
+		def= d;
 	}
 
 	public UserpType makeSynonym(Object[] newMeta) {
@@ -128,7 +137,7 @@ public class PartialType extends UserpType {
 	public UserpType resolve() {
 		return resolve(null);
 	}
-	public synchronized UserpType resolve(TypeSpace tsp) {
+	public synchronized UserpType resolve(Object typeSpace) {
 		if (resolvedType == null) {
 			HashSet followupSet= new HashSet(), workList= new HashSet();
 			workList.add(this);
@@ -136,7 +145,7 @@ public class PartialType extends UserpType {
 				Iterator itr= workList.iterator();
 				PartialType current= (PartialType) itr.next();
 				itr.remove();
-				current.resolve(tsp, followupSet, workList);
+				current.resolve(followupSet, workList);
 			} while (workList.size() > 0);
 			Iterator itr= followupSet.iterator();
 			while (itr.hasNext())
@@ -145,7 +154,7 @@ public class PartialType extends UserpType {
 		return resolvedType;
 	}
 
-	private void resolve(TypeSpace tsp, Set followupSet, Set resolveSet) {
+	private void resolve(Set followupSet, Set resolveSet) {
 		boolean incomplete= false;
 		if (def == null)
 			throw new UseOfTypeBeforeResolvedException(name, "resolve");
@@ -166,6 +175,27 @@ public class PartialType extends UserpType {
 		else
 			resolvedType.finishInit();
 	}
+
+	static class NonImpl implements ReaderImpl {
+		public void inspectActualType(UserpReader reader) throws IOException {
+			throw new UseOfTypeBeforeResolvedException("?", "readerImpl");
+		}
+		public void inspectElements(UserpReader reader) throws IOException {
+			throw new UseOfTypeBeforeResolvedException("?", "readerImpl");
+		}
+		public void nextElement(UserpReader reader) throws IOException {
+			throw new UseOfTypeBeforeResolvedException("?", "readerImpl");
+		}
+		public void endElements(UserpReader reader) throws IOException {
+			throw new UseOfTypeBeforeResolvedException("?", "readerImpl");
+		}
+		public int loadValue(UserpReader reader) throws IOException {
+			throw new UseOfTypeBeforeResolvedException("?", "readerImpl");
+		}
+		public void skipValue(UserpReader reader) throws IOException {
+			throw new UseOfTypeBeforeResolvedException("?", "readerImpl");
+		}
+	}
 }
 
 class UseOfTypeBeforeResolvedException extends RuntimeException {
@@ -177,7 +207,7 @@ class UseOfTypeBeforeResolvedException extends RuntimeException {
 		chain.add(methodName);
 	}
 	public String getMessage() {
-		StringBuffer msg= new StringBuffer("Attempt to access a property ");
+		StringBuffer msg= new StringBuffer("Attempt to access the property ");
 		msg.append(chain.get(1)).append(" before type ").append(chain.get(0)).append("was completely resolved;");
 		for (int i=2; i<chain.size(); i+= 2)
 			msg.append(" needed by ").append(chain.get(i)+"."+chain.get(i+1));

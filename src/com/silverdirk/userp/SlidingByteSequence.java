@@ -4,12 +4,12 @@ import java.io.*;
 import java.util.*;
 
 /**
- * <p>Project: </p>
- * <p>Title: </p>
- * <p>Description: </p>
- * <p>Copyright Copyright (c) 2004</p>
+ * <p>Project: Universal Serialization Protocol</p>
+ * <p>Title: Sliding Byte Sequence</p>
+ * <p>Description: ByteSequence implementation that allows new bytes to be added and old bytes to be discarded.</p>
+ * <p>Copyright Copyright (c) 2007</p>
  *
- * @author Michael Conrad / TheSilverDirk
+ * @author Michael Conrad
  * @version $Revision$
  */
 public class SlidingByteSequence extends ForwardOptimizedIndexedByteSequence {

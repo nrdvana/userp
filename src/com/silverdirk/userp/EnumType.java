@@ -2,14 +2,15 @@ package com.silverdirk.userp;
 
 import java.util.HashMap;
 import java.math.BigInteger;
+import java.io.IOException;
 
 /**
- * <p>Project: </p>
- * <p>Title: </p>
- * <p>Description: </p>
- * <p>Copyright Copyright (c) 2004</p>
+ * <p>Project: Universal Serialization Protocol</p>
+ * <p>Title: Type (Symbolic) Enum</p>
+ * <p>Description: Symbolic enums.</p>
+ * <p>Copyright Copyright (c) 2004-2007</p>
  *
- * @author Michael Conrad / TheSilverDirk
+ * @author Michael Conrad
  * @version $Revision$
  */
 public class EnumType extends UserpType.ResolvedType {
@@ -83,6 +84,7 @@ public class EnumType extends UserpType.ResolvedType {
 		valueLookup= new HashMap();
 		for (int i=0, stop=getMemberCount(); i<stop; i++)
 			valueLookup.put(getMember(i), new Integer(i));
+		impl= EnumImpl.INSTANCE;
 	}
 
 	public UserpType makeSynonym(Object[] newMeta) {
@@ -106,11 +108,5 @@ public class EnumType extends UserpType.ResolvedType {
 
 	public boolean isEnum() {
 		return true;
-	}
-
-	protected void decode(UserpReader reader) {
-		reader.value32= Util.LongToInt(reader.stream.scalar64);
-		reader.valueObj= getMember(reader.value32);
-		reader.valueStorage= reader.NATIVETYPE_OBJECT;
 	}
 }

@@ -1,25 +1,29 @@
 package com.silverdirk.userp;
 
 import java.math.BigInteger;
+import java.io.IOException;
 
 /**
- * <p>Project: </p>
- * <p>Title: </p>
- * <p>Description: </p>
- * <p>Copyright Copyright (c) 2004</p>
+ * <p>Project: Universal Serialization Protocol</p>
+ * <p>Title: type Record</p>
+ * <p>Description: Type Record allows specification of tuples with named elements.</p>
+ * <p>Copyright Copyright (c) 2004-2007</p>
  *
- * @author Michael Conrad / TheSilverDirk
+ * @author Michael Conrad
  * @version $Revision$
  */
 public class RecordType extends TupleType {
 	RecordDef recordDef;
 
-	public static class RecordDef extends TypeDef {
+	public static class RecordDef extends TupleDef {
 		TupleCoding encoding;
 		String[] fieldNames;
 
+		int scalarBitLenCache;
+		BigInteger scalarRangeCache;
+
 		public RecordDef(String[] fieldNames, UserpType[] fieldTypes) {
-			this(TupleCoding.INHERIT, fieldNames, fieldTypes);
+			this(TupleCoding.TIGHT, fieldNames, fieldTypes);
 		}
 
 		public RecordDef(TupleCoding encoding, String[] fieldNames, UserpType[] fieldTypes) {
@@ -30,6 +34,9 @@ public class RecordType extends TupleType {
 			if (fieldNames.length != fieldTypes.length)
 				throw new RuntimeException("Number of field names does not match number of field types");
 			this.fieldNames= (String[]) Util.arrayClone(fieldNames);
+
+			scalarBitLen= (encoding == TupleCoding.BITPACK || encoding == TupleCoding.TIGHT)?
+				UNRESOLVED : NONSCALAR;
 		}
 
 		public boolean equals(Object other) {
@@ -49,32 +56,6 @@ public class RecordType extends TupleType {
 			}
 			sb.append("])");
 			return sb.toString();
-		}
-
-		public TupleCoding getEncodingMode() {
-			return encoding;
-		}
-
-		public boolean isScalar() {
-			return false;
-		}
-
-		public boolean hasScalarComponent() {
-			return typeRefs[0].hasScalarComponent();
-		}
-
-		public BigInteger getScalarRange() {
-			if (hasScalarComponent())
-				return typeRefs[0].getScalarRange();
-			else
-				throw new UnsupportedOperationException();
-		}
-
-		public int getScalarBitLen() {
-			if (hasScalarComponent())
-				return typeRefs[0].getScalarBitLen();
-			else
-				throw new UnsupportedOperationException();
 		}
 
 		public UserpType resolve(PartialType pt) {
@@ -117,5 +98,9 @@ public class RecordType extends TupleType {
 
 	public UserpType getElemType(int idx) {
 		return recordDef.typeRefs[idx];
+	}
+
+	public String getFieldName(int idx) {
+		return recordDef.fieldNames[idx];
 	}
 }

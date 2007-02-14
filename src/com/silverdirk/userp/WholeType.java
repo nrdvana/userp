@@ -3,12 +3,12 @@ package com.silverdirk.userp;
 import java.math.BigInteger;
 
 /**
- * <p>Project: </p>
- * <p>Title: </p>
- * <p>Description: </p>
- * <p>Copyright Copyright (c) 2004</p>
+ * <p>Project: Universal Serialization Protocol</p>
+ * <p>Title: Type Whole</p>
+ * <p>Description: This class represents the set of either positive or negative whole integers.</p>
+ * <p>Copyright Copyright (c) 2006-2007</p>
  *
- * @author Michael Conrad / TheSilverDirk
+ * @author Michael Conrad
  * @version $Revision$
  */
 public class WholeType extends UserpType.ResolvedType {
@@ -44,19 +44,25 @@ public class WholeType extends UserpType.ResolvedType {
 		protected UserpType resolve(PartialType pt) {
 			throw new UnsupportedOperationException();
 		}
+
+		static final WholeDef
+			POS_INSTANCE= new WholeDef(true),
+			NEG_INSTANCE= new WholeDef(false);
 	}
 
-	private WholeType(Object[] meta, WholeDef def) {
-		super(meta, def);
-		this.positive= def.positive;
+	WholeType(Object[] meta, boolean positive) {
+		super(meta, positive? WholeDef.POS_INSTANCE : WholeDef.NEG_INSTANCE);
+		this.positive= positive;
+		this.impl= positive? WholeImpl.INSTANCE : NegWholeImpl.INSTANCE;
 	}
 
 	public UserpType makeSynonym(Object[] newMeta) {
-		return new WholeType(newMeta, (WholeDef) def);
+		return new WholeType(newMeta, positive);
 	}
 
 	public boolean equals(Object other) {
-		return other == this;
+		return other instanceof WholeType
+			&& ((WholeType)other).positive == positive;
 	}
 
 	public boolean isPositive() {
@@ -67,7 +73,5 @@ public class WholeType extends UserpType.ResolvedType {
 		return positive? 1 : -1;
 	}
 
-	public static final WholeType
-		INSTANCE_TWHOLE= new WholeType(nameToMeta("TWhole"), new WholeDef(true)),
-		INSTANCE_TNEGWHOLE= new WholeType(nameToMeta("TNegWhole"), new WholeDef(false));
+	public static final boolean POSITIVE= true, NEGATIVE= false;
 }

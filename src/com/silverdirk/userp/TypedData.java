@@ -1,12 +1,12 @@
 package com.silverdirk.userp;
 
 /**
- * <p>Project: </p>
- * <p>Title: </p>
- * <p>Description: </p>
- * <p>Copyright: Copyright (c) 2004-2005</p>
+ * <p>Project: Universal Serialization Protocol</p>
+ * <p>Title: Typed Data</p>
+ * <p>Description: This specifies a specific type for the associated data object; commonly used by unions and Type Any.</p>
+ * <p>Copyright Copyright (c) 2006-2007</p>
  *
- * @author not attributable
+ * @author Michael Conrad
  * @version $Revision$
  */
 public class TypedData {

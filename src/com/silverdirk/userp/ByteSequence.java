@@ -4,12 +4,12 @@ import java.util.*;
 import java.io.*;
 
 /**
- * <p>Project: </p>
- * <p>Title: </p>
- * <p>Description: </p>
- * <p>Copyright Copyright (c) 2004</p>
+ * <p>Project: Universal Serialization Protocol</p>
+ * <p>Title: Byte Sequence</p>
+ * <p>Description: ByteSequence represents an array of bytes, but hides the implementation.</p>
+ * <p>Copyright Copyright (c) 2007</p>
  *
- * @author Michael Conrad / TheSilverDirk
+ * @author Michael Conrad
  * @version $Revision$
  */
 public interface ByteSequence {

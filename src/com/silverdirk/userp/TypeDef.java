@@ -3,19 +3,19 @@ package com.silverdirk.userp;
 import java.math.BigInteger;
 
 /**
- * <p>Project: </p>
- * <p>Title: </p>
- * <p>Description: </p>
- * <p>Copyright Copyright (c) 2004</p>
+ * <p>Project: Universal Serialization Protocol</p>
+ * <p>Title: Type Definition</p>
+ * <p>Description: TypeDef is the base class for the definition part of a type (as opposed to the metadata part).</p>
+ * <p>Copyright Copyright (c) 2006-2007</p>
  *
- * @author Michael Conrad / TheSilverDirk
+ * @author Michael Conrad
  * @version $Revision$
  */
 abstract class TypeDef {
 	UserpType[] typeRefs= EMPTY_REF_LIST;
 	protected int
 		scalarBitLen= UNRESOLVED;
-	BigInteger scalarRange= NONSCALAR;
+	BigInteger scalarRange= null;
 
 	public String toString() {
 		return Util.getReadableClassName(this.getClass());
@@ -68,10 +68,10 @@ abstract class TypeDef {
 
 	public static final int
 		UNRESOLVED= -2,   // value unknown because type is not yet resolved
-		VARIABLE_LEN= -1; // length of data varies
+		VARIABLE_LEN= -1, // length of data varies
+		PARTSCALAR= -3,   // type begins with a scalar component
+		NONSCALAR= -4;    // type is not a scalar type
 	public static final BigInteger
-		INFINITE= BigInteger.valueOf(-1),   // scalar value is infinite
-		PARTSCALAR= BigInteger.valueOf(-2), // type begins with a scalar component
-		NONSCALAR= BigInteger.valueOf(-3);  // type is not a scalar type
+		INFINITE= BigInteger.valueOf(-1);  // scalar value is infinite
 	static final UserpType[] EMPTY_REF_LIST= new UserpType[0];
 }
