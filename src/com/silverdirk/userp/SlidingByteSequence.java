@@ -133,14 +133,14 @@ public class SlidingByteSequence extends ForwardOptimizedIndexedByteSequence {
 		}
 
 		protected boolean nextBlock() throws IOException {
-			while (localPos == localLimit) {
+			do {
 				if (curBlock.bufferEnd != localLimit)
 					super.nextBlock(curBlock, (short)localLimit);
 				else if (curBlock.next != null)
 					super.nextBlock(curBlock.next, (short)0);
 				else if (tryReadMore() == -1)
 					return false;
-			}
+			} while (localPos == localLimit); // loop while the current buffer is exhausted
 			return true;
 		}
 	}

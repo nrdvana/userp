@@ -15,12 +15,14 @@ import java.io.EOFException;
  * that uses element indexes/sizes instead of keys.  The code is largely derived
  * from com.silverdirk.datastruct.SuperBST where I invented the indexing system
  * (independantly from all the people who invented it before me.  BAH)
- * which is largely derived from my previous rewrite of the Red/Black code from
- * the Red/Black demo at http://www.ececs.uc.edu/~franco/C321/html/RedBlack/
- * jointly written with Dr. John Franco of the University of Cincinnati, which
- * is a combination of his earlier red black demo and the deletion algorithm I
- * had previously written in C++, which was part of a project for Dr. Franco's
- * algorithms course which was done jointly with Tony Deeter.
+ * which is largely derived from my Java version of my red/black tree library,
+ * which is a rewrite/cleanup of the Red/Black code from the Red/Black demo
+ * at http://www.ececs.uc.edu/~franco/C321/html/RedBlack/  which was a
+ * merger/rewrite of Dr. Franco's earlier red black demo and my deletion
+ * algorithm which I had previously written in C++, which was part of my
+ * "Contained Class" library which was a cleaned-and-polished version of an
+ * earlier project for Dr. Franco's algorithms course which was done jointly
+ * with Tony Deeter.
  *
  * <p>As you might guess, I practically consider this code to be a family member
  * and bring it with me from project to project.  ;-)
@@ -43,7 +45,7 @@ public class ForwardOptimizedIndexedByteSequence implements ByteSequence, Clonea
 
 	/**
 	 * RootSentinel is a node above the root of the tree, and serves a similar
-	 * purpose as the leaf nodes.
+	 * purpose as the leaf sentinel.
 	 * There is one root sentinel per tree.
 	 * The left child of the root sentinel is the root node.
 	 */
@@ -65,6 +67,7 @@ public class ForwardOptimizedIndexedByteSequence implements ByteSequence, Clonea
 		rootSentinel= Node.createSentinel();
 		rootSentinel.parent= null; // this uniquely marks this as the root sentinel for this tree
 		rootSentinel.left= Sentinel;
+		rootSentinel.right= Sentinel;
 		version= 0;
 	}
 
@@ -105,7 +108,7 @@ public class ForwardOptimizedIndexedByteSequence implements ByteSequence, Clonea
 
 	/** Does the tree have zero bytes in it? */
 	public boolean isEmpty() {
-		return rootSentinel.left == Sentinel;
+		return rootSentinel.left.getLength() == 0;
 	}
 
 	/** Get the number of bytes in the sequence. */
@@ -204,6 +207,7 @@ public class ForwardOptimizedIndexedByteSequence implements ByteSequence, Clonea
 
 		balance(parent);
 		rootSentinel.left.setColor(Node.Black);
+		version++;
 	}
 
 	/** Balance a tree that has just received a new child node.
@@ -348,7 +352,7 @@ public class ForwardOptimizedIndexedByteSequence implements ByteSequence, Clonea
 		/** Is this node the global Sentinel or a RootSentinel?
 		 */
 		public final boolean isSentinel() {
-			return right == this;
+			return right == this || parent == null;
 		}
 
 		/** Clone this node.
@@ -907,20 +911,33 @@ public class ForwardOptimizedIndexedByteSequence implements ByteSequence, Clonea
 		}
 
 		public void forceSkip(long n) throws IOException {
+			if (n <= 0) {
+				if (n == 0) return;
+				throw new IllegalArgumentException("Parameter to forceSkip must be positive");
+			}
 			long targetAddr= getSequencePos() + n;
-			while (limitAddress < targetAddr)
+			while (limitAddress < targetAddr) {
+				localPos= localLimit; // skip all characters in the current buffer
 				if (!nextBlock())
 					throw new EOFException();
+			}
 			localPos= localLimit - (int)(limitAddress - targetAddr);
 		}
 
 		public void seek(long address) throws IOException {
-			NodeAndAddress next= getNodeFor(address);
-			limitAddress= next.address;
-			long offset= address - limitAddress;
-			if (offset > Short.MAX_VALUE)
-				throw new Error("Bug in 'seek'");
-			nextBlock(next.node, (short) offset);
+			if (curBlock != null && address >= limitAddress && address < (limitAddress+curBlock.bufferEnd-curBlock.bufferStart)) {
+				// seek within the current block
+				localPos= curBlock.bufferStart+(short)(address-limitAddress);
+			}
+			else {
+				// else join a new node
+				NodeAndAddress next= getNodeFor(address);
+				limitAddress= next.address;
+				long offset= address - limitAddress;
+				if (offset > Short.MAX_VALUE)
+					throw new Error("Bug in 'seek'");
+				nextBlock(next.node, (short) offset);
+			}
 		}
 	}
 }
