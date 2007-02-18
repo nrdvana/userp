@@ -39,17 +39,25 @@ public class Util {
 		return sb.toString();
 	}
 
-	public static int getBitLength(long value) {
-		int bitLen= 0;
-		while (value > 0xF) {
-			bitLen+= 4;
-			value>>>=4;
-		}
-		while (value != 0) {
-			bitLen++;
-			value>>>=1;
-		}
-		return bitLen;
+	// The following is "Find the log base 2 of an N-bit integer in O(lg(N)) operations with multiply and lookup"
+	// from http://graphics.stanford.edu/~seander/bithacks.html
+	// written by Eric Cole
+	static final int[] MultiplyDeBruijnBitPosition= new int[] {
+		0, 1, 28, 2, 29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4, 8,
+		31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6, 11, 5, 10, 9
+	};
+	public static int getBitLength(int val) {
+		val|= val >>> 1; // first round down to power of 2
+		val|= val >>> 2;
+		val|= val >>> 4;
+		val|= val >>> 8;
+		val|= val >>> 16;
+		val= (val >>> 1) + 1;
+		return MultiplyDeBruijnBitPosition[(val * 0x077CB531) >>> 27];
+	}
+	// I didn't feel like calculating a new DeBruijin sequence, so we have this cheap hack
+	public static int getBitLength(long val) {
+		return (val >>> 32 != 0)? getBitLength((int)(val>>32))+32 : getBitLength((int)val);
 	}
 
 	public static int getByteLength(long value) {
