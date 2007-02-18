@@ -48,6 +48,7 @@ public class _TestTupleType extends TestCase {
 			new TypeAndProps(new ArrayType("bits", TupleType.TupleCoding.BITPACK, CommonTypes.TBool, ArrayType.VARIABLE_LEN), true, false),
 			new TypeAndProps(new ArrayType("c", TupleType.TupleCoding.INDEXED, CommonTypes.TInt32, ArrayType.VARIABLE_LEN), true, false),
 			new TypeAndProps(new ArrayType("d", TupleType.TupleCoding.INDEXED, CommonTypes.TInt32, 5), false, false),
+			new TypeAndProps(new ArrayType("e", TupleType.TupleCoding.INDEFINITE, CommonTypes.TInt32, 5), false, false),
 		};
 		values= new Object[][] {
 			new Object[] {
@@ -67,6 +68,9 @@ public class _TestTupleType extends TestCase {
 			},
 			new Object[] {
 				new int[] { 0x12345678, 0x12345678, 0x12345678, 0x12345678, 0x12345678 },
+			},
+			new Object[] {
+				new int[] { 0x12345678, 0x12345678, 0x12345678, 0x12345678, 0x12345678 },
 			}
 		};
 		encodings= new byte[][] {
@@ -76,6 +80,7 @@ public class _TestTupleType extends TestCase {
 				+"03 03 050505 00 12345678 00 12345678 00 12345678"
 				+"03 05 0507060000 00 12345678 00 123456780000 00 1234567800"),
 			bytesFromHex("05 0505050505 00 12345678 00 12345678 00 12345678 00 12345678 00 12345678"),
+			bytesFromHex("01 12345678 01 12345678 01 12345678 01 12345678 01 12345678 00"),
 		};
 	}
 
