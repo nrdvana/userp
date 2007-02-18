@@ -392,18 +392,15 @@ class IndefiniteCoder extends ReaderWriterImpl {
 
 	public void nextElement(UserpReader reader) throws IOException {
 		reader.elemIdx++;
-		boolean hasNext;
-		if (reader.elemCount == -1) {
-			reader.readQty(1);
-			hasNext= reader.scalar64 != 0;
-		}
-		else
-			hasNext= reader.elemIdx < reader.elemCount;
-		if (hasNext) {
-			reader.readVarQty();
-			int metaLen= reader.scalarAsInt();
-			reader.elemMeta= reader.makeCheckpoint();
-			reader.src.forceSkip(metaLen);
+		reader.readQty(1);
+		int metaLen= reader.scalarAsInt() - 1;
+		if (metaLen >= 0) {
+			if (metaLen > 0) {
+				reader.elemMeta= reader.makeCheckpoint();
+				reader.src.forceSkip(metaLen);
+			}
+			else
+				reader.elemMeta= null;
 			reader.elemType= reader.tupleType.getElemType(reader.elemIdx);
 		}
 		else {
@@ -413,7 +410,7 @@ class IndefiniteCoder extends ReaderWriterImpl {
 	}
 
 	public void endElements(UserpReader reader) throws IOException {
-		while (reader.elemCount != reader.elemIdx)
+		while (reader.elemIdx != reader.elemCount)
 			reader.nextElem();
 		reader.popTupleIterationState();
 	}
@@ -421,12 +418,12 @@ class IndefiniteCoder extends ReaderWriterImpl {
 	public int loadValue(UserpReader reader) throws IOException {
 		LinkedList elems= new LinkedList();
 		reader.inspectElems();
+		Class stoClass= reader.tupleType.getNativeStoragePref();
 		while (reader.getType() != null) {
 			elems.add(reader.readValue());
 			reader.nextElem();
 		}
 		reader.endElems();
-		Class stoClass= reader.getType().getNativeStoragePref();
 		if (stoClass != Object[].class) {
 			int count= elems.size();
 			reader.valueObj= Array.newInstance(stoClass.getComponentType(), count);
