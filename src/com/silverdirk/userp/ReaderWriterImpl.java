@@ -481,8 +481,10 @@ class BigIntImpl extends UnionImpl_BigInt {
 		else
 			reader.readVarQty();
 		boolean readNegVal= (reader.scalar != null)? reader.scalar.signum() == 0 : reader.scalar64 == 0;
-		if (readNegVal)
-			NegWholeImpl.INSTANCE.loadValue(reader);
+		if (readNegVal) {
+			if (NegWholeImpl.INSTANCE.loadValue(reader) != UserpReader.NATIVETYPE_OBJECT)
+				reader.valueObj= BigInteger.valueOf(reader.value64);
+		}
 		else
 			reader.valueObj= reader.scalarAsBigInt();
 		return UserpReader.NATIVETYPE_OBJECT;
