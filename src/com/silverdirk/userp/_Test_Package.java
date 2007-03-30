@@ -16,14 +16,8 @@ public class _Test_Package extends TestCase {
 	}
 
 	public static Test suite() {
-		TestSuite suite = new TestSuite();
-		suite.addTestSuite(com.silverdirk.userp._TestCommonTypes.class);
-		suite.addTestSuite(com.silverdirk.userp._TestForwardOptimizedIndexedByteSequence.class);
-		suite.addTestSuite(com.silverdirk.userp._TestRangeType.class);
-		suite.addTestSuite(com.silverdirk.userp._TestSlidingByteSequence.class);
-		suite.addTestSuite(com.silverdirk.userp._TestUnionType.class);
-		suite.addTestSuite(com.silverdirk.userp._TestWholeType.class);
-		suite.addTestSuite(com.silverdirk.userp._TestTupleType.class);
+		TestSuite suite= new TestSuite();
+		suite.addTestSuite(com.silverdirk.userp._TestBufferChainIStream.class);
 		return suite;
 	}
 }
