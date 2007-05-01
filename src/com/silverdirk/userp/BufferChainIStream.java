@@ -119,14 +119,14 @@ public class BufferChainIStream extends InputStream implements Cloneable {
 		return maxSegment;
 	}
 
-	public byte forceRead() throws IOException {
+	public int readUnsignedByte() throws IOException {
 		if (localPos == localLimit)
 			if (!nextBlock())
 				throw new EOFException();
-		return curBlock.buffer[localPos++];
+		return curBlock.buffer[localPos++] & 0xFF;
 	}
 
-	public void forceRead(byte[] buffer, int offset, int length) throws IOException {
+	public void readFully(byte[] buffer, int offset, int length) throws IOException {
 		int bufferLimit= offset+length;
 		while (offset < bufferLimit) {
 			if (localPos == localLimit)

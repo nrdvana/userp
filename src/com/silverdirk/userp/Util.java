@@ -1,8 +1,9 @@
 package com.silverdirk.userp;
 
 import java.util.*;
-import java.lang.reflect.Array;
 import java.math.BigInteger;
+import java.nio.charset.*;
+import java.nio.ByteBuffer;
 
 /**
  * <p>Project: Universal Serialization Protocol</p>
@@ -23,23 +24,44 @@ public class Util {
 		return result;
 	}
 
-	public static String bytesToReadableString(byte[] bytes) {
-		try {
-			return new String(bytes, "UTF-8");
-		}
-		catch (Exception ex) {}
-		try {
-			return new String(bytes, "ISO-8859-1");
-		}
-		catch (Exception ex) {}
-		char[] hex= new char[] {'0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F'};
-		StringBuffer sb= new StringBuffer(bytes.length*2);
-		for (int i=0; i<bytes.length; i++)
-			sb.append(hex[(bytes[i]>>4)&0x7]).append(hex[bytes[i]&0x7]);
-		return sb.toString();
+	static final CharsetDecoder utf8dec;
+	static final char[] hexChars= "0123456789ABCDEF".toCharArray();
+
+	static {
+		Charset UTF8= Charset.forName("UTF-8");
+		utf8dec= UTF8.newDecoder();
+		utf8dec.onMalformedInput(CodingErrorAction.REPLACE);
+		utf8dec.onUnmappableCharacter(CodingErrorAction.REPLACE);
 	}
 
-	// The following is "Find the log base 2 of an N-bit integer in O(lg(N)) operations with multiply and lookup"
+	public static String bytesToReadableString(byte[] bytes) {
+		synchronized (utf8dec) {
+			try {
+				utf8dec.reset();
+				return utf8dec.decode(ByteBuffer.wrap(bytes)).toString();
+			}
+			// Should be no exceptions with the options I specified, but just
+			// in case, this is the fallback behavior I want
+			catch (CharacterCodingException ex) {
+				StringBuffer sb= new StringBuffer(bytes.length*2);
+				for (int i=0; i<bytes.length; i++)
+					sb.append(hexChars[(bytes[i]>>4)&0x7]).append(hexChars[bytes[i]&0x7]).append(' ');
+				return sb.toString();
+			}
+		}
+	}
+
+	static final boolean typeArrayDeepEquals(UserpType[] a, UserpType[] b, Map<UserpType.TypeHandle,UserpType.TypeHandle> equalityMap) {
+		if (a.length != b.length)
+			return false;
+		for (int i=0,stop=a.length; i<stop; i++)
+			if (!a[i].equals(b[i], equalityMap))
+				return false;
+		return true;
+	}
+
+	// The following is derived from
+	// "Find the log base 2 of an N-bit integer in O(lg(N)) operations with multiply and lookup"
 	// from http://graphics.stanford.edu/~seander/bithacks.html
 	// written by Eric Cole
 	static final int[] MultiplyDeBruijnBitPosition= new int[] {
@@ -53,7 +75,8 @@ public class Util {
 		val|= val >>> 8;
 		val|= val >>> 16;
 		val= (val >>> 1) + 1;
-		return MultiplyDeBruijnBitPosition[(val * 0x077CB531) >>> 27];
+		int log2= MultiplyDeBruijnBitPosition[(val * 0x077CB531) >>> 27];
+		return (val == 0)? 0 : log2+1; // +1 because we want bit-length, not highest-bit-set-index
 	}
 	// I didn't feel like calculating a new DeBruijin sequence, so we have this cheap hack
 	public static int getBitLength(long val) {
@@ -90,46 +113,6 @@ public class Util {
 		if ((val >> 32) != (val >> 63))
 			throw new LibraryLimitationException("Attempt to process 64 bits as 'int'");
 		return (int) val;
-	}
-
-	public static final Object arrayClone(Object a) {
-		if (a == null) return null;
-		int len= Array.getLength(a);
-		Object result= Array.newInstance(a.getClass().getComponentType(), len);
-		System.arraycopy(a, 0, result, 0, len);
-		return result;
-	}
-
-	public static final Object arrayConcat(Object[] a, Object[] b) {
-		if (a == null && b == null) return null;
-		if (a == null) return b;
-		if (b == null) return a;
-		Object result= Array.newInstance(a.getClass().getComponentType(), a.length + b.length);
-		System.arraycopy(a, 0, result, 0, a.length);
-		System.arraycopy(b, 0, result, a.length, b.length);
-		return result;
-	}
-
-	public static boolean arrayEquals(boolean deep, Object a, Object b) {
-		if (a == b) return true;
-		if (a == null || b == null) return false;
-		int len= Array.getLength(a);
-		if (len != Array.getLength(b))
-			return false;
-		for (int i=0; i<len; i++) {
-			Object aElem= Array.get(a, i), bElem= Array.get(b, i);
-			if (aElem != bElem)
-				if (!deep || !aElem.equals(bElem))
-					return false;
-		}
-		return true;
-	}
-
-	public static int arrayHash(Object[] a) {
-		int accum= 0;
-		for (int i=0; i<a.length; i++)
-			accum= accum + (accum ^ a[i].hashCode());
-		return accum;
 	}
 
 	static final boolean declaresInterface(Class cls, Class iface) {

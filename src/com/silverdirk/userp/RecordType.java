@@ -1,7 +1,8 @@
 package com.silverdirk.userp;
 
 import java.math.BigInteger;
-import java.io.IOException;
+import java.util.Map;
+import java.util.Arrays;
 
 /**
  * <p>Project: Universal Serialization Protocol</p>
@@ -13,94 +14,98 @@ import java.io.IOException;
  * @version $Revision$
  */
 public class RecordType extends TupleType {
-	RecordDef recordDef;
+	RecordDef def;
 
-	public static class RecordDef extends TupleDef {
-		TupleCoding encoding;
-		String[] fieldNames;
+	public static class Field {
+		public final Symbol name;
+		public final UserpType type;
 
-		int scalarBitLenCache;
-		BigInteger scalarRangeCache;
-
-		public RecordDef(String[] fieldNames, UserpType[] fieldTypes) {
-			this(TupleCoding.TIGHT, fieldNames, fieldTypes);
+		public Field(String name, UserpType type) {
+			this(new Symbol(name), type);
 		}
+		public Field(Symbol name, UserpType type) {
+			this.name= name;
+			this.type= type;
+		}
+	}
 
-		public RecordDef(TupleCoding encoding, String[] fieldNames, UserpType[] fieldTypes) {
-			this.encoding= encoding;
-			if (fieldTypes.length == 0)
+	public static class RecordDef extends TypeDef {
+		Symbol[] fieldNames;
+		UserpType[] fieldTypes;
+
+		public RecordDef(Field[] fields) {
+			if (fields.length == 0)
 				throw new RuntimeException("Records must have at least one field");
-			this.typeRefs= (UserpType[]) Util.arrayClone(fieldTypes);
-			if (fieldNames.length != fieldTypes.length)
-				throw new RuntimeException("Number of field names does not match number of field types");
-			this.fieldNames= (String[]) Util.arrayClone(fieldNames);
-
-			scalarBitLen= (encoding == TupleCoding.BITPACK || encoding == TupleCoding.TIGHT)?
-				UNRESOLVED : NONSCALAR;
+			fieldNames= new Symbol[fields.length];
+			fieldTypes= new UserpType[fields.length];
+			for (int i=0; i<fields.length; i++) {
+				fieldNames[i]= fields[i].name;
+				fieldTypes[i]= fields[i].type;
+			}
 		}
 
-		public boolean equals(Object other) {
+		public int hashCode() {
+			return ~Arrays.deepHashCode(fieldNames) ^ Arrays.deepHashCode(fieldTypes);
+		}
+
+		protected boolean equals(TypeDef other, Map<TypeHandle,TypeHandle> equalityMap) {
 			if (!(other instanceof RecordDef))
 				return false;
 			RecordDef otherDef= (RecordDef) other;
-			return encoding == otherDef.encoding
-				&& Util.arrayEquals(true, fieldNames, otherDef.fieldNames)
-				&& Util.arrayEquals(true, typeRefs, otherDef.typeRefs);
+			return Arrays.deepEquals(fieldNames, otherDef.fieldNames)
+				&& Util.typeArrayDeepEquals(fieldTypes, otherDef.fieldTypes, equalityMap);
 		}
 
 		public String toString() {
-			StringBuffer sb= new StringBuffer(64).append("Record(").append(encoding).append(", [");
+			StringBuffer sb= new StringBuffer(24*fieldNames.length).append("Record([");
 			for (int i=0; i<fieldNames.length; i++) {
-				sb.append(fieldNames[i]+"="+typeRefs[i].name);
+				sb.append(fieldNames[i]+":"+fieldTypes[i].getName());
 				if (i != fieldNames.length-1) sb.append(", ");
 			}
 			sb.append("])");
 			return sb.toString();
 		}
-
-		public UserpType resolve(PartialType pt) {
-			return new RecordType(pt.meta, this);
-		}
 	}
 
-	public RecordType(String name, String[] fieldNames, UserpType[] fieldTypes) {
-		this(nameToMeta(name), new RecordDef(fieldNames, fieldTypes));
+	public RecordType(String name) {
+		this(new Symbol(name));
 	}
 
-	public RecordType(String name, TupleCoding encoding, String[] fieldNames, UserpType[] fieldTypes) {
-		this(nameToMeta(name), new RecordDef(encoding, fieldNames, fieldTypes));
+	public RecordType(Symbol name) {
+		super(name);
 	}
 
-	public RecordType(Object[] meta, String[] fieldNames, UserpType[] fieldTypes) {
-		this(meta, new RecordDef(fieldNames, fieldTypes));
+	public RecordType init(Field[] fields) {
+		return init(new RecordDef(fields));
 	}
 
-	public RecordType(Object[] meta, TupleCoding encoding, String[] fieldNames, UserpType[] fieldTypes) {
-		this(meta, new RecordDef(encoding, fieldNames, fieldTypes));
+	public RecordType init(RecordDef def) {
+		this.def= def;
+		return this;
 	}
 
-	protected RecordType(Object[] meta, RecordDef def) {
-		super(meta, def);
-		recordDef= def;
+	public RecordType setEncParam(TupleCoding defTupleCoding) {
+		defaultTupleCoding= defTupleCoding;
+		return this;
 	}
 
-	public UserpType makeSynonym(Object[] newMeta) {
-		return new RecordType(newMeta, recordDef);
+	public UserpType cloneAs(Symbol newName) {
+		return new RecordType(newName).init(def);
 	}
 
-	public TupleCoding getEncodingMode() {
-		return recordDef.encoding;
+	public TypeDef getDefinition() {
+		return def;
 	}
 
 	public int getElemCount() {
-		return recordDef.typeRefs.length;
+		return def.fieldTypes.length;
 	}
 
 	public UserpType getElemType(int idx) {
-		return recordDef.typeRefs[idx];
+		return def.fieldTypes[idx];
 	}
 
-	public String getFieldName(int idx) {
-		return recordDef.fieldNames[idx];
+	public Symbol getFieldName(int idx) {
+		return def.fieldNames[idx];
 	}
 }

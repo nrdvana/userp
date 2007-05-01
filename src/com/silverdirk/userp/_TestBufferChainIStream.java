@@ -62,13 +62,13 @@ public class _TestBufferChainIStream extends TestCase {
 		int remaining= dataArray.length;
 		while (in.getBytePos() < dataArray.length) {
 			int count= Math.min(remaining, buffer.length);
-			in.forceRead(buffer, 0, count);
+			in.readFully(buffer, 0, count);
 			remaining-= count;
 		}
 		assertEquals(0, remaining);
 		assertEquals(dataArray.length, in.getBytePos());
 		try {
-			in.forceRead();
+			in.readUnsignedByte();
 			assertTrue("missed an expected exception", false);
 		}
 		catch (EOFException ex) {

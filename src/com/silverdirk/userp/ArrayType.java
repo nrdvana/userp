@@ -1,6 +1,8 @@
 package com.silverdirk.userp;
 
 import java.math.BigInteger;
+import java.util.Map;
+import java.util.Arrays;
 
 /**
  * <p>Project: Universal Serialization Protocol</p>
@@ -12,101 +14,83 @@ import java.math.BigInteger;
  * @version $Revision$
  */
 public class ArrayType extends TupleType {
-	ArrayDef arrayDef;
+	ArrayDef def;
 
-	public static final int
-		VARIABLE_LEN= TypeDef.VARIABLE_LEN;
-
-	public static class ArrayDef extends TupleDef {
+	public static class ArrayDef extends TypeDef {
+		UserpType elemType;
 		int length;
 
 		public ArrayDef(UserpType elemType) {
-			this(TupleCoding.TIGHT, elemType, VARIABLE_LEN);
+			this(elemType, VARIABLE_LEN);
 		}
 
 		public ArrayDef(UserpType elemType, int length) {
-			this(TupleCoding.TIGHT, elemType, length);
-		}
-
-		public ArrayDef(TupleCoding encoding, UserpType elemType, int length) {
-			this.encoding= encoding;
-			this.typeRefs= new UserpType[] { elemType };
+			this.elemType= elemType;
 			if (length < 0 && length != VARIABLE_LEN)
-				throw new RuntimeException("'length' parameter must be non-negative, or the value ArrayDef.VARIABLE_LEN");
+				throw new IllegalArgumentException("'length' parameter must be non-negative, or the value ArrayDef.VARIABLE_LEN");
 			this.length= length;
-			if (length == VARIABLE_LEN)
-				scalarBitLen= (encoding != TupleCoding.INDEFINITE)? VARIABLE_LEN : NONSCALAR;
-			else
-				scalarBitLen= (encoding == TupleCoding.BITPACK || encoding == TupleCoding.TIGHT)?
-					UNRESOLVED : NONSCALAR;
-			if (scalarBitLen == VARIABLE_LEN)
-				scalarRange= INFINITE;
 		}
 
-		public boolean equals(Object other) {
+		public int hashCode() {
+			return ~length ^ elemType.hashCode();
+		}
+
+		protected boolean equals(TypeDef other, Map<TypeHandle,TypeHandle> equalityMap) {
 			if (!(other instanceof ArrayDef))
 				return false;
 			ArrayDef otherDef= (ArrayDef) other;
-			return encoding == otherDef.encoding
-				&& typeRefs[0].equals(otherDef.typeRefs[0])
-				&& length == otherDef.length;
+			return length == otherDef.length
+				&& elemType.equals(otherDef.elemType, equalityMap);
 		}
 
 		public String toString() {
-			return "Array("+encoding+", "+typeRefs[0]+", "+(length==VARIABLE_LEN? "VARIABLE_LEN" : ""+length)+")";
+			return "Array("+elemType+", "+(length==VARIABLE_LEN? "VARIABLE_LEN" : ""+length)+")";
 		}
 
-		public UserpType resolve(PartialType pt) {
-			return new ArrayType(pt.meta, this);
-		}
+		public static final int VARIABLE_LEN= -1;
 	}
 
-	public ArrayType(String name, UserpType elemType) {
-		this(nameToMeta(name), new ArrayDef(elemType));
+	public static final int VARIABLE_LEN= ArrayDef.VARIABLE_LEN;
+
+	public ArrayType(String name) {
+		this(new Symbol(name));
 	}
 
-	public ArrayType(String name, UserpType elemType, int length) {
-		this(nameToMeta(name), new ArrayDef(elemType, length));
+	public ArrayType(Symbol name) {
+		super(name);
 	}
 
-	public ArrayType(String name, TupleCoding coding, UserpType elemType, int length) {
-		this(nameToMeta(name), new ArrayDef(coding, elemType, length));
+	public ArrayType init(UserpType elemType) {
+		return init(new ArrayDef(elemType, VARIABLE_LEN));
 	}
 
-	public ArrayType(Object[] meta, UserpType elemType) {
-		this(meta, new ArrayDef(elemType));
+	public ArrayType init(UserpType elemType, int length) {
+		return init(new ArrayDef(elemType, length));
 	}
 
-	public ArrayType(Object[] meta, UserpType elemType, int length) {
-		this(meta, new ArrayDef(elemType, length));
+	public ArrayType init(ArrayDef def) {
+		this.def= def;
+		return this;
 	}
 
-	public ArrayType(Object[] meta, TupleCoding coding, UserpType elemType, int length) {
-		this(meta, new ArrayDef(coding, elemType, length));
+	public ArrayType setEncParam(TupleCoding defTupleCoding) {
+		defaultTupleCoding= defTupleCoding;
+		return this;
 	}
 
-	protected ArrayType(Object[] meta, ArrayDef def) {
-		super(meta, def);
-		this.arrayDef= def;
-		this.impl= def.encoding.coder;
-		Class elemClass= arrayDef.typeRefs[0].preferredNativeStorage;
-		if (elemClass != null)
-			preferredNativeStorage= java.lang.reflect.Array.newInstance(elemClass, 0).getClass();
+	public UserpType cloneAs(Symbol newName) {
+		return new ArrayType(newName).init(def);
 	}
 
-	public UserpType makeSynonym(Object[] newMeta) {
-		return new ArrayType(newMeta, arrayDef);
-	}
-
-	public TupleCoding getEncodingMode() {
-		return arrayDef.encoding;
+	public TypeDef getDefinition() {
+		return def;
 	}
 
 	public int getElemCount() {
-		return arrayDef.length;
+		return def.length;
 	}
 
 	public UserpType getElemType(int idx) {
-		return arrayDef.typeRefs[0];
+		return def.elemType;
 	}
 }

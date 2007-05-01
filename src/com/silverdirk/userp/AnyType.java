@@ -1,66 +1,65 @@
 package com.silverdirk.userp;
 
-import java.math.BigInteger;
+import com.silverdirk.userp.UserpType.TypeDef;
+import java.util.Map;
 
 /**
- * <p>Project: Universal Serialization Protocol</p>
- * <p>Title: Type Any</p>
- * <p>Description: Type Any is the theoretical union of all definable types.</p>
- * <p>Copyright Copyright (c) 2004-2007</p>
+ * <p>Project: </p>
+ * <p>Title: </p>
+ * <p>Description: </p>
+ * <p>Copyright Copyright (c) 2004</p>
  *
- * @author Michael Conrad
+ * @author not attributable
  * @version $Revision$
  */
-public class AnyType extends UserpType.ResolvedType {
-	private static class AnyDef extends TypeDef {
-		public boolean equals(Object other) {
-			return other instanceof AnyDef;
+public class AnyType extends UserpType {
+	public static class TAnyDef extends UserpType.TypeDef {
+		private TAnyDef() {}
+
+		public int hashCode() {
+			return ~42;
 		}
 
-		public boolean isScalar() {
-			return false;
+		protected boolean equals(TypeDef other, Map<TypeHandle,TypeHandle> equalityMap) {
+			return other == this;
 		}
 
-		public boolean hasScalarComponent() {
-			// It does, but we don't have a way to calculate it before
-			//   seeing the output stream, so pretend we don't
-			// Also, we don't want the reader to get our scalar for us, since
-			//   readType() takes care of it.
-			return false;
+		public String toString() {
+			return "<union of all types>";
 		}
 
-		public BigInteger getScalarRange() {
-			throw new UnsupportedOperationException();
-		}
-
-		public int getScalarBitLen() {
-			return TypeDef.VARIABLE_LEN;
-		}
-
-		public UserpType resolve(PartialType pt) {
-			throw new UnsupportedOperationException();
-		}
-
-		static final AnyDef INSTANCE= new AnyDef();
+		public static final TAnyDef INSTANCE= new TAnyDef();
 	}
 
-	private AnyType(String name) {
-		super(nameToMeta(name), AnyDef.INSTANCE);
-		impl= AnyImpl.INSTANCE;
-		preferredNativeStorage= TypedData.class;
+	private AnyType() {
+		super(new Symbol("TAny"));
 	}
 
-	public UserpType makeSynonym(Object[] newName) {
-		throw new UnsupportedOperationException("Cannot make synonyms of TAny");
+	/**
+	 * cloneAs
+	 *
+	 * @param newName Symbol
+	 * @return UserpType
+	 */
+	public UserpType cloneAs(Symbol newName) {
+		throw new UnsupportedOperationException("Cannot clone type TAny");
 	}
 
-	public String toString() {
-		return name;
+	/**
+	 *
+	 * @return TypeDef
+	 */
+	public TypeDef getDefinition() {
+		return TAnyDef.INSTANCE;
 	}
 
-	public boolean equals(Object other) {
-		return other == this;
+	/**
+	 *
+	 * @return boolean
+	 */
+	public boolean hasEncoderParamDefaults() {
+		return false;
 	}
 
-	public static final AnyType INSTANCE_TANY= new AnyType("TAny");
+	public static final AnyType INSTANCE= new AnyType();
 }

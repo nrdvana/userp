@@ -6,10 +6,9 @@ package com.silverdirk.userp;
  * <p>Description: </p>
  * <p>Copyright Copyright (c) 2004</p>
  *
- * @author Michael Conrad / TheSilverDirk
+ * @author not attributable
  * @version $Revision$
  */
-public class TypeSpace {
-	public TypeSpace() {
-	}
+public enum TupleCoding {
+	INDEFINITE, INDEX, PACK, BITPACK;
 }

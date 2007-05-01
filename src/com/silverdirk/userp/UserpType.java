@@ -1,8 +1,7 @@
 package com.silverdirk.userp;
 
+import java.util.*;
 import java.math.BigInteger;
-import java.util.WeakHashMap;
-import java.io.IOException;
 
 /**
  * <p>Project: Universal Serialization Protocol</p>
@@ -14,94 +13,48 @@ import java.io.IOException;
  * @version $Revision$
  */
 public abstract class UserpType {
-	String name;
-	Object[] meta;
-	UserpType synOf;
-	TypeDef def;
-	ReaderWriterImpl impl;
-	Class preferredNativeStorage;
+	Symbol name;
+	public final List meta= new LinkedList();
 
 	int hashCache= -1; // -1 == uninitialized, any other value is the actual hash
-	int staticProtocolTypeCode= -1;
 	public final TypeHandle handle= new TypeHandle(this);
 
-	ThreadLocal equalitySetRef= new ThreadLocal() {
-		protected Object initialValue() {
-			return new WeakHashMap();
-		}
-	};
-
-	protected UserpType(Object[] meta) {
-		initMeta(meta);
-	}
-	protected void finishInit() {
+	protected UserpType(Symbol name) {
+		this.name= name;
 	}
 
-	public String getName() {
+	public Symbol getName() {
 		return name;
 	}
-	public Object[] getMeta() {
+
+	public String getDisplayName() {
+		return name.data.length == 0? "<unnamed>" : name.toString();
+	}
+
+	public List getMeta() {
 		return meta;
-	}
-	protected void initMeta(Object[] meta) {
-		byte[] nameMetaEntry= null;
-		if (meta != null)
-			for (int i=0; i<meta.length; i++)
-				if (meta[i] instanceof TypedData) {
-					TypedData td= (TypedData) meta[i];
-					if (td.dataType == TypeNameSnafuTypes.TTypeName) {
-						if (nameMetaEntry != null)
-							throw new RuntimeException("two names specified in metadata for this type: "+nameMetaEntry+", "+((TypeName)meta[i]).name);
-						nameMetaEntry= (byte[]) td.data;
-					}
-				}
-		this.meta= meta;
-		this.name= nameMetaEntry != null? Util.bytesToReadableString(nameMetaEntry) : "";
-	}
-	void lateInitMeta(Object[] meta) {
-		initMeta(meta);
-		hashCache= -1;
-	}
-	UserpType overrideImpl(ReaderWriterImpl impl) {
-		this.impl= impl;
-		return this;
-	}
-
-	public static Object nameToMetaElement(String name) {
-		try {
-			return new TypedData(TypeNameSnafuTypes.TTypeName, name.getBytes("UTF-8"));
-		}
-		catch (java.io.UnsupportedEncodingException ex) {
-			throw new RuntimeException();
-		}
-	}
-
-	public static Object[] nameToMeta(String name) {
-		return new Object[] { nameToMetaElement(name) };
 	}
 
 	public TypeHandle getUniqueKey() {
 		return handle;
 	}
-	public UserpType getSynonymOrigin() {
-		return synOf;
-	}
 
-	public Class getNativeStoragePref() {
-		return preferredNativeStorage;
-	}
+	public abstract TypeDef getDefinition();
 
-	public void setNativeStoragePref(Class c) {
-		preferredNativeStorage= c;
-	}
-
-	public UserpType withStoPref(Class c) {
-		setNativeStoragePref(c);
-		return this;
-	}
-
-	protected abstract void typeSwap(UserpType from, UserpType to);
-
+	/** Get the hash code for this type.
+	 * <p>Hash codes for types are cached the first time they are requested.
+	 * Only the metadata and class for the type is hashed, meaning that two
+	 * types of the same class with the same names but different definitions
+	 * will have colliding hash codes.  However, this should be fine in practice
+	 * since types normally don't have the same name.
+	 *
+	 * <p>Using a semi-deep (instead of full-deep) hash calculation avoids the
+	 * problem of recursion when types have circular references to eachother.
+	 * There could still be a problem if there were a circular reference
+	 * between a type in the metadata, but the library prevents this.
+	 *
+	 * @return int the semi-deep hash code
+	 */
 	public int hashCode() {
 		if (hashCache == -1) {
 			hashCache= calcHash();
@@ -111,57 +64,65 @@ public abstract class UserpType {
 		return hashCache;
 	}
 
-	protected abstract int calcHash();
+	protected int calcHash() {
+		TypeDef def= getDefinition();
+		if (def == null)
+			throw new UninitializedTypeException(this, "hashCode");
+		return name.hashCode() ^ getClass().hashCode();
+	}
 
 	public boolean equals(Object other) {
 		return (other instanceof UserpType) && equals((UserpType)other);
 	}
 
-	public abstract boolean equals(UserpType other);
-
-	public abstract boolean isScalar();
-	public abstract boolean hasScalarComponent();
-	public abstract BigInteger getScalarRange();
-	public abstract int getScalarBitLen();
-
-	public abstract UserpType resolve();
-
-	final ReaderImpl getReaderImpl() {
-		return impl;
+	public final boolean equals(UserpType other) {
+		return equals(other, new HashMap<TypeHandle,TypeHandle>());
 	}
 
-	public UserpType makeSynonym(String newName) {
-		return makeSynonym(nameToMeta(newName));
+	public final boolean definitionEquals(UserpType other) {
+		HashMap equalityMap= new HashMap<TypeHandle,TypeHandle>();
+		equalityMap.put(handle, other.handle);
+		return definitionEquals(other, equalityMap);
 	}
-	public abstract UserpType makeSynonym(Object[] newMeta);
 
-	public abstract String toString();
-
-	public abstract int getTypeRefCount();
-	public abstract UserpType getTypeRef(int idx);
-
-	// convenience methods
-	public boolean isEnum()   { return false; }
-	public boolean isRange()  { return false; }
-	public boolean isUnion()  { return false; }
-	public boolean isTuple()  { return false; }
-	public boolean isArray()  { return false; }
-	public boolean isRecord() { return false; }
-
-	public final boolean metaEquals(UserpType other) {
-		return Util.arrayEquals(true, meta, other.meta);
+	protected final boolean equals(UserpType other, Map<TypeHandle,TypeHandle> equalityMap) {
+		equalityMap.put(handle, other.handle);
+		return name.equals(other.name) && definitionEquals(other, equalityMap);
 	}
-	public abstract boolean definitionEquals(UserpType other);
 
-	public static class TypeName {
-		String name;
-		TypeName(String name) {
-			this.name= name;
+	protected final boolean definitionEquals(UserpType other, Map<TypeHandle,TypeHandle> equalityMap) {
+		TypeDef idef= getDefinition(), odef= other.getDefinition();
+		if (idef == null)
+			throw new UninitializedTypeException(this, "equals");
+		if (odef == null)
+			throw new UninitializedTypeException(other, "equals");
+		return idef.equals(odef, equalityMap);
+	}
+
+	public UserpType cloneAs(String newName) {
+		return cloneAs(new Symbol(newName));
+	}
+
+	public abstract UserpType cloneAs(Symbol newName);
+
+	public String toString() {
+		return getName()+"="+getDefinition();
+	}
+
+	public abstract boolean hasEncoderParamDefaults();
+
+	protected static class InfFlag extends BigInteger {
+		InfFlag() {
+			super(new byte[] {0});
 		}
-		public String getName() {
-			return name;
+		public boolean equals(Object other) {
+			return other == this;
 		}
 	}
+
+	public static final InfFlag
+		INF= new InfFlag(),
+		NEG_INF= new InfFlag();
 
 	/**
 	 * This class simply changes the "equals" concept for a type object.
@@ -180,73 +141,29 @@ public abstract class UserpType {
 		}
 	}
 
-	abstract static class ResolvedType extends UserpType {
-		public ResolvedType(Object[] meta, TypeDef def) {
-			super(meta);
-			this.def= def;
+	interface RecursiveAware {
+		public boolean equals(Object other, Map<TypeHandle,TypeHandle> equalityMap);
+	}
+
+	public abstract static class TypeDef implements RecursiveAware {
+		/** Generate a hash code for this type definition.
+		 * The generated hash is a "deep hash" incorperating the hash codes of
+		 * all referenced types, however the hash code is a type only a hash
+		 * of the metadata.
+		 * @return int The hash code for this type definition
+		 */
+		public abstract int hashCode();
+
+		public boolean equals(Object other) {
+			return equals((TypeDef)other, new HashMap<TypeHandle,TypeHandle>());
 		}
 
-		public String toString() {
-			return name+"="+def;
+		public boolean equals(Object other, Map<TypeHandle,TypeHandle> equalityMap) {
+			return (other instanceof TypeDef) && equals(other, equalityMap);
 		}
 
-		protected int calcHash() {
-			int metaHash= meta == null? 0 : Util.arrayHash(meta);
-			int typeHash= getClass().hashCode();
-			for (int i=0, stop=getTypeRefCount(); i<stop; i++)
-				typeHash= ((typeHash << 3) | (typeHash >>> 29)) ^ getTypeRef(i).getClass().hashCode();
-			return metaHash ^ typeHash;
-		}
+		protected abstract boolean equals(TypeDef other, Map<TypeHandle,TypeHandle> equalityMap);
 
-		public boolean equals(UserpType other) {
-			if (this == other)
-				return true;
-			if (hashCode() != other.hashCode())
-				return false;
-			WeakHashMap equalitySet= (WeakHashMap) equalitySetRef.get();
-			if (equalitySet.containsKey(other.handle))
-				return true;
-			equalitySet.put(other.handle, null);
-			boolean result= false;
-			try {
-				result= metaEquals(other) && definitionEquals(other);
-			}
-			finally {
-				if (!result) equalitySet.remove(other.handle);
-			}
-			return result;
-		}
-
-		public boolean definitionEquals(UserpType other) {
-			return other instanceof ResolvedType
-				&& def.equals(other.def);
-		}
-
-		public UserpType resolve() {
-			return this;
-		}
-
-		public boolean isScalar() {
-			return def.isScalar();
-		}
-		public boolean hasScalarComponent() {
-			return def.hasScalarComponent();
-		}
-		public BigInteger getScalarRange() {
-			return def.getScalarRange();
-		}
-		public int getScalarBitLen() {
-			return def.getScalarBitLen();
-		}
-		public int getTypeRefCount() {
-			return def.getTypeRefCount();
-		}
-		public UserpType getTypeRef(int idx) {
-			return def.getTypeRef(idx);
-		}
-
-		protected void typeSwap(UserpType from, UserpType to){
-			def.typeSwap(from, to);
-		}
+		public abstract String toString();
 	}
 }

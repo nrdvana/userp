@@ -1,5 +1,7 @@
 package com.silverdirk.userp;
 
+import java.util.*;
+
 /**
  * <p>Project: Universal Serialization Protocol</p>
  * <p>Title: Typed Data</p>
@@ -9,7 +11,7 @@ package com.silverdirk.userp;
  * @author Michael Conrad
  * @version $Revision$
  */
-public class TypedData {
+public class TypedData implements UserpType.RecursiveAware {
 	UserpType dataType;
 	Object data;
 
@@ -31,10 +33,15 @@ public class TypedData {
 	}
 
 	public boolean equals(Object other) {
-		return other instanceof TypedData && equals((TypedData)other);
+		return equals(other, new HashMap<UserpType.TypeHandle,UserpType.TypeHandle>());
 	}
-	public boolean equals(TypedData other) {
-		return dataType == other.dataType
+
+	public boolean equals(Object other, Map<UserpType.TypeHandle,UserpType.TypeHandle> equalityMap) {
+		return other instanceof TypedData && equals((TypedData)other, equalityMap);
+	}
+
+	public boolean equals(TypedData other, Map<UserpType.TypeHandle,UserpType.TypeHandle> equalityMap) {
+		return dataType.equals(other.dataType, equalityMap)
 			&& data.equals(other.data);
 	}
 }

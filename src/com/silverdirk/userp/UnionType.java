@@ -1,7 +1,7 @@
 package com.silverdirk.userp;
 
 import java.math.BigInteger;
-import java.util.HashMap;
+import java.util.*;
 
 /**
  * <p>Project: Universal Serialization Protocol</p>
@@ -12,262 +12,128 @@ import java.util.HashMap;
  * @author Michael Conrad
  * @version $Revision$
  */
-public class UnionType extends UserpType.ResolvedType {
-	UnionDef unionDef;
-	HashMap typeIdxMap= null; // remains null unless threshhold is exceeded
-
-	static final int
-		HASH_THRESHHOLD= 4; // max number of subtypes we allow before we decide to hash them
+public class UnionType extends UserpType {
+	UnionDef def= null;
+	boolean[] inlines= null;
+	boolean bitpack= false;
 
 	public static class UnionDef extends TypeDef {
-		boolean bitpacked;
-		boolean[] inlined;
-		BigInteger[] offsets;
-		long[] offsets_l;
-		boolean pureScalar;
+		UserpType[] members;
 
-		public UnionDef(UserpType[] subTypes) {
-			this(false, subTypes, null);
-		}
+		// TODO: find optimal value for HASH_THRESHHOLD
+		static final int
+			HASH_THRESHHOLD= 8; // max number of subtypes we allow before we decide to hash them
+		HashMap typeIdxMap= null; // remains null unless threshhold is exceeded
 
-		public UnionDef(UserpType[] subTypes, boolean[] inlined) {
-			this(false, subTypes, inlined);
-		}
-
-		public UnionDef(boolean bitpacked, UserpType[] subTypes, boolean[] inlined) {
-			this.bitpacked= bitpacked;
-			if (subTypes.length < 2)
+		public UnionDef(UserpType[] Members) {
+			if (Members.length < 2)
 				throw new RuntimeException("Cannot form a union of fewer than two sub-types");
-			typeRefs= (UserpType[]) Util.arrayClone(subTypes);
-			if (inlined != null && inlined.length != typeRefs.length)
-				throw new RuntimeException("The size of the 'inlined' array must match the number of sub-types");
-			this.inlined= (boolean[]) Util.arrayClone(inlined);
+			this.members= (UserpType[]) Members.clone();
+
+			// build hash if we have more than THRESHHOLD Member types
+			if (Members.length > HASH_THRESHHOLD) {
+				typeIdxMap= new HashMap();
+				for (int i=0; i<Members.length; i++)
+					typeIdxMap.put(Members[i].handle, new Integer(i));
+			}
+		}
+
+		public int hashCode() {
+			return Arrays.deepHashCode(members);
+		}
+
+		protected boolean equals(TypeDef other, Map<TypeHandle,TypeHandle> equalityMap) {
+			throw new Error("Unimplemented");
+//			return (other instanceof UnionDef)
+//				&& Arrays.equals(members, ((UnionDef)other).Members);
 		}
 
 		public String toString() {
 			StringBuffer sb= new StringBuffer("Union([");
-			for (int i=0, max=typeRefs.length-1; i <= max; i++) {
-				if (!inlined[i]) sb.append('(');
-				sb.append(typeRefs[i].name);
-				if (!inlined[i]) sb.append('}');
+			for (int i=0, max=members.length-1; i <= max; i++) {
+				sb.append(members[i].getName());
 				if (i != max) sb.append(", ");
 			}
 			sb.append("])");
 			return sb.toString();
 		}
 
-		public boolean equals(Object other) {
-			if (!(other instanceof UnionDef)) return false;
-			UnionDef otherDef= (UnionDef) other;
-			if (!Util.arrayEquals(true, typeRefs, otherDef.typeRefs))
-				return false;
-			// could use Util.arrayEquals, but it'd be rather inefficient.
-			for (int i=0; i<inlined.length; i++)
-				if (inlined[i] != otherDef.inlined[i])
-					return false;
-			return bitpacked == otherDef.bitpacked;
+		public int getMemberCount() {
+			return members.length;
 		}
 
-		public boolean isScalar() {
-			if (scalarBitLen == UNRESOLVED)
-				calcScalarAndOffsets();
-			return pureScalar;
+		public UserpType getMember(int idx) {
+			return members[idx];
 		}
 
-		public boolean hasScalarComponent() {
-			return true;
-		}
-
-		public BigInteger getScalarRange() {
-			if (scalarBitLen == UNRESOLVED)
-				calcScalarAndOffsets();
-			return scalarRange;
-		}
-
-		public int getScalarBitLen() {
-			if (scalarBitLen == UNRESOLVED)
-				calcScalarAndOffsets();
-			return scalarBitLen;
-		}
-
-		public UserpType resolve(PartialType pt) {
-			if (inlined == null && !tryCalcInlines())
-				throw new RuntimeException("The \"inlined\" param was not given, and there is not enough information available to determine a default.");
-			if (scalarBitLen == UNRESOLVED)
-				calcScalarAndOffsets();
-			return new UnionType(pt.meta, this);
-		}
-
-		private void calcScalarAndOffsets() {
-			pureScalar= true;
-			BigInteger offsetVal= BigInteger.ZERO;
-			BigInteger[] offsetCalc= new BigInteger[typeRefs.length];
-			offsetCalc[0]= BigInteger.ZERO;
-			for (int i= 0; i<typeRefs.length; i++) {
-				if (inlined[i]) {
-					if (!typeRefs[i].isScalar())
-						pureScalar= false;
-					if (!typeRefs[i].hasScalarComponent())
-						throw new RuntimeException("sub-type "+typeRefs[i].getName()+" has no scalar component, but was specified to be inlined");
-					else if (typeRefs[i].getScalarRange() == INFINITE) {
-						if (i != typeRefs.length-1)
-							throw new RuntimeException("sub-type "+typeRefs[i].getName()+" is infinite, and inlined, and is not the last sub-type");
-						else
-							offsetVal= INFINITE;
-					}
-					else
-						offsetVal= offsetVal.add(typeRefs[i].getScalarRange());
-				}
-				else {
-					offsetVal= offsetVal.add(BigInteger.ONE);
-					pureScalar= false;
-				}
-				if (i != typeRefs.length-1)
-					offsetCalc[i+1]= offsetVal;
+		public int getMemberIdx(UserpType type) {
+			// if we have a lookup table, use it
+			if (typeIdxMap != null) {
+				Integer result= (Integer) typeIdxMap.get(type.handle);
+				if (result != null)
+					return result.intValue();
 			}
-			setScalarRange(offsetVal);
-			offsets= offsetCalc;
-
-			offsets_l= new long[offsets.length];
-			for (int i=0; i<offsets.length; i++)
-				offsets_l[i]= offsets[i].bitLength() < 64? offsets[i].longValue() : Long.MAX_VALUE;
-		}
-
-		static int findRangeIdxOf(BigInteger[] offsets, BigInteger val) {
-			int min= 0, max= offsets.length-1, mid= 0;
-			while (min < max) {
-				mid= (min+max+1) >> 1;
-				if (val.compareTo(offsets[mid]) < 0) max= mid-1;
-				else min= mid;
-			}
-			return max;
-		}
-
-		static int findRangeIdxOf(long[] offsets, long val) {
-			int min= 0, max= offsets.length-1, mid= 0;
-			while (min < max) {
-				mid= (min+max+1) >> 1;
-				if (val < offsets[mid]) max= mid-1;
-				else min= mid;
-			}
-			return max;
-		}
-
-		/** Attempt to calculate whether each sub-type can be inlined into the selector value.
-		 * This method is named 'try' because it will might fail if one of the
-		 * sub-types has not been resolved.
-		 *
-		 * @return true, if 'inlined' was successfully calculated, and false otherwise
-		 */
-		protected boolean tryCalcInlines() {
-			try {
-				boolean[] inlineCalc= new boolean[typeRefs.length];
-				for (int i=0; i<typeRefs.length; i++)
-					inlineCalc[i]= (typeRefs[i].isScalar() || typeRefs[i].hasScalarComponent())
-						&& (i == typeRefs.length-1 || typeRefs[i].getScalarRange() != INFINITE);
-				inlined= inlineCalc;
-				return true;
-			}
-			catch (Exception ex) {
-				return false;
-			}
+			// else use the boring algorithm
+			for (int i=0; i<members.length; i++)
+				if (members[i] == type)
+					return i;
+			// else fail
+			return -1;
 		}
 	}
 
-	public UnionType(String name, UserpType[] subTypes) {
-		this(nameToMeta(name), new UnionDef(subTypes));
+	public UnionType(String name) {
+		this(new Symbol(name));
 	}
 
-	public UnionType(String name, UserpType[] subTypes, boolean[] inlined) {
-		this(nameToMeta(name), new UnionDef(subTypes, inlined));
+	public UnionType(Symbol name) {
+		super(name);
 	}
 
-	public UnionType(String name, boolean bitpacked, UserpType[] subTypes, boolean[] inlined) {
-		this(nameToMeta(name), new UnionDef(bitpacked, subTypes, inlined));
+	public UnionType init(UserpType[] Members) {
+		return init(new UnionDef(Members));
 	}
 
-	public UnionType(Object[] meta, UserpType[] subTypes) {
-		this(meta, new UnionDef(subTypes));
+	public UnionType init(UnionDef def) {
+		this.def= def;
+		return this;
 	}
 
-	public UnionType(Object[] meta, UserpType[] subTypes, boolean[] inlined) {
-		this(meta, new UnionDef(subTypes, inlined));
+	public UnionType setEncParams(boolean bitpack, boolean[] inlineMembers) {
+		this.bitpack= bitpack;
+		this.inlines= inlineMembers;
+		return this;
 	}
 
-	public UnionType(Object[] meta, boolean bitpacked, UserpType[] subTypes, boolean[] inlined) {
-		this(meta, new UnionDef(bitpacked, subTypes, inlined));
+	public UserpType cloneAs(Symbol newName) {
+		return new UnionType(newName).init(def);
 	}
 
-	protected UnionType(Object[] meta, UnionDef def) {
-		super(meta, def);
-		unionDef= def;
-		boolean fitsInLong= unionDef.getScalarRange() != TypeDef.INFINITE && unionDef.getScalarRange().bitLength() < 64;
-		impl= fitsInLong? UnionImpl_Long.INSTANCE : UnionImpl_BigInt.INSTANCE;
+	public TypeDef getDefinition() {
+		return def;
 	}
 
-	protected void finishInit() {
-		if (def.typeRefs.length > HASH_THRESHHOLD) {
-			typeIdxMap= new HashMap();
-			for (int i=0; i<def.typeRefs.length; i++)
-				typeIdxMap.put(def.typeRefs[i].handle, new Integer(i));
-		}
+	public boolean hasEncoderParamDefaults() {
+		return inlines != null;
 	}
 
-	public UserpType makeSynonym(Object[] newMeta) {
-		UnionType result= new UnionType(newMeta, unionDef);
-		result.typeIdxMap= typeIdxMap;
-		return result;
+	public boolean getEncoderParam_Bitpack() {
+		return bitpack;
 	}
 
-	public int getSubtypeCount() {
-		return def.typeRefs.length;
+	public boolean[] getEncoderParam_Inline() {
+		return inlines;
 	}
 
-	public UserpType getSubtype(int idx) {
-		return def.typeRefs[idx];
+	public final int getMemberCount() {
+		return def.getMemberCount();
 	}
 
-	public int getSubtypeIdx(UserpType type) {
-		// if we have a lookup table, use it
-		if (typeIdxMap != null) {
-			Integer result= (Integer) typeIdxMap.get(type.handle);
-			if (result != null)
-				return result.intValue();
-		}
-		// else use the boring algorithm
-		for (int i=0; i<def.typeRefs.length; i++)
-			if (def.typeRefs[i] == type)
-				return i;
-		// else fail
-		return -1;
+	public final UserpType getMember(int idx) {
+		return def.getMember(idx);
 	}
 
-	public void typeSwap(UserpType from, UserpType to) {
-		if (typeIdxMap != null && from instanceof UserpType) {
-			Integer idx= (Integer) typeIdxMap.get(((UserpType)from).handle);
-			if (idx != null) {
-				def.typeRefs[idx.intValue()]= to;
-				typeIdxMap.remove(((UserpType)from).handle);
-				typeIdxMap.put(to.handle, idx);
-			}
-		}
-		else
-			super.typeSwap(from, to);
-	}
-
-	public boolean isScalar() {
-		return unionDef.pureScalar;
-	}
-
-	public boolean hasScalarComponent() {
-		return true;
-	}
-
-	public BigInteger getScalarRange() {
-		return unionDef.scalarRange;
-	}
-
-	public int getScalarBitLen() {
-		return unionDef.scalarBitLen;
+	public final int getMemberIdx(UserpType type) {
+		return def.getMemberIdx(type);
 	}
 }

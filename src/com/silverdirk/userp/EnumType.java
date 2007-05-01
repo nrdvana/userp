@@ -1,8 +1,7 @@
 package com.silverdirk.userp;
 
-import java.util.HashMap;
+import java.util.*;
 import java.math.BigInteger;
-import java.io.IOException;
 
 /**
  * <p>Project: Universal Serialization Protocol</p>
@@ -13,100 +12,183 @@ import java.io.IOException;
  * @author Michael Conrad
  * @version $Revision$
  */
-public class EnumType extends UserpType.ResolvedType {
-	EnumDef enumDef;
-	BigInteger scalarRange;
-	int scalarBitLenCache;
-	HashMap valueLookup= null;
+public class EnumType extends ScalarType {
+	EnumDef def;
 
 	public static class EnumDef extends TypeDef {
-		String[] members;
+		Object[] spec;
+		BigInteger scalarRange;
+		int hashCache= -1;
 
-		public EnumDef(String[] members) {
-			this.members= members;
-			scalarRange= BigInteger.valueOf(members.length);
-			scalarBitLen= Util.getBitLength(members.length);
+		public EnumDef(Symbol[] values) {
+			spec= values;
+			scalarRange= BigInteger.valueOf(values.length);
+		}
+
+		public EnumDef(Object[] specComponents) {
+			// assert each component is one of Symbol, String (convert to symbol),
+			// TypeData, or Range.  Assert ranges are non-infinite, except last one.
+			int singleCount= 0;
+			BigInteger rangeWidth= BigInteger.ZERO;
+			for (int i=0; i<specComponents.length; i++) {
+				Object spec_i= specComponents[i];
+				if (spec_i instanceof Range) {
+					BigInteger width= ((Range) spec_i).getScalarRange();
+					if (width == INF) {
+						if (i != specComponents.length-1)
+							throw new RuntimeException("An infinite range can only be specified as the last element of an enumeration");
+						rangeWidth= INF;
+					}
+					else
+						rangeWidth= rangeWidth.add(width);
+				}
+				else {
+					if (spec_i instanceof String)
+						spec_i= new Symbol((String)spec_i);
+					else if (!(spec_i instanceof Symbol) && !(spec_i instanceof TypedData))
+						throw new RuntimeException("Enum spec components must be one of Symbol, TypedData, or Range");
+					singleCount++;
+				}
+			}
+			if (rangeWidth == INF)
+				scalarRange= INF;
+			else
+				scalarRange= rangeWidth.add(BigInteger.valueOf(singleCount));
+		}
+
+		public int hashCode() {
+			throw new Error("Unimplemented");
+		}
+
+		protected boolean equals(TypeDef other, Map<TypeHandle,TypeHandle> equalityMap) {
+			throw new Error("Unimplemented");
 		}
 
 		public String toString() {
 			StringBuffer sb= new StringBuffer("Enum([");
-			int count= members.length;
-			for (int i=0, high=Math.min(3, count-1); i<=high; i++) {
-				sb.append(members[i]);
-				if (i != high) sb.append(", ");
+			if (spec != null) {
+				int count= spec.length;
+				for (int i=0, high=Math.min(3, count-1); i<=high; i++) {
+					sb.append(spec[i]);
+					if (i != high) sb.append(", ");
+				}
+				if (count > 4)
+					sb.append("... ");
+				if (count >= 4)
+					sb.append(", ").append(spec[count-1]);
 			}
-			if (count > 4)
-				sb.append("... ");
-			if (count >= 4)
-				sb.append(", ").append(members[count-1]);
+			else
+				sb.append("?");
 			sb.append("])");
 			return sb.toString();
 		}
 
-		public boolean equals(Object other) {
-			if (!(other instanceof EnumDef)) return false;
-			EnumDef otherEnum= (EnumDef) other;
-			return Util.arrayEquals(true, members, otherEnum.members);
-		}
-
-		public boolean isScalar() {
-			return true;
-		}
-
-		public boolean hasScalarComponent() {
-			return true;
-		}
-
-		public BigInteger getScalarRange() {
+		public final BigInteger getValueCount() {
 			return scalarRange;
 		}
 
-		public int getScalarBitLen() {
-			return scalarBitLen;
+		public final TypedData getValueByOrdinal(int ordinal) {
+			throw new Error("Unimplemented");
 		}
 
-		UserpType resolve(PartialType pt) {
-			return new EnumType(pt.meta, this);
+		public final int getOrdinalByValue(TypedData val) {
+			throw new Error("Unimplemented");
 		}
 	}
 
-	public EnumType(String name, String[] members) {
-		this(nameToMeta(name), new EnumDef(members));
+	public static class Range implements RecursiveAware {
+		ScalarType domain;
+		BigInteger from, to;
+
+		public Range(ScalarType domain, long from, long to) {
+			this(domain, BigInteger.valueOf(from), BigInteger.valueOf(to));
+		}
+
+		public Range(ScalarType domain, long from, BigInteger to) {
+			this(domain, BigInteger.valueOf(from), to);
+		}
+
+		public Range(ScalarType domain, BigInteger from, BigInteger to) {
+			this.domain= domain;
+			this.from= from;
+			this.to= to;
+			if (from == INF || from == NEG_INF)
+				throw new RuntimeException("A range's \"from\" cannot be infinite.");
+		}
+
+		public BigInteger getScalarRange() {
+			if (to == INF || to == NEG_INF)
+				return INF;
+			return (from.compareTo(to) < 0? to.subtract(from) : from.subtract(to)).add(BigInteger.ONE);
+		}
+
+		public int hashCode() {
+			return from.intValue() ^ to.intValue() ^ domain.hashCode();
+		}
+
+		public boolean equals(Object other) {
+			return equals(other, new HashMap<TypeHandle,TypeHandle>());
+		}
+
+		public boolean equals(Object other, Map<TypeHandle,TypeHandle> equalityMap) {
+			return other instanceof Range && equals((Range)other, equalityMap);
+		}
+
+		protected boolean equals(Range other, Map<TypeHandle,TypeHandle> equalityMap) {
+			return from.equals(other.from)
+				// InfFlag will assert that the other is also an InfFlag, but BigInteger.ZERO will see itself equal to INF
+				&& other.to.equals(to) && to.equals(other.to)
+				&& domain.equals(other.domain, equalityMap);
+		}
+
+		// re-reference these values so users can find them more easily
+		public static final InfFlag
+			INF= UserpType.INF,
+			NEG_INF= UserpType.NEG_INF;
 	}
 
-	public EnumType(Object[] meta, String[] members) {
-		this(meta, new EnumDef(members));
+	public EnumType(String name) {
+		this(new Symbol(name));
 	}
 
-	protected EnumType(Object[] meta, EnumDef def) {
-		super(meta, def);
-		this.enumDef= def;
-		valueLookup= new HashMap();
-		for (int i=0, stop=getMemberCount(); i<stop; i++)
-			valueLookup.put(getMember(i), new Integer(i));
-		impl= EnumImpl.INSTANCE;
+	public EnumType(Symbol name) {
+		super(name);
 	}
 
-	public UserpType makeSynonym(Object[] newMeta) {
-		EnumType result= new EnumType(newMeta, (EnumDef) def);
-		result.valueLookup= valueLookup;
-		return result;
+	public EnumType init(Object[] spec) {
+		return init(new EnumDef(spec));
 	}
 
-	public int getMemberCount() {
-		return enumDef.members.length;
+	public EnumType init(EnumDef def) {
+		this.def= def;
+		return this;
 	}
 
-	public String getMember(int idx) {
-		return enumDef.members[idx];
+	public UserpType cloneAs(Symbol newName) {
+		return new EnumType(newName).init(def);
 	}
 
-	public int getMemberIdxByValue(String val) {
-		Integer idx= (Integer) valueLookup.get(val);
-		return idx != null? idx.intValue() : -1;
+	public TypeDef getDefinition() {
+		return def;
 	}
 
-	public boolean isEnum() {
-		return true;
+	public boolean hasEncoderParamDefaults() {
+		return false;
+	}
+
+	public boolean isDoublyInfinite() {
+		return false;
+	}
+
+	public final BigInteger getValueCount() {
+		return def.getValueCount();
+	}
+
+	public final TypedData getValueByOrdinal(int ordinal) {
+		return def.getValueByOrdinal(ordinal);
+	}
+
+	public final int getOrdinalByValue(TypedData val) {
+		return def.getOrdinalByValue(val);
 	}
 }

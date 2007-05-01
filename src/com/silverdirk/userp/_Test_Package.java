@@ -18,6 +18,8 @@ public class _Test_Package extends TestCase {
 	public static Test suite() {
 		TestSuite suite= new TestSuite();
 		suite.addTestSuite(com.silverdirk.userp._TestBufferChainIStream.class);
+		suite.addTestSuite(com.silverdirk.userp._TestUserpEncoderDecoder.class);
+		suite.addTestSuite(com.silverdirk.userp._TestCodecs.class);
 		return suite;
 	}
 }
