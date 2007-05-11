@@ -58,7 +58,7 @@ public class _TestCodecs extends TestCase {
 
 	private void testEnum64Codec(boolean bitpack) throws Exception {
 		EnumType t1= new EnumType("t1").init(new Object[] {"foo", "bar", "baz"});
-		Codec c1= new CodecCollection().getCodecFor(t1);
+		Codec c1= new CodecBuilder(true).getCodecFor(t1);
 		prepEncoder(new Codec[] {c1});
 		enc.enableBitpack(bitpack);
 		new UserpWriter(enc, c1).write(0);
@@ -94,7 +94,7 @@ public class _TestCodecs extends TestCase {
 
 	private void testEnumInfCodec(boolean bitpack) throws Exception {
 		EnumType t1= new EnumType("t1").init(new Object[] {"foo", "bar", "baz", new EnumType.Range(Userp.TInt, 0, EnumType.Range.INF)});
-		Codec c1= new CodecCollection().getCodecFor(t1);
+		Codec c1= new CodecBuilder(true).getCodecFor(t1);
 		prepEncoder(new Codec[] {c1});
 		enc.enableBitpack(bitpack);
 		new UserpWriter(enc, c1).write(0);
@@ -119,7 +119,7 @@ public class _TestCodecs extends TestCase {
 		EnumType t2= new EnumType("t2").init(new Object[] {"foo", "bar", "baz", new EnumType.Range(Userp.TInt, 0, EnumType.Range.INF)});
 		UnionType t3= new UnionType("t3").init(new UserpType[] {t1, Userp.TByte, Userp.TStrUTF8, t2});
 		t3.setEncParams(bitpack, inline? new boolean[] {true, true, false, true} : new boolean[] {false, false, false, false});
-		Codec c1= new CodecCollection().getCodecFor(t3);
+		Codec c1= new CodecBuilder(true).getCodecFor(t3);
 		prepEncoder(new Codec[] {c1});
 		enc.enableBitpack(false);
 		new UserpWriter(enc, c1).select(t1).write(0);
@@ -172,14 +172,20 @@ public class _TestCodecs extends TestCase {
 	}
 
 	private void testPackedTupleCodec(boolean bitpack) throws Exception {
-		ArrayType a1= new ArrayType("e1").init(Userp.TInt32);
-		Codec c1= new CodecCollection().getCodecFor(a1);
-		prepEncoder(new Codec[] {c1});
+		ArrayType a1= new ArrayType("a1").init(Userp.TInt32);
+		ArrayType a2= new ArrayType("a2").init(a1, 3);
+		Codec c2= new CodecBuilder(true).getCodecFor(a2);
+		prepEncoder(new Codec[] {c2});
 		enc.enableBitpack(bitpack);
-		UserpWriter w= new UserpWriter(enc, c1);
+		UserpWriter w= new UserpWriter(enc, c2);
+		w.beginTuple();
 		w.beginTuple(5);
 		for (int i=0; i<5; i++)
 			w.write(42);
+		w.endTuple();
+		w.beginTuple(2);
+		w.write(42);
+		w.write(42);
 		try {
 			w.write(42);
 			assertTrue("Missed an expected exception", false);
@@ -187,14 +193,26 @@ public class _TestCodecs extends TestCase {
 		catch (java.lang.IllegalStateException ex) {
 		}
 		w.endTuple();
+		w.beginTuple(5);
+		for (int i=0; i<5; i++)
+			w.write(42);
+		w.endTuple();
+		w.endTuple();
 		prepDecoder();
-		byte[] expected= bytesFromHex("05 0000002A 0000002A 0000002A 0000002A 0000002A");
+		byte[] expected= bytesFromHex("05 0000002A 0000002A 0000002A 0000002A 0000002A "
+			+"02 0000002A 0000002A "
+			+"05 0000002A 0000002A 0000002A 0000002A 0000002A ");
 		assertTrue(Arrays.equals(expected, bytes));
 		dec.enableBitpack(bitpack);
-		UserpReader r= new UserpReader(dec, c1);
+		UserpReader r= new UserpReader(dec, c2);
+		r.inspectTuple();
 		assertEquals(5, r.inspectTuple());
 		for (int i=0; i<5; i++)
 			assertEquals(42, r.readAsInt());
+		r.closeTuple();
+		assertEquals(2, r.inspectTuple());
+		assertEquals(42, r.readAsInt());
+		assertEquals(42, r.readAsInt());
 		try {
 			r.readAsInt();
 			assertTrue("Missed an expected exception", false);
@@ -202,13 +220,18 @@ public class _TestCodecs extends TestCase {
 		catch (IllegalStateException ex) {
 		}
 		r.closeTuple();
+		assertEquals(5, r.inspectTuple());
+		for (int i=0; i<5; i++)
+			assertEquals(42, r.readAsInt());
+		r.closeTuple();
+		r.closeTuple();
 	}
 
 	public void testBitpackingInsideBytepackedTuple() throws Exception {
 		EnumType e1= new EnumType("e1").init(new Object[] { new EnumType.Range(Userp.TInt, 0, 7) });
 		ArrayType a2= new ArrayType("a2").init(e1).setEncParam(TupleCoding.BITPACK);
 		ArrayType a1= new ArrayType("a1").init(a2).setEncParam(TupleCoding.PACK);
-		Codec c1= new CodecCollection().getCodecFor(a1);
+		Codec c1= new CodecBuilder(true).getCodecFor(a1);
 		prepEncoder(new Codec[] {c1});
 		UserpWriter w= new UserpWriter(enc, c1);
 		int[][] vals= new int[][] {

@@ -44,6 +44,11 @@ public class RecordType extends TupleType {
 			}
 		}
 
+		RecordDef(Symbol[] fieldNames, UserpType[] fieldTypes) {
+			this.fieldNames= fieldNames;
+			this.fieldTypes= fieldTypes;
+		}
+
 		public int hashCode() {
 			return ~Arrays.deepHashCode(fieldNames) ^ Arrays.deepHashCode(fieldTypes);
 		}
@@ -89,12 +94,18 @@ public class RecordType extends TupleType {
 		return this;
 	}
 
-	public UserpType cloneAs(Symbol newName) {
+	protected UserpType cloneAs_internal(Symbol newName) {
 		return new RecordType(newName).init(def);
 	}
 
 	public TypeDef getDefinition() {
 		return def;
+	}
+
+	public Codec makeCodecDescriptor() {
+		if (getDefinition() == null)
+			throw new UninitializedTypeException(this, "getCodecDescriptor");
+		return new RecordCodec(this, getEncoderParam_TupleCoding());
 	}
 
 	public int getElemCount() {

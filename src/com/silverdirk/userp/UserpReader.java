@@ -19,7 +19,7 @@ public class UserpReader {
 
 	Stack<TupleStackEntry> tupleStateStack= new Stack<TupleStackEntry>();
 	static class TupleStackEntry {
-		TupleCodec tupleCodec;
+		TupleImpl TupleImpl;
 //		Checkpoint meta;
 		boolean bitpack;
 		int elemCount;
@@ -27,19 +27,18 @@ public class UserpReader {
 		long[] elemEndAddrs;
 	}
 
-	Object valRegister_o;
-	long valRegister_64;
+	final ValRegister valRegister= new ValRegister();
 
 	public UserpReader(UserpDecoder src, Codec rootCodec) {
 		this.src= src;
-		this.nodeCodec= rootCodec;
+		nodeCodec= rootCodec;
 		tupleState= new TupleStackEntry();
-		tupleState.tupleCodec= RootSentinelCodec.INSTANCE;
+		tupleState.TupleImpl= RootSentinelCodec.INSTANCE;
 		tupleState.elemIdx= 0;
 	}
 
 	public final UserpType getType() {
-		return nodeCodec.getType();
+		return nodeCodec.type;
 	}
 
 	public final void getMetaReader() {
@@ -59,53 +58,42 @@ public class UserpReader {
 	}
 
 	public final int inspectUnion() throws IOException {
-		return nodeCodec.inspectUnion(this);
+		return nodeCodec.impl.inspectUnion(this);
 	}
 
 	public final int inspectTuple() throws IOException {
 		tupleStateStack.push(tupleState);
 		tupleState= new TupleStackEntry();
-		return nodeCodec.inspectTuple(this);
+		return nodeCodec.impl.inspectTuple(this);
 	}
 
 	public final void closeTuple() throws IOException {
-		tupleState.tupleCodec.closeTuple(this);
+		tupleState.TupleImpl.closeTuple(this);
 		tupleState= tupleStateStack.pop();
-		tupleState.tupleCodec.nextElement(this);
+		tupleState.TupleImpl.nextElement(this);
 	}
 
-	static final int
-		NATIVETYPE_BOOL= 0,
-		NATIVETYPE_BYTE= 1,
-		NATIVETYPE_SHORT= 2,
-		NATIVETYPE_INT= 3,
-		NATIVETYPE_LONG= 4,
-		NATIVETYPE_FLOAT= 5,
-		NATIVETYPE_DOUBLE= 6,
-		NATIVETYPE_CHAR= 7,
-		NATIVETYPE_OBJECT= 8;
-
 	public final Object readValue() throws IOException {
-		int stoClass= nodeCodec.readValue(this);
-		tupleState.tupleCodec.nextElement(this);
-		switch (stoClass) {
-		case NATIVETYPE_BOOL:   return Boolean.valueOf(valRegister_64 != 0);
-		case NATIVETYPE_BYTE:   return new Byte((byte)valRegister_64);
-		case NATIVETYPE_SHORT:  return new Short((short)valRegister_64);
-		case NATIVETYPE_INT:    return new Integer((int)valRegister_64);
-		case NATIVETYPE_LONG:   return new Long(valRegister_64);
-		case NATIVETYPE_FLOAT:  return new Float(Float.intBitsToFloat((int)valRegister_64));
-		case NATIVETYPE_DOUBLE: return new Double(Double.longBitsToDouble(valRegister_64));
-		case NATIVETYPE_CHAR:   return new Character((char)valRegister_64);
-		case NATIVETYPE_OBJECT: return valRegister_o;
+		nodeCodec.impl.readValue(this, valRegister);
+		tupleState.TupleImpl.nextElement(this);
+		switch (valRegister.sto) {
+		case BOOL:   return Boolean.valueOf(valRegister.i64 != 0);
+		case BYTE:   return new Byte((byte)valRegister.i64);
+		case SHORT:  return new Short((short)valRegister.i64);
+		case INT:    return new Integer((int)valRegister.i64);
+		case LONG:   return new Long(valRegister.i64);
+		case FLOAT:  return new Float(Float.intBitsToFloat((int)valRegister.i64));
+		case DOUBLE: return new Double(Double.longBitsToDouble(valRegister.i64));
+		case CHAR:   return new Character((char)valRegister.i64);
+		case OBJECT: return valRegister.obj;
 		default:
 			throw new Error();
 		}
 	}
 
 	public final void skipValue() throws IOException {
-		tupleState.tupleCodec.nextElement(this);
-		nodeCodec.skipValue(this);
+		nodeCodec.impl.skipValue(this);
+		tupleState.TupleImpl.nextElement(this);
 	}
 
 	public final boolean readAsBool() throws IOException {
@@ -125,54 +113,48 @@ public class UserpReader {
 	}
 
 	public final long readAsLong() throws IOException {
-		int stoClass= nodeCodec.readValue(this);
-		tupleState.tupleCodec.nextElement(this);
-		switch (stoClass) {
-		case NATIVETYPE_BOOL:
-		case NATIVETYPE_BYTE:
-		case NATIVETYPE_SHORT:
-		case NATIVETYPE_INT:
-		case NATIVETYPE_CHAR:
-		case NATIVETYPE_LONG:   return valRegister_64;
-		case NATIVETYPE_FLOAT:  return (long) Float.intBitsToFloat((int)valRegister_64);
-		case NATIVETYPE_DOUBLE: return (long) Double.longBitsToDouble(valRegister_64);
-		case NATIVETYPE_OBJECT: return ((Number)valRegister_o).longValue();
+		nodeCodec.impl.readValue(this, valRegister);
+		tupleState.TupleImpl.nextElement(this);
+		switch (valRegister.sto) {
+		case BOOL:  case BYTE:
+		case SHORT: case INT:
+		case CHAR:  case LONG:
+			return valRegister.i64;
+		case FLOAT:  return (long) Float.intBitsToFloat((int)valRegister.i64);
+		case DOUBLE: return (long) Double.longBitsToDouble(valRegister.i64);
+		case OBJECT: return ((Number)valRegister.obj).longValue();
 		default:
 			throw new Error();
 		}
 	}
 
 	public final float readAsFloat() throws IOException {
-		int stoClass= nodeCodec.readValue(this);
-		tupleState.tupleCodec.nextElement(this);
-		switch (stoClass) {
-		case NATIVETYPE_BOOL:
-		case NATIVETYPE_BYTE:
-		case NATIVETYPE_SHORT:
-		case NATIVETYPE_INT:
-		case NATIVETYPE_CHAR:
-		case NATIVETYPE_LONG:   return (float) valRegister_64;
-		case NATIVETYPE_FLOAT:  return Float.intBitsToFloat((int)valRegister_64);
-		case NATIVETYPE_DOUBLE: return (float) Double.longBitsToDouble(valRegister_64);
-		case NATIVETYPE_OBJECT: return ((Number)valRegister_o).floatValue();
+		nodeCodec.impl.readValue(this, valRegister);
+		tupleState.TupleImpl.nextElement(this);
+		switch (valRegister.sto) {
+		case BOOL:  case BYTE:
+		case SHORT: case INT:
+		case CHAR:  case LONG:
+			return (float) valRegister.i64;
+		case FLOAT:  return Float.intBitsToFloat((int)valRegister.i64);
+		case DOUBLE: return (float) Double.longBitsToDouble(valRegister.i64);
+		case OBJECT: return ((Number)valRegister.obj).floatValue();
 		default:
 			throw new Error();
 		}
 	}
 
 	public final double readAsDouble() throws IOException {
-		int stoClass= nodeCodec.readValue(this);
-		tupleState.tupleCodec.nextElement(this);
-		switch (stoClass) {
-		case NATIVETYPE_BOOL:
-		case NATIVETYPE_BYTE:
-		case NATIVETYPE_SHORT:
-		case NATIVETYPE_INT:
-		case NATIVETYPE_CHAR:
-		case NATIVETYPE_LONG:   return (double) valRegister_64;
-		case NATIVETYPE_FLOAT:  return (double) Float.intBitsToFloat((int)valRegister_64);
-		case NATIVETYPE_DOUBLE: return Double.longBitsToDouble(valRegister_64);
-		case NATIVETYPE_OBJECT: return ((Number)valRegister_o).doubleValue();
+		nodeCodec.impl.readValue(this, valRegister);
+		tupleState.TupleImpl.nextElement(this);
+		switch (valRegister.sto) {
+		case BOOL:  case BYTE:
+		case SHORT: case INT:
+		case CHAR:  case LONG:
+			return (double) valRegister.i64;
+		case FLOAT:  return (double) Float.intBitsToFloat((int)valRegister.i64);
+		case DOUBLE: return Double.longBitsToDouble(valRegister.i64);
+		case OBJECT: return ((Number)valRegister.obj).doubleValue();
 		default:
 			throw new Error();
 		}
@@ -181,14 +163,5 @@ public class UserpReader {
 	public final char readAsChar() throws IOException {
 		return (char) readAsLong();
 	}
-
-	static final int[] nativeTypeByteLenMap= new int[] {
-		UserpReader.NATIVETYPE_BYTE, UserpReader.NATIVETYPE_SHORT,
-		UserpReader.NATIVETYPE_INT,  UserpReader.NATIVETYPE_INT,
-		UserpReader.NATIVETYPE_LONG, UserpReader.NATIVETYPE_LONG,
-		UserpReader.NATIVETYPE_LONG, UserpReader.NATIVETYPE_LONG,
-	};
-	public static int getTypeForBitLen(int bits) {
-		return nativeTypeByteLenMap[bits>>3];
-	}
 }
+

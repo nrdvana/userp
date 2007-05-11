@@ -8,30 +8,80 @@ import com.silverdirk.userp.EnumType.Range;
 import com.silverdirk.userp.UserpWriter.Action;
 import com.silverdirk.userp.UserpWriter.Event;
 
-/**
- * <p>Project: </p>
- * <p>Title: </p>
- * <p>Description: </p>
- * <p>Copyright Copyright (c) 2004</p>
- *
- * @author not attributable
- * @version $Revision$
- */
 abstract class Codec {
-	UserCodec userCodec;
+	UserpType type;
+	CodecOverride implOverride;
+	CodecImpl impl;
+	protected BigInteger scalarRange;
+	int initStatus;
 	int encoderTypeCode= -1;
-	BigInteger scalarRange;
 
-	static Codec deserialize(UserpReader src, Map resolveParams) throws IOException {
+	static final int
+		ISTAT_NEED_DESC_REFS= 0,
+		ISTAT_NEED_IMPL= 1,
+		ISTAT_READY= 3;
+
+	static Codec forType(UserpType t) {
+		return t.makeCodecDescriptor();
+	}
+
+	static Codec forType(UnionType t, boolean bitpack, boolean[] inlineMember) {
+		return new UnionCodec(t, bitpack, inlineMember);
+	}
+
+	static Codec forType(TupleType t, TupleCoding encoding) {
+		if (t instanceof ArrayType)
+			return new ArrayCodec((ArrayType)t, encoding);
+		else
+			return new RecordCodec((RecordType)t, encoding);
+	}
+
+	static Codec forCodec(CodecImpl c) {
+		return c.getDescriptor();
+	}
+
+	public boolean equals(Object other) {
+		return (other.getClass() == getClass()) && ((Codec)other).type == type;
+	}
+
+	static final BigInteger SCALAR_IN_PROGRESS;
+	public BigInteger getScalarRange() {
+		if (scalarRange == SCALAR_IN_PROGRESS)
+			throw new UninitializedTypeException(type, "getScalarRange");
+		if (scalarRange == null) {
+			scalarRange= SCALAR_IN_PROGRESS;
+			initScalarRange();
+		}
+		return scalarRange;
+	}
+
+	abstract protected void initScalarRange();
+
+	static final CodecImpl IMPL_IN_PROGRESS;
+	public void resolveCodec() {
+		if (initStatus <= ISTAT_NEED_IMPL) {
+			if (impl == IMPL_IN_PROGRESS)
+				throw new UninitializedTypeException(type, "getCodec");
+			if (impl == null) {
+				impl= IMPL_IN_PROGRESS;
+				initCodec();
+				initStatus= ISTAT_READY;
+			}
+		}
+	}
+
+	abstract protected void initCodec();
+
+	static Codec deserialize(UserpReader src) throws IOException {
 		Codec result;
 		assert(src.inspectTuple() == 2);
 		Symbol name= (Symbol) src.readValue();
 		switch (src.inspectUnion()) {
-		case 0: result= IntegerCodec.deserialize_IntType(name, src, resolveParams); break;
-		case 1: result= UnionCodec.deserialize_UnionType(name, src, resolveParams); break;
-		case 2: result= ArrayCodec.deserialize_ArrayType(name, src, resolveParams); break;
-		case 3: result= RecordCodec.deserialize_RecordType(name, src, resolveParams); break;
-		case 4: result= ScalarCodec.deserialize_EnumType(name, src, resolveParams); break;
+		case 0: result= new IntegerCodec(name, src); break;
+		case 1: result= new UnionCodec(name, src); break;
+		case 2: result= new ArrayCodec(name, src); break;
+		case 3: result= new RecordCodec(name, src); break;
+		case 4: result= new EnumCodec(name, src); break;
 		default:
 			throw new Error("Bug");
 		}
@@ -39,55 +89,25 @@ abstract class Codec {
 		return result;
 	}
 
-	protected Codec(BigInteger scalarRange) {
-		this.scalarRange= scalarRange;
+	abstract void resolveDescriptorRefs(CodecBuilder cb);
+	abstract void resolveDescriptorRefs(UserpDecoder.TypeCodeMap tcm) throws UserpProtocolException;
+
+	final void serialize(UserpWriter writer) throws IOException {
+		writer.beginTuple();
+		writer.write(type.getName());
+		serializeFields(writer);
+		writer.endTuple();
 	}
 
-	final void serialize(UserpWriter dest) throws IOException {
-		dest.beginTuple();
-		dest.write(getType().getName());
-		internal_serialize(dest);
-		dest.endTuple();
-	}
-	protected abstract void internal_serialize(UserpWriter dest) throws IOException;
+	abstract protected void serializeFields(UserpWriter writer) throws IOException;
 
-	abstract void resolveRefs(UserpDecoder.TypeMap codeMap, Object params);
-	abstract void resolveRefs(CodecCollection codecs);
-
-	abstract UserpType getType();
-
-	BigInteger getScalarRange() {
-		return scalarRange;
-	}
-
-	abstract void writeValue(UserpWriter writer, Object val) throws IOException;
-	void writeValue(UserpWriter writer, long val) throws IOException {
-		throw new RuntimeException("Cannot convert java-type 'long' to a value of type "+getType());
-	}
-	void selectType(UserpWriter writer, Codec whichUnionMember) throws IOException {
-		throw new RuntimeException("Operation SelectType not applicable to type "+getType());
-	}
-	void selectType(UserpWriter writer, UserpType whichUnionMember) throws IOException {
-		throw new RuntimeException("Operation SelectType not applicable to type "+getType());
-	}
-	void beginTuple(UserpWriter writer, int elemCount) throws IOException {
-		throw new RuntimeException("Operation BeginTuple not applicable to type "+getType());
-	}
-
-	abstract int readValue(UserpReader reader) throws IOException;
-	abstract void skipValue(UserpReader reader) throws IOException;
-	int inspectUnion(UserpReader reader) throws IOException {
-		throw new RuntimeException("Operation InspectUnion not applicable to type "+getType());
-	}
-	int inspectTuple(UserpReader reader) throws IOException {
-		throw new RuntimeException("Operation InspectTuple not applicable to type "+getType());
-	}
-
-	static final RecordCodec
+	static final Codec
 		CTypeSpec;
 	static final UserpType
 		TEnumSpec, TIntSpec, TUnionSpec, TArraySpec, TRecordSpec;
 	static {
+		IMPL_IN_PROGRESS= new TypeAnyImpl();
+		SCALAR_IN_PROGRESS= new BigInteger("-1"); // need to use a constructor to ensure that we have a unique object
 		TIntSpec= Userp.TNull.cloneAs("TIntSpec");
 		TEnumSpec= Userp.TWhole.cloneAs("TEnumSpec");
 		UserpType TWholeArray= new ArrayType("TWholeArray").init(Userp.TWhole);
@@ -119,450 +139,179 @@ abstract class Codec {
 			new Field("Spec", TSpecUnion)
 		});
 
-		CTypeSpec= (RecordCodec) new CodecCollection().getCodecFor(TTypeSpec);
+		CTypeSpec= new CodecBuilder(true).getCodecFor(TTypeSpec);
 	}
 }
 
-class CodecCollection {
-	ThreadLocal<Boolean> recursionInProgress= new ThreadLocal<Boolean>();
-
-	protected HashMap<UserpType.TypeHandle,Codec> typeMap;
-	protected HashSet<Codec> newCodecs;
-
-	public CodecCollection() {
-		typeMap= new HashMap<UserpType.TypeHandle,Codec>();
-		newCodecs= new HashSet<Codec>();
+class TAnyCodec extends Codec {
+	private TAnyCodec() {
+		type= Userp.TAny;
+		implOverride= type.getCustomCodec();
+		scalarRange= UserpType.INF;
+		impl= new TypeAnyImpl();
+		initStatus= ISTAT_READY;
 	}
 
-	public Codec getCodecFor(UserpType t) {
-		return addType(t);
+	void resolveDescriptorRefs(CodecBuilder cb) {}
+	void resolveDescriptorRefs(UserpDecoder.TypeCodeMap tcm) {}
+	protected void initScalarRange() {}
+	protected void initCodec() {}
+
+	protected void serializeFields(UserpWriter writer) throws IOException {
+		throw new Error("TAny not serializable");
 	}
 
-	public Codec addType(UserpType t) {
-		boolean recursionRootedHere= false;
-		if (recursionInProgress.get() == null) {
-			recursionInProgress.set(Boolean.TRUE);
-			recursionRootedHere= true;
-		}
-		Codec result= typeMap.get(t.handle);
-		if (result == null) {
-			if (typeMap.containsKey(t.handle))
-				throw new RuntimeException("Bad circular dependancy: "+t+" must be turned into a codec before it can be turned into a codec");
-			typeMap.put(t.handle, null);
-			result= codecForType(t, this);
-			typeMap.put(t.handle, result);
-			newCodecs.add(result);
-		}
-		if (recursionRootedHere) {
-			recursionInProgress.set(null);
-			finishCodecInit();
-		}
-		return result;
-	}
-
-	public HashMap<UserpType.TypeHandle,Codec> getCodecMapping() {
-		finishCodecInit();
-		return typeMap;
-	}
-
-	public Collection<Codec> getTypeTableFor(UserpType[] types) {
-		throw new Error("Unimplemented");
-	}
-
-	protected void finishCodecInit() {
-		// can't use an iterator because more codecs could get added to the set
-		while (newCodecs.size() > 0) {
-			Iterator<Codec> it= newCodecs.iterator();
-			Codec incompleteCodec= it.next();
-			it.remove();
-			incompleteCodec.resolveRefs(this);
-		}
-	}
-
-	protected static Codec codecForType(UserpType t, CodecCollection codecs) {
-		if (t instanceof ScalarType)
-			return ScalarCodec.forType((ScalarType)t, codecs);
-		else if (t instanceof TupleType)
-			return TupleCodec.forType((TupleType)t, codecs);
-		else
-			return UnionCodec.forType((UnionType)t, codecs);
-	}
+	public static final TAnyCodec INSTANCE= new TAnyCodec();
 }
 
-abstract class ScalarCodec extends Codec {
-	ScalarType type;
-
-	static Codec forType(ScalarType t, CodecCollection codecs) {
-		BigInteger scalarRange= t.getValueCount();
-		if (scalarRange == ScalarType.INF || scalarRange.bitLength() >= 64)
-			return t.isDoublyInfinite()? new IntegerCodec(t) : new EnumCodec_inf(t);
-		else
-			return new EnumCodec_63(t);
-	}
-
-	static ScalarCodec deserialize_EnumType(Symbol name, UserpReader src, Map resolveParams) throws IOException {
-		BigInteger range= (BigInteger) src.readValue();
-		EnumType t= new EnumType(name);
-		if (range.equals(BigInteger.ZERO) || range.bitLength() >= 64)
-			return new EnumCodec_inf(t);
-		else
-			return new EnumCodec_63(t);
-	}
-
-	protected ScalarCodec(ScalarType t) {
-		super(t.getValueCount());
-		this.type= t;
-	}
-
-	void resolveRefs(UserpDecoder.TypeMap codeMap, Object info) {}
-	void resolveRefs(CodecCollection codecs) {}
-
-	protected void internal_serialize(UserpWriter dest) throws IOException {
-		BigInteger range= scalarRange == UserpType.INF? BigInteger.ZERO : scalarRange;
-		dest.select(TEnumSpec);
-		dest.write(range);
-	}
-
-	public UserpType getType() {
-		return type;
-	}
-}
+abstract class ScalarCodec extends Codec {}
 
 class IntegerCodec extends ScalarCodec {
-	static ScalarCodec deserialize_IntType(Symbol name, UserpReader src, Map resolveParams) throws IOException {
+	IntegerCodec(IntegerType t) {
+		type= t;
+		implOverride= type.getCustomCodec();
+		scalarRange= ScalarType.INF;
+		impl= new IntegerImpl((IntegerType)type, this);
+		initStatus= ISTAT_READY;
+	}
+
+	void resolveDescriptorRefs(CodecBuilder cb) {}
+
+	IntegerCodec(Symbol name, UserpReader src) throws IOException {
+		this(new IntegerType(name));
 		src.skipValue(); // no actual value, but we have to advance the stream's current-node
-		return new IntegerCodec(new IntegerType(name));
 	}
 
-	protected IntegerCodec(ScalarType t) {
-		super(t);
+	void resolveDescriptorRefs(UserpDecoder.TypeCodeMap tcm) {}
+
+	protected void serializeFields(UserpWriter writer) throws IOException {
+		writer.select(TIntSpec);
+		writer.write(null);
 	}
 
-	protected void internal_serialize(UserpWriter dest) throws IOException {
-		dest.select(TIntSpec);
-		dest.write(null);
-	}
-
-	void writeValue(UserpWriter writer, Object val) throws IOException {
-		throw new Error("Unimplemented");
-	}
-	void writeValue(UserpWriter writer, long val) throws IOException {
-		throw new Error("Unimplemented");
-	}
-	int readValue(UserpReader reader) throws IOException {
-		throw new Error("Unimplemented");
-	}
-	void skipValue(UserpReader reader) throws IOException {
-		throw new Error("Unimplemented");
-	}
+	protected void initScalarRange() {}
+	protected void initCodec() {}
 }
 
-class EnumCodec_inf extends ScalarCodec {
-	int bitLen;
-	protected EnumCodec_inf(ScalarType t) {
-		super(t);
-		bitLen= scalarRange == UserpType.INF? -1 : scalarRange.subtract(BigInteger.ONE).bitLength();
+class EnumCodec extends ScalarCodec {
+	EnumCodec(EnumType t) {
+		type= t;
+		implOverride= type.getCustomCodec();
+		scalarRange= ((EnumType)type).getValueCount();
+		initCodec();
+		initStatus= ISTAT_READY;
 	}
 
-	void writeValue(UserpWriter writer, Object val) throws IOException {
-		if (val instanceof BigInteger) {
-			BigInteger val_bi= (BigInteger) val;
-			if (bitLen != -1 && val_bi.compareTo(scalarRange) >= 0)
-				throw new IllegalArgumentException("Scalar value out of bounds: "+val+" >= "+scalarRange);
-			writer.dest.writeQty(val_bi, bitLen);
-		}
+	void resolveDescriptorRefs(CodecBuilder cb) {}
+
+	EnumCodec(Symbol name, UserpReader src) throws IOException {
+		scalarRange= (BigInteger) src.readValue();
+		if (scalarRange.equals(BigInteger.ZERO))
+			scalarRange= ScalarType.INF;
+		type= new EnumType(name);
+		initCodec();
+		initStatus= ISTAT_READY;
+	}
+
+	void resolveDescriptorRefs(UserpDecoder.TypeCodeMap tcm) {}
+
+	protected void serializeFields(UserpWriter writer) throws IOException {
+		writer.select(TEnumSpec);
+		writer.write(scalarRange == UserpType.INF? BigInteger.ZERO : scalarRange);
+	}
+
+	protected void initScalarRange() {}
+
+	protected void initCodec() {
+		if (scalarRange == ScalarType.INF || scalarRange.bitLength() >= 64)
+			impl= new EnumImpl_inf((EnumType)type, this);
 		else
-			writeValue(writer, ((Number)val).longValue());
-	}
-	void writeValue(UserpWriter writer, long val) throws IOException {
-		// no range check, because we determined that the value could be greater than 63 bits
-		writer.dest.writeQty(val, bitLen);
-	}
-	int readValue(UserpReader reader) throws IOException {
-		reader.src.readQty(bitLen);
-		if (reader.src.scalar != null) {
-			if (bitLen != -1 && reader.src.scalar.compareTo(scalarRange) >= 0)
-				throw new UserpProtocolException("Scalar value out of bounds: "+reader.src.scalar+" >= "+scalarRange);
-			reader.valRegister_o= reader.src.scalar;
-			return reader.NATIVETYPE_OBJECT;
-		}
-		else {
-			// no range check, because we determined that the value could be greater than 63 bits
-			reader.valRegister_64= reader.src.scalar64;
-			return reader.getTypeForBitLen(Util.getBitLength(reader.valRegister_64));
-		}
-	}
-	void skipValue(UserpReader reader) throws IOException {
-		reader.src.readQty(bitLen);
+			impl= new EnumImpl_63((EnumType)type, this);
 	}
 }
 
-class EnumCodec_63 extends EnumCodec_inf {
-	int stoClass;
-	protected EnumCodec_63(ScalarType t) {
-		super(t);
-		stoClass= UserpReader.getTypeForBitLen(t.getValueCount().subtract(BigInteger.ONE).bitLength());
-	}
-
-	void writeValue(UserpWriter writer, Object val) throws IOException {
-		if (val instanceof BigInteger) {
-			BigInteger val_bi= (BigInteger) val;
-			if (val_bi.compareTo(scalarRange) >= 0)
-				throw new IllegalArgumentException("Scalar value out of bounds: "+val+" >= "+scalarRange);
-			writer.dest.writeQty(val_bi.longValue(), bitLen);
-		}
-		else
-			writeValue(writer, ((Number)val).longValue());
-	}
-
-	void writeValue(UserpWriter writer, long val) throws IOException {
-		if (val >= scalarRange.longValue())
-			throw new IllegalArgumentException("Scalar value out of bounds: "+val+" >= "+scalarRange);
-		writer.dest.writeQty(val, bitLen);
-	}
-
-	int readValue(UserpReader reader) throws IOException {
-		reader.src.readQty(bitLen);
-		long val= reader.src.scalarAsLong();
-		if (val >= scalarRange.longValue())
-			throw new UserpProtocolException("Scalar value out of bounds: "+val+" >= "+scalarRange);
-		reader.valRegister_64= val;
-		return stoClass;
-	}
-
-	void skipValue(UserpReader reader) throws IOException {
-		reader.src.readQty(bitLen);
-	}
-}
-
-class TypeAnyCodec extends UnionCodec {
-	TypeAnyCodec() {
-		super(null, 0, false, new boolean[0], BigInteger.ZERO);
-	}
-
-	protected void internal_serialize(UserpWriter dest) throws IOException {
-		throw new UnsupportedOperationException("TypeAnyCodec cannot be serialized");
-	}
-
-	void resolveRefs(UserpDecoder.TypeMap codeMap, Object info) {}
-
-	void resolveRefs(CodecCollection codecs) {}
-
-	public UserpType getType() {
-		return Userp.TAny;
-	}
-
-	void selectType(UserpWriter writer, Codec whichUnionMember) throws IOException {
-		writer.dest.writeType(whichUnionMember);
-		writer.nodeCodec= whichUnionMember;
-	}
-
-	void selectType(UserpWriter writer, UserpType whichUnionMember) throws IOException {
-		Codec memberCodec= writer.dest.typeMap.get(whichUnionMember.handle);
-		if (memberCodec == null) {
-			switch (writer.eventActions[Event.UNDEFINED_TYPE_USED.ordinal()]) {
-			case ERROR: throw new RuntimeException("Cannot encode "+whichUnionMember+" because this type has not explicitly been added to this stream");
-			case WARN: writer.addWarning("The type "+whichUnionMember+" was implicitly added to the stream");
-			case IGNORE:
-			}
-			memberCodec= writer.addType(whichUnionMember);
-		}
-		selectType(writer, memberCodec);
-	}
-
-	int inspectUnion(UserpReader reader) throws IOException {
-		reader.nodeCodec= reader.src.readType();
-		return -1;
-	}
-}
-
-abstract class UnionCodec extends Codec {
-	UnionType type;
-	Codec[] members;
-	int selectorBitLen;
+class UnionCodec extends Codec {
 	boolean bitpack;
-	boolean[] memberInlineFlags;
+	boolean[] inlineMember;
+	Codec[] members;
+	int[] tempMemberTypeCode;
 
-	/** Create a codec for UserpType t, with the specified codec params.
-	 * This function creates a codec implementation that efficiently encodes the
-	 * given type with its given parameters.  The new codec is not complete
-	 * until resolveRefs is called, because (due to circular references) some
-	 * codec objects might not yet be available.
-	 *
-	 * @param t UnionType The type to create a codec from
-	 * @param bitpack boolean Codec param: Whether to begin bitpacking before writing the selector
-	 * @param inlineFlags boolean[] Codec param: Whether to "inline" each member's scalar component
-	 * @param typeToDecoder Map A map from type objects to codec objects
-	 * @return Codec The newly created codec with unresolved references
-	 */
-	static Codec forType(UnionType t, boolean bitpack, boolean[] inlineFlags, CodecCollection codecs) {
-		BigInteger[] offsets= new BigInteger[t.def.members.length];
-		BigInteger range;
-		range= calcRangeAndOffsets(t.def.members, inlineFlags, offsets, codecs);
-		return (range.bitLength() < 64)?
-			new UnionCodec_63(t, bitpack, inlineFlags, range, offsets)
-			: new UnionCodec_bi(t, bitpack, inlineFlags, range, offsets);
+	public boolean equals(Object other) {
+		return super.equals(other)
+			&& Arrays.equals(inlineMember, ((UnionCodec)other).inlineMember)
+			&& bitpack == ((UnionCodec)other).bitpack;
 	}
 
-	/** Create a codec for UserpType t with the default codec params.
-	 * This routine is simply a convenience method for "forType" that gets the
-	 * missing codec parameters from the type's encoding hints, or uses default
-	 * values if the hints were not set.
-	 *
-	 * @param t UnionType The type to create a codec from
-	 * @param typeToDecoder Map A map from type objects to codec objects
-	 * @return Codec The newly created codec with unresolved references
-	 */
-	static Codec forType(UnionType t, CodecCollection codecs) {
-		boolean[] inlineFlags= t.getEncoderParam_Inline();
-		if (inlineFlags == null) {
-			inlineFlags= new boolean[t.getMemberCount()];
-			Arrays.fill(inlineFlags, false);
-		}
-		return forType(t, t.getEncoderParam_Bitpack(), inlineFlags, codecs);
-	}
-
-	/** Deserialize a codec from a Userp type table.
-	 * This function first deserializes a codec definition form the supplied
-	 * reader, then creates a codec instance from it.  The codec object will
-	 * not be usable until resolveRefs is called, because some codec objects
-	 * might not have been created yet.
-	 *
-	 * @param name Symbol The name of the type that this codec implements
-	 * @param src UserpReader A reader from which the definition will be read
-	 * @param resolveParams Map A map from a Codec to the parameter it needs during 'resolve'
-	 * @return UnionCodec A new codec object with unresolved references
-	 * @throws IOException On any read error, or if invalid references occour.
-	 */
-	static UnionCodec deserialize_UnionType(Symbol name, UserpReader src, Map resolveParams) throws IOException {
-		src.inspectTuple();
-		boolean bitpack= src.readAsBool();
-		int memberCount= src.inspectTuple();
-		int[] typeCodes= new int[memberCount];
-		for (int i=0; i<memberCount; i++)
-			typeCodes[i]= src.readAsInt();
-		src.closeTuple();
-		boolean[] inlineFlags= (boolean[]) src.readValue();
-		src.closeTuple();
-
-		Codec[] codecs= new Codec[memberCount];
-		for (int i=0; i<memberCount; i++) {
-			codecs[i]= src.src.codeMap.getType(typeCodes[i]);
-			if (inlineFlags[i] && codecs[i] == null)
-				throw new UserpProtocolException("Illegal dependancy, or improper encoding order");
-		}
-		UnionType t= new UnionType(name);
-		BigInteger[] offsets= new BigInteger[typeCodes.length];
-		BigInteger range= calcRangeAndOffsets(codecs, inlineFlags, offsets, null);
-		UnionCodec result= (range.bitLength() < 64)?
-			new UnionCodec_63(t, bitpack, inlineFlags, range, offsets)
-			: new UnionCodec_bi(t, bitpack, inlineFlags, range, offsets);
-		resolveParams.put(result, typeCodes);
-		return result;
-	}
-
-	protected UnionCodec(UnionType t, int memberCount, boolean bitpack, boolean[] inlineFlags, BigInteger scalarRange) {
-		super(scalarRange);
-		this.type= t;
-		this.members= new Codec[memberCount];
+	UnionCodec(UnionType t, boolean bitpack, boolean[] inlineMember) {
+		type= t;
+		implOverride= type.getCustomCodec();
 		this.bitpack= bitpack;
-		this.selectorBitLen= scalarRange == UserpType.INF? -1 : scalarRange.subtract(BigInteger.ONE).bitLength();
-		this.memberInlineFlags= inlineFlags;
-		if (inlineFlags.length != memberCount)
-			throw new IllegalArgumentException("length of 'inlineFlags' array must match memberCount");
+		this.inlineMember= inlineMember;
+		members= new Codec[inlineMember.length];
+		initStatus= ISTAT_NEED_DESC_REFS;
 	}
 
-	/** Resolve references to codec objects.
-	 * This function finishes the construction of the Codec object started by a
-	 * call to deserialize_UnionType.  After this call, the Codec object is
-	 * ready for use.
-	 *
-	 * @param codeMap TypeMap The same typecode mapping that was supplied to 'deserialize'
-	 * @param params Object The parameter that 'deserialize' mapped to this object.
-	 */
-	void resolveRefs(UserpDecoder.TypeMap codeMap, Object params) {
-		int[] typeCodes= (int[]) params;
-		UserpType[] memberTypes= new UserpType[members.length];
-		for (int i=0; i<members.length; i++) {
-			members[i]= codeMap.getType(typeCodes[i]);
-			memberTypes[i]= members[i].getType();
-		}
-		type.init(memberTypes);
-	}
-
-	/** Resolve references to codec objects.
-	 * This function finishes the construction of the Codec object started by a
-	 * call to 'forType'.  After this call, the Codec object is ready for use.
-	 *
-	 * @param typeMap Map A map from types to their codecs
-	 */
-	void resolveRefs(CodecCollection codecs) {
+	void resolveDescriptorRefs(CodecBuilder cb) {
 		for (int i=0; i<members.length; i++)
-			members[i]= codecs.getCodecFor(type.getMember(i));
+			members[i]= cb.getCodecFor(((UnionType)type).getMember(i));
+		initStatus= ISTAT_NEED_IMPL;
 	}
 
-	protected void internal_serialize(UserpWriter dest) throws IOException {
+	UnionCodec(Symbol name, UserpReader reader) throws IOException {
+		reader.inspectTuple();
+		bitpack= reader.readAsBool();
+		int memberCount= reader.inspectTuple();
+		tempMemberTypeCode= new int[memberCount];
+		for (int i=0; i<memberCount; i++)
+			tempMemberTypeCode[i]= reader.readAsInt();
+		reader.closeTuple();
+		inlineMember= (boolean[]) reader.readValue();
+		reader.closeTuple();
+
+		type= new UnionType(name);
+		members= new Codec[memberCount];
+		initStatus= ISTAT_NEED_DESC_REFS;
+	}
+
+	void resolveDescriptorRefs(UserpDecoder.TypeCodeMap tcm) throws UserpProtocolException {
+		UserpType[] typeMembers= new UserpType[members.length];
+		for (int i=0; i<members.length; i++) {
+			members[i]= tcm.getCodec(tempMemberTypeCode[i]);
+			typeMembers[i]= members[i].type;
+		}
+		((UnionType)type).init(typeMembers);
+		tempMemberTypeCode= null;
+		initStatus= ISTAT_NEED_IMPL;
+	}
+
+	protected void serializeFields(UserpWriter dest) throws IOException {
 		dest.select(TUnionSpec);
 		dest.beginTuple();
 		dest.write(bitpack?1:0);
-		dest.beginTuple(type.getMemberCount());
+		dest.beginTuple(members.length);
 		for (int i=0; i<members.length; i++) {
 			dest.write(members[i].encoderTypeCode);
-			assert(!memberInlineFlags[i] || members[i].encoderTypeCode < encoderTypeCode);
+			assert(!inlineMember[i] || members[i].encoderTypeCode < encoderTypeCode);
 		}
 		dest.endTuple();
-		dest.write(memberInlineFlags);
+		dest.write(inlineMember);
 		dest.endTuple();
 	}
 
-	public UserpType getType() {
-		return type;
+	protected void initScalarRange() {
+		initCodec(); // codec is needed for range calculation, and inits range in the process
 	}
 
-	void writeValue(UserpWriter writer, Object val) throws IOException {
-		TypedData td= (TypedData) val;
-		selectType(writer, td.dataType);
-		writer.write(td.data);
-	}
-
-	int readValue(UserpReader reader) throws IOException {
-		inspectUnion(reader);
-		UserpType t= reader.getType();
-		reader.valRegister_o= new TypedData(t, reader.readValue());
-		return reader.NATIVETYPE_OBJECT;
-	}
-
-	void skipValue(UserpReader reader) throws IOException {
-		inspectUnion(reader);
-		reader.skipValue();
-	}
-
-	private static BigInteger calcRangeAndOffsets(Object[] members, boolean[] inlineFlags, BigInteger[] offsetsResult, CodecCollection codecs) {
+	protected void initCodec() {
 		BigInteger curOffset= BigInteger.ZERO;
-		BigInteger[] ofs= offsetsResult; // rename for convenience
-		boolean[] inlined= inlineFlags;
+		BigInteger[] ofs= new BigInteger[members.length];
 		for (int i= 0; i<members.length; i++) {
 			ofs[i]= curOffset;
 			BigInteger curRange;
-			if (!inlined[i])
+			if (!inlineMember[i])
 				curRange= BigInteger.ONE;
-			else { // else we need to know how big a scalar range to assign to this member
-				if (members[i] instanceof Codec)
-					// All codecs know their scalar range
-					curRange= ((Codec)members[i]).getScalarRange();
-				else if (members[i] instanceof ScalarType)
-					// ScalarType knows its range from just the type
-					curRange= ((ScalarType)members[i]).getValueCount();
-				else {
-					// for all other userpType objects, we need a codec
-					Codec c= codecs.getCodecFor((UserpType)members[i]);
-					if (c == null) // no codec? Illegal Dependancy!
-						throw new RuntimeException("Illegal type dependancy: directed to inline "+members[i]+", but it's encoding parameters are not yet known");
-					curRange= c.getScalarRange();
-					if (curRange == null)
-						throw new RuntimeException("sub-type "+members[i]+" has no scalar component, but was specified to be inlined");
-				}
-			}
+			else // else we need to know how big a scalar range to assign to this member
+				curRange= members[i].getScalarRange();
 			if (curRange == UserpType.INF) {
 				if (i != members.length-1)
 					throw new RuntimeException("sub-type "+members[i]+" is infinite, and inlined, and is not the last sub-type");
@@ -571,450 +320,190 @@ abstract class UnionCodec extends Codec {
 			else
 				curOffset= curOffset.add(curRange);
 		}
-		return curOffset;
+		scalarRange= curOffset;
+
+		impl= (scalarRange.bitLength() >= 64 || scalarRange == UserpType.INF)?
+			new UnionImpl_bi((UnionType)type, this, scalarRange, ofs)
+			: new UnionImpl_63((UnionType)type, this, scalarRange.longValue(), ofs);
 	}
 }
 
-class UnionCodec_bi extends UnionCodec {
-	BigInteger[] offsets;
-
-	public UnionCodec_bi(UnionType t, boolean bitpack, boolean[] inlineFlags, BigInteger scalarRange, BigInteger[] offsets) {
-		super(t, offsets.length, bitpack, inlineFlags, scalarRange);
-		this.offsets= offsets;
-	}
-
-	void selectType(UserpWriter writer, Codec whichUnionMember) throws IOException {
-		selectType(writer, whichUnionMember.getType());
-	}
-
-	void selectType(UserpWriter writer, UserpType whichUnionMember) throws IOException {
-		if (bitpack)
-			writer.dest.enableBitpack(true);
-		int memberIdx= type.def.getMemberIdx(whichUnionMember);
-		if (memberInlineFlags[memberIdx])
-			writer.dest.applyScalarTransform(offsets[memberIdx], selectorBitLen);
-		else
-			writer.dest.writeQty(offsets[memberIdx], selectorBitLen);
-		writer.nodeCodec= members[memberIdx];
-	}
-
-	int inspectUnion(UserpReader reader) throws IOException {
-		if (bitpack)
-			reader.src.enableBitpack(true);
-		reader.src.readQty(selectorBitLen);
-		BigInteger selector= reader.src.scalarAsBigInt();
-		int memberIdx= findRangeIdxOf(offsets, selector);
-		if (memberInlineFlags[memberIdx])
-			reader.src.setNextQty(selector.subtract(offsets[memberIdx]));
-		reader.nodeCodec= members[memberIdx];
-		return memberIdx;
-	}
-
-	static int findRangeIdxOf(BigInteger[] offsets, BigInteger val) {
-		int min= 0, max= offsets.length-1, mid= 0;
-		while (min < max) {
-			mid= (min+max+1) >> 1;
-			if (val.compareTo(offsets[mid]) < 0) max= mid-1;
-			else min= mid;
-		}
-		return max;
-	}
-}
-
-class UnionCodec_63 extends UnionCodec {
-	long[] offsets;
-
-	public UnionCodec_63(UnionType t, boolean bitpack, boolean[] inlineFlags, BigInteger scalarRange, BigInteger[] offsets) {
-		super(t, offsets.length, bitpack, inlineFlags, scalarRange);
-		this.offsets= new long[offsets.length];
-		for (int i=0; i<offsets.length; i++)
-			this.offsets[i]= offsets[i].longValue();
-	}
-
-	void selectType(UserpWriter writer, Codec whichUnionMember) throws IOException {
-		selectType(writer, whichUnionMember.getType());
-	}
-
-	void selectType(UserpWriter writer, UserpType whichUnionMember) throws IOException {
-		if (bitpack)
-			writer.dest.enableBitpack(true);
-		int memberIdx= type.def.getMemberIdx(whichUnionMember);
-		if (memberInlineFlags[memberIdx])
-			writer.dest.applyScalarTransform(offsets[memberIdx], selectorBitLen);
-		else
-			writer.dest.writeQty(offsets[memberIdx], selectorBitLen);
-		writer.nodeCodec= members[memberIdx];
-	}
-
-	int inspectUnion(UserpReader reader) throws IOException {
-		if (bitpack)
-			reader.src.enableBitpack(true);
-		reader.src.readQty(selectorBitLen);
-		long selector= reader.src.scalarAsLong();
-		int memberIdx= findRangeIdxOf(offsets, selector);
-		if (memberInlineFlags[memberIdx])
-			reader.src.setNextQty(selector - offsets[memberIdx]);
-		reader.nodeCodec= members[memberIdx];
-		return memberIdx;
-	}
-
-	static int findRangeIdxOf(long[] offsets, long val) {
-		int min= 0, max= offsets.length-1, mid= 0;
-		while (min < max) {
-			mid= (min+max+1) >> 1;
-			if (val < offsets[mid]) max= mid-1;
-			else min= mid;
-		}
-		return max;
-	}
-}
-
-abstract class TupleCodec extends Codec {
-	TupleType type;
-	TupleCoding encoding;
-
-	static Codec forType(TupleType t, CodecCollection codecs) {
-		if (t instanceof ArrayType)
-			return ArrayCodec.forType((ArrayType)t, codecs);
-		else
-			return RecordCodec.forType((RecordType)t, codecs);
-	}
-
-	protected TupleCodec(BigInteger scalarRange, TupleType t, TupleCoding encoding) {
-		super(scalarRange);
-		this.type= t;
-		this.encoding= encoding;
-	}
-
-	static final BigInteger calcScalarRange(TupleCoding encoding, boolean fixedElemCount, TupleType tupleType, CodecCollection codecs) {
-		BigInteger result= getRangeOfSpecialScalar(encoding, fixedElemCount);
-		if (result == null) {
-			if (tupleType.getDefinition() == null || tupleType.getElemType(0) == null)
-				throw new RuntimeException("Type "+tupleType.getName()+" needs to be initialized before it can be converted to a codec");
-			result= codecs.getCodecFor(tupleType.getElemType(0)).getScalarRange();
-		}
-		return result;
-	}
-
-	static final BigInteger calcScalarRange(TupleCoding encoding, boolean fixedElemCount, int firstElemTypeID, UserpDecoder.TypeMap typeMap) {
-		BigInteger result= getRangeOfSpecialScalar(encoding, fixedElemCount);
-		if (result == null) {
-			Codec elemCodec= typeMap.getType(firstElemTypeID);
-			if (elemCodec == null)
-				throw new RuntimeException("Circular dependandy in type table");
-			result= elemCodec.getScalarRange();
-		}
-		return result;
-	}
-	protected static final BigInteger getRangeOfSpecialScalar(TupleCoding encoding, boolean fixedElemCount) {
-		switch (encoding) {
-		case PACK:
-		case BITPACK:    return fixedElemCount? null : UserpType.INF;
-		case INDEX:      return UserpType.INF;
-		case INDEFINITE: return UserpType.INF;
-		default:
-			throw new Error();
-		}
-	}
-
-	public UserpType getType() {
-		return type;
-	}
-
-	abstract Codec elemCodec(int idx);
-
-	void writeValue(UserpWriter writer, Object val) throws IOException {
-		if (val instanceof Collection) {
-			Collection elems= (Collection) val;
-			writer.beginTuple(elems.size());
-			for (Object elemData: elems)
-				writer.write(elemData);
-			writer.endTuple();
-		}
-		else {
-			Object[] elems= (Object[]) val;
-			writer.beginTuple(elems.length);
-			for (Object elemData: elems)
-				writer.write(elemData);
-			writer.endTuple();
-		}
-	}
-
-	void beginTuple(UserpWriter writer, int elemCount) throws IOException {
-		switch (encoding) {
-		case BITPACK:
-		case PACK:
-			packed_beginTuple(writer, elemCount); break;
-		default:
-			throw new Error("Unimplemented");
-		}
-	}
-
-	void nextElement(UserpWriter writer) throws IOException {
-		switch (encoding) {
-		case PACK:
-		case BITPACK:
-			packed_nextElement(writer); break;
-		default:
-			throw new Error("Unimplemented");
-		}
-	}
-
-	void endTuple(UserpWriter writer) throws IOException {
-		switch (encoding) {
-		case PACK:
-		case BITPACK:
-			packed_endTuple(writer); break;
-		default:
-			throw new Error("Unimplemented");
-		}
-	}
-
-	int readValue(UserpReader reader) throws IOException {
-		int elemCount= reader.inspectTuple();
-//		Class stoClass= reader.tupleType.getNativeStoragePref();
-//		Object result;
-//		if (stoClass != null && stoClass != Object[].class) {
-//			result= Array.newInstance(stoClass.getComponentType(), count);
-//			for (int i=0; i<count; i++, reader.nextElem())
-//				Array.set(result, i, reader.readValue());
-//		}
-		if (elemCount == -1) {
-			LinkedList result= new LinkedList();
-			while (reader.getType() != null)
-				result.add(reader.readValue());
-			reader.valRegister_o= result.toArray();
-		}
-		else {
-			Object[] result= new Object[elemCount];
-			for (int i=0; i<elemCount; i++)
-				result[i]= reader.readValue();
-			reader.valRegister_o= result;
-		}
-		reader.closeTuple();
-		return reader.NATIVETYPE_OBJECT;
-	}
-
-	void skipValue(UserpReader reader) throws IOException {
-		reader.inspectTuple();
-		while (reader.getType() != null)
-			reader.skipValue();
-		reader.closeTuple();
-	}
-
-	int inspectTuple(UserpReader reader) throws IOException {
-		switch (encoding) {
-		case PACK:
-		case BITPACK:
-			return packed_inspectTuple(reader);
-		default:
-			throw new Error("Unimplemented");
-		}
-	}
-
-	void nextElement(UserpReader writer) throws IOException {
-		switch (encoding) {
-		case PACK:
-		case BITPACK:
-			packed_nextElement(writer); break;
-		default:
-			throw new Error("Unimplemented");
-		}
-	}
-
-	void closeTuple(UserpReader reader) throws IOException {
-		switch (encoding) {
-		case PACK:
-		case BITPACK:
-			packed_closeTuple(reader); break;
-		default:
-			throw new Error("Unimplemented");
-		}
-	}
-
-	int packed_inspectTuple(UserpReader reader) throws IOException {
-		reader.tupleState.tupleCodec= this;
-		reader.tupleState.elemCount= readElemCount(reader);
-		reader.tupleState.elemIdx= 0;
-		reader.nodeCodec= elemCodec(0);
-		if (encoding == TupleCoding.BITPACK)
-			reader.src.enableBitpack(true);
-		reader.tupleState.bitpack= reader.src.bitpack;
-		return reader.tupleState.elemCount;
-	}
-
-	void packed_nextElement(UserpReader reader) throws IOException {
-		reader.nodeCodec= (++reader.tupleState.elemIdx >= reader.tupleState.elemCount)?
-			TupleEndSentinelCodec.INSTANCE : elemCodec(reader.tupleState.elemIdx);
-		reader.src.enableBitpack(reader.tupleState.bitpack);
-	}
-
-	void packed_closeTuple(UserpReader reader) throws IOException {
-		while (reader.tupleState.elemIdx < reader.tupleState.elemCount)
-			reader.skipValue();
-		assert(reader.nodeCodec == TupleEndSentinelCodec.INSTANCE);
-	}
-
-	void packed_beginTuple(UserpWriter writer, int elemCount) throws IOException {
-		int fixedCount= type.getElemCount();
-		if (fixedCount >= 0)
-			writer.tupleState.elemCount= fixedCount;
-		else {
-			if (elemCount < 0)
-				throw new RuntimeException(type.getDisplayName()+".beginTuple(int) requires an element count");
-			writer.dest.writeVarQty(elemCount);
-			writer.tupleState.elemCount= elemCount;
-		}
-		writer.tupleState.tupleCodec= this;
-		writer.tupleState.elemIdx= -1;
-		if (encoding == TupleCoding.BITPACK)
-			writer.dest.enableBitpack(true);
-		writer.tupleState.bitpack= writer.dest.bitpack;
-	}
-
-	void packed_nextElement(UserpWriter writer) throws IOException {
-		writer.nodeCodec= (++writer.tupleState.elemIdx >= writer.tupleState.elemCount)?
-			TupleEndSentinelCodec.INSTANCE : elemCodec(writer.tupleState.elemIdx);
-		writer.dest.enableBitpack(writer.tupleState.bitpack);
-	}
-
-	void packed_endTuple(UserpWriter writer) throws IOException {
-		if (writer.tupleState.elemIdx != writer.tupleState.elemCount-1)
-			throw new RuntimeException(type.getDisplayName()+" has "+writer.tupleState.elemCount+" elements, but only "+writer.tupleState.elemIdx+" were written.");
-	}
-
-	int readElemCount(UserpReader reader) throws IOException {
-		int count= type.getElemCount();
-		if (count < 0) {
-			reader.src.readVarQty();
-			count= reader.src.scalarAsInt();
-		}
-		return count;
-	}
-}
+abstract class TupleCodec extends Codec {}
 
 class ArrayCodec extends TupleCodec {
-	Codec elemCodec;
-	int length;
+	TupleCoding encoding;
+	Codec elemType;
+	int tempElemTypeCode;
 
-	static Codec forType(ArrayType t, CodecCollection codecs) {
-		TupleCoding defEnc= t.getEncoderParam_TupleCoding();
-		return forType(t, defEnc == null? TupleCoding.PACK : defEnc, codecs);
-	}
-	static Codec forType(ArrayType t, TupleCoding encoding, CodecCollection codecs) {
-		return new ArrayCodec(t, encoding, calcScalarRange(encoding, t.getElemCount() != -1, t, codecs));
+	public boolean equals(Object other) {
+		return super.equals(other)
+			&& encoding == ((ArrayCodec)other).encoding;
 	}
 
-	static TupleCodec deserialize_ArrayType(Symbol name, UserpReader src, Map resolveParams) throws IOException {
-		src.inspectTuple();
-		TupleCoding encoding= TupleCoding.values()[src.readAsInt()];
-		int elemTypeCode= src.readAsInt();
-		int length= src.readAsInt()-1; // value 0 is VarLen, now becomes -1
-		src.closeTuple();
-
-		ArrayType t= new ArrayType(name).init(null, length);
-		ArrayCodec result= new ArrayCodec(t, encoding, calcScalarRange(encoding, length != -1, elemTypeCode, src.src.codeMap));
-		resolveParams.put(result, new Integer(elemTypeCode));
-		return result;
+	ArrayCodec(ArrayType t, TupleCoding encoding) {
+		type= t;
+		implOverride= type.getCustomCodec();
+		this.encoding= encoding;
+		initStatus= ISTAT_NEED_DESC_REFS;
 	}
 
-	void resolveRefs(UserpDecoder.TypeMap codeMap, Object params) {
-		int elemTypeCode= (Integer) params;
-		elemCodec= codeMap.getType(elemTypeCode);
-		((ArrayType)type).def.elemType= elemCodec.getType();
-	}
-	void resolveRefs(CodecCollection codecs) {
-		elemCodec= codecs.getCodecFor(type.getElemType(0));
+	void resolveDescriptorRefs(CodecBuilder cb) {
+		elemType= cb.getCodecFor(((ArrayType)type).getElemType(0));
+		initStatus= ISTAT_NEED_IMPL;
 	}
 
-	protected ArrayCodec(ArrayType t, TupleCoding encoding, BigInteger scalarRange) {
-		super(scalarRange, t, encoding);
-		this.length= t.getElemCount();
+	ArrayCodec(Symbol name, UserpReader reader) throws IOException {
+		reader.inspectTuple();
+		encoding= TupleCoding.values()[reader.readAsInt()];
+		tempElemTypeCode= reader.readAsInt();
+		int lengthSpec= reader.readAsInt()-1; // value 0 is VarLen, now becomes -1
+		reader.closeTuple();
+
+		type= new ArrayType(name).init(null, lengthSpec);
+		initStatus= ISTAT_NEED_DESC_REFS;
 	}
 
-	Codec elemCodec(int idx) {
-		return elemCodec;
+	void resolveDescriptorRefs(UserpDecoder.TypeCodeMap tcm) throws UserpProtocolException {
+		elemType= tcm.getCodec(tempElemTypeCode);
+		((ArrayType)type).def.elemType= elemType.type;
+		initStatus= ISTAT_NEED_IMPL;
 	}
 
-/*	Class elemClass= arrayDef.typeRefs[0].preferredNativeStorage;
-	if (elemClass != null)
-		preferredNativeStorage= java.lang.reflect.Array.newInstance(elemClass, 0).getClass();*/
-	protected void internal_serialize(UserpWriter dest) throws IOException {
-		dest.select(TArraySpec);
-		dest.beginTuple();
-		dest.write(encoding.ordinal());
-		dest.write(elemCodec.encoderTypeCode);
-		dest.write(length+1); // INF == -1, so the scalar is 0=INF,[1..N]=[0..N-1]
-		dest.endTuple();
+	protected void serializeFields(UserpWriter writer) throws IOException {
+		writer.select(TArraySpec);
+		writer.beginTuple();
+		writer.write(encoding.ordinal());
+		writer.write(elemType.encoderTypeCode);
+		writer.write(((ArrayType)type).getElemCount()+1); // INF == -1, so the scalar is 0=INF,[1..N]=[0..N-1]
+		writer.endTuple();
 	}
+
+	protected void initScalarRange() {
+		if (encoding == TupleCoding.INDEX || encoding == TupleCoding.INDEFINITE || ((ArrayType)type).getElemCount() == -1)
+			scalarRange= UserpType.INF;
+		else
+			scalarRange= elemType.getScalarRange();
+	}
+
+	protected void initCodec() {
+		switch (encoding) {
+		case PACK:
+		case BITPACK:
+			impl= null; // dump the "CODEC_IN_PROGRESS" flag so we can tell if we found a codec, later
+			if (elemType instanceof ScalarCodec) {
+				BigInteger elemRange= elemType.getScalarRange();
+				if (elemRange.bitLength() < 10 && elemRange.intValue() <= 256 && elemRange.intValue() > 128
+					&& elemType.implOverride != null
+					&& elemType.implOverride.getClass() == NativeTypeConverter.class
+					&& ((NativeTypeConverter)elemType.implOverride).specifiedStorage == ValRegister.StoType.BYTE)
+					impl= new ArrayOfByteImpl((TupleType)type, this, encoding);
+			}
+			if (impl == null)
+				impl= new PackedTupleImpl((TupleType)type, this, encoding);
+			break;
+		default:
+			throw new Error("Unimplemented");
+		}
+	}
+
+//	private Codec getSpecialArrayCodec() {
+//		if (type instanceof ScalarType && elemType.getScalarRange().bitLength() <= 64) {
+//			long scalarMax= elemType.getScalarRange().longValue()-1;
+//			// scalarMax could be negative, because we pulled in any/all 64-bit quantities
+//			if (scalarMax >= 0x80 && scalarMax <= 0xFF)
+//				return new ArrayOfByteImpl((TupleType)type, this, encoding);
+//			if (scalarMax >= 0x80000000 && scalarMax <= 0xFFFFFFFF)
+//				return new ArrayOfIntCodec((TupleType)type, this, encoding);
+//		}
+//	}
 }
 
 class RecordCodec extends TupleCodec {
-	Symbol[] names;
-	Codec[] elemCodecs;
+	TupleCoding encoding;
+	Codec[] elemTypes;
+	int[] tempElemTypeCodes;
 
-	static Codec forType(RecordType t, CodecCollection codecs) {
-		TupleCoding defEnc= t.getEncoderParam_TupleCoding();
-		return forType(t, defEnc == null? TupleCoding.PACK : defEnc, codecs);
-	}
-	static Codec forType(RecordType t, TupleCoding encoding, CodecCollection codecs) {
-		return new RecordCodec(t, encoding, t.def.fieldNames, calcScalarRange(encoding, true, t, codecs));
+	public boolean equals(Object other) {
+		return super.equals(other)
+			&& encoding == ((ArrayCodec)other).encoding;
 	}
 
-	static RecordCodec deserialize_RecordType(Symbol name, UserpReader src, Map resolveParams) throws IOException {
-		src.inspectTuple();
-		TupleCoding encoding= TupleCoding.values()[src.readAsInt()];
-		int fieldCount= src.inspectTuple();
+	public RecordCodec(RecordType t, TupleCoding encoding) {
+		type= t;
+		implOverride= type.getCustomCodec();
+		this.encoding= encoding;
+		elemTypes= new Codec[t.getElemCount()];
+		initStatus= ISTAT_NEED_DESC_REFS;
+	}
+
+	void resolveDescriptorRefs(CodecBuilder cb) {
+		for (int i=0; i<elemTypes.length; i++)
+			elemTypes[i]= cb.getCodecFor(((RecordType)type).getElemType(i));
+		initStatus= ISTAT_NEED_IMPL;
+	}
+
+	public RecordCodec(Symbol name, UserpReader reader) throws IOException {
+		reader.inspectTuple();
+		encoding= TupleCoding.values()[reader.readAsInt()];
+		int fieldCount= reader.inspectTuple();
+
 		Symbol[] names= new Symbol[fieldCount];
-		int[] typeCodes= new int[fieldCount];
+		tempElemTypeCodes= new int[fieldCount];
 		for (int i=0; i<fieldCount; i++) {
-			src.inspectTuple();
-			names[i]= (Symbol) src.readValue();
-			typeCodes[i]= src.readAsInt();
-			src.closeTuple();
+			reader.inspectTuple();
+			names[i]= (Symbol) reader.readValue();
+			tempElemTypeCodes[i]= reader.readAsInt();
+			reader.closeTuple();
 		}
-		src.closeTuple();
-		src.closeTuple();
+		reader.closeTuple();
+		reader.closeTuple();
 
-		RecordType t= new RecordType(name);
-		RecordCodec result= new RecordCodec(t, encoding, names, calcScalarRange(encoding, true, typeCodes[0], src.src.codeMap));
-		resolveParams.put(result, typeCodes);
-		return result;
+		type= new RecordType(name)
+			.init(new RecordType.RecordDef(names, new UserpType[fieldCount]));
+		initStatus= ISTAT_NEED_DESC_REFS;
 	}
 
-	protected RecordCodec(RecordType t, TupleCoding encoding, Symbol[] names, BigInteger scalarRange) {
-		super(scalarRange, t, encoding);
-		this.names= names;
-		this.elemCodecs= new Codec[names.length];
+	void resolveDescriptorRefs(UserpDecoder.TypeCodeMap tcm) throws UserpProtocolException {
+		UserpType[] types= ((RecordType)type).def.fieldTypes;
+		for (int i=0; i<elemTypes.length; i++) {
+			elemTypes[i]= tcm.getCodec(tempElemTypeCodes[i]);
+			types[i]= elemTypes[i].type;
+		}
+		tempElemTypeCodes= null;
+		initStatus= ISTAT_NEED_IMPL;
 	}
 
-	void resolveRefs(UserpDecoder.TypeMap codeMap, Object info) {
-		int[] types= (int[]) info;
-		for (int i=0; i<elemCodecs.length; i++)
-			elemCodecs[i]= codeMap.getType(types[i]);
-	}
-
-	void resolveRefs(CodecCollection codecs) {
-		for (int i=0; i<elemCodecs.length; i++)
-			elemCodecs[i]= codecs.getCodecFor(type.getElemType(i));
-	}
-
-	protected void internal_serialize(UserpWriter dest) throws IOException {
-		dest.select(TRecordSpec);
-		dest.beginTuple();
-		dest.write(encoding.ordinal());
-		dest.beginTuple(names.length);
+	protected void serializeFields(UserpWriter writer) throws IOException {
+		writer.select(TRecordSpec);
+		writer.beginTuple();
+		writer.write(encoding.ordinal());
+		Symbol[] names= ((RecordType)type).def.fieldNames;
+		writer.beginTuple(names.length);
 		for (int i=0; i<names.length; i++) {
-			dest.beginTuple();
-			dest.write(names[i]);
-			dest.write(elemCodecs[i].encoderTypeCode);
-			dest.endTuple();
+			writer.beginTuple();
+			writer.write(names[i]);
+			writer.write(elemTypes[i].encoderTypeCode);
+			writer.endTuple();
 		}
-		dest.endTuple();
-		dest.endTuple();
+		writer.endTuple();
+		writer.endTuple();
 	}
 
-	Codec elemCodec(int idx) {
-		return elemCodecs[idx];
+	protected void initCodec() {
+		switch (encoding) {
+		case PACK:
+		case BITPACK:
+			impl= new PackedTupleImpl((TupleType) type, this, encoding);
+			break;
+		default:
+			throw new Error("Unimplemented");
+		}
+	}
+
+	protected void initScalarRange() {
+		if (encoding == TupleCoding.INDEX || encoding == TupleCoding.INDEFINITE)
+			scalarRange= UserpType.INF;
+		else
+			scalarRange= elemTypes[0].getScalarRange();
 	}
 }

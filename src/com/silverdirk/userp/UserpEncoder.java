@@ -16,7 +16,6 @@ import java.math.BigInteger;
 public class UserpEncoder {
 	OutputStream dest;
 	Map<UserpType.TypeHandle, Codec> typeMap;
-	Map<UserpType.TypeHandle, UserCodec> userCodecs;
 
 	boolean bitpack= false;
 	int bitBuffer= 0; // The buffer contains 0..7 bits of data, right-aligned. The upper 24 bits of the buffer may contain junk
@@ -38,20 +37,20 @@ public class UserpEncoder {
 	}
 
 	public UserpEncoder(OutputStream dest, Codec[] predefCodecs) {
-		this(dest, predefCodecs, new HashMap<UserpType.TypeHandle, UserCodec>());
+		this(dest, predefCodecs, new HashMap<UserpType.TypeHandle, CodecOverride>());
 	}
-	public UserpEncoder(OutputStream dest, Codec[] predefCodecs, Map<UserpType.TypeHandle, UserCodec> userCodecs) {
+	public UserpEncoder(OutputStream dest, Codec[] predefCodecs, Map<UserpType.TypeHandle, CodecOverride> userCodecs) {
 		this.dest= dest;
 		this.typeMap= new HashMap<UserpType.TypeHandle,Codec>();
 		for (Codec c: predefCodecs)
-			typeMap.put(c.getType().handle, c);
-		this.userCodecs= userCodecs;
+			typeMap.put(c.type.handle, c);
+//		this.userCodecs= userCodecs;
 	}
 
 	public UserpEncoder(UserpEncoder cloneSource, OutputStream out) {
 		this.dest= out;
 		typeMap= cloneSource.typeMap;
-		userCodecs= cloneSource.userCodecs;
+//		userCodecs= cloneSource.userCodecs;
 		bitpack= bitpack;
 	}
 
@@ -121,26 +120,6 @@ public class UserpEncoder {
 			intern_writeVarQty(val);
 		else
 			intern_writeQty(val, bitLen);
-	}
-
-	public void writeType(UserpType t) throws IOException {
-		Codec enc= typeMap.get(t);
-		if (enc != null)
-			writeType(enc);
-		else {
-			writeVarQty(0);
-			writeTypeTable(createEncoders(t));
-			writeVarQty(typeMap.get(t).encoderTypeCode);
-		}
-	}
-
-	public void writeType(Codec typ) throws IOException {
-		writeVarQty(typ.encoderTypeCode+(typeTableInProgress?0:1));
-	}
-
-	public void writeTypeTable(Codec[] typList) throws IOException {
-		typeTableInProgress= true;
-		typeTableInProgress= false;
 	}
 
 	protected void intern_writeVarQty(long val) throws IOException {
@@ -243,6 +222,21 @@ public class UserpEncoder {
 			break;
 		default:
 			throw new LibraryLimitationException();
+		}
+	}
+
+	public void writeBits(byte[] buffer, int byteOffset, int numBits) throws IOException {
+		if (!bitpack)
+			dest.write(buffer, byteOffset, (numBits+7)>>>3);
+		else {
+			// TODO: use tempBuffer, as many times as needed, and merge this function with writeBitsAndDestroyBuffer XXX
+
+			// in order to do the bit shifts, we can either call "write" over
+			// and over for each byte, or we can copy the bytes into a
+			// temporary buffer which we alter before writing as a single chunk.
+			byte[] temp= new byte[(numBits+7)>>>3];
+			System.arraycopy(buffer, byteOffset, temp, 0, temp.length);
+			writeBitsAndDestroyBuffer(temp, 0, numBits);
 		}
 	}
 
@@ -402,7 +396,20 @@ public class UserpEncoder {
 	}
 */
 
-   private Codec[] createEncoders(UserpType root) {
+   public void writeType(Codec t) throws IOException {
+	   if (t.encoderTypeCode < 0) {
+		   writeVarQty(0);
+		   writeTypeTable(collectTypesWithoutCodes(t));
+	   }
+	   writeVarQty(t.encoderTypeCode);
+   }
+
+   public void writeTypeTable(Collection<Codec> typList) throws IOException {
+	   typeTableInProgress= true;
+	   typeTableInProgress= false;
+   }
+
+   private Collection<Codec> collectTypesWithoutCodes(Codec root) {
 	   throw new Error("Unimplemented");
    }
 }

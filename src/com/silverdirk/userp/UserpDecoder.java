@@ -14,8 +14,8 @@ import java.math.BigInteger;
  */
 public class UserpDecoder {
 	BufferChainIStream src;
-	TypeMap codeMap;
-	Map<UserpType.TypeHandle, UserCodec> userCodecs; // a static map of user-specified codecs
+	TypeCodeMap codeMap;
+	Map<UserpType.TypeHandle, CodecOverride> userCodecs; // a static map of user-specified codecs
 
 	boolean bitpack= false; // whether bitpacking is enabled currently
 	int bitBuffer= 0; // The buffer contains 0..7 bits of data, right-aligned. The upper 24 bits of the buffer may contain junk
@@ -33,14 +33,14 @@ public class UserpDecoder {
 		codeMap= new RootTypeMap(predefCodecs);
 	}
 
-	static class TypeMap {
+	static class TypeCodeMap {
 		int chainLength;
-		TypeMap base;
+		TypeCodeMap base;
 		HashMap<Integer,Codec> typeByCode;
 
-		protected TypeMap() {}
+		protected TypeCodeMap() {}
 
-		TypeMap(TypeMap baseMap) {
+		TypeCodeMap(TypeCodeMap baseMap) {
 			base= baseMap;
 			typeByCode= new HashMap();
 			if (base.chainLength >= 5)
@@ -60,21 +60,26 @@ public class UserpDecoder {
 			typeByCode.put(new Integer(idx), t);
 		}
 
-		Codec getType(int code) {
+		UserpType getType(int code) throws UserpProtocolException {
+			return getCodec(code).type;
+		}
+
+		Codec getCodec(int code) throws UserpProtocolException {
 			Codec t= typeByCode.get(new Integer(code));
-			return (t != null)? t : base.getType(code);
+			return (t != null)? t : base.getCodec(code);
 		}
 	}
 
-	static class RootTypeMap extends TypeMap {
+	static class RootTypeMap extends TypeCodeMap {
 		Codec[] predefList;
 		RootTypeMap(Codec[] predefList) {
 			chainLength= 0;
 			this.predefList= predefList;
 		}
 
-		Codec getType(int code) {
-			return (code < predefList.length)? predefList[code] : null;
+		Codec getCodec(int code) throws UserpProtocolException {
+			if (code < predefList.length) return predefList[code];
+			throw new UserpProtocolException("Invalid type code encountered: "+code);
 		}
 	}
 
@@ -321,6 +326,19 @@ public class UserpDecoder {
 		}
 	}
 
+	final void skipBits(int bitsToSkip) throws IOException {
+		if (!bitpack)
+			src.skip((bitsToSkip+7)>>3);
+		else {
+			bitsToSkip-= bitCount;
+			int byteSkip= bitsToSkip>>>3;
+			src.skip(byteSkip);
+			bitCount= bitsToSkip & 0x7;
+			if (bitCount != 0)
+				bitBuffer= src.readUnsignedByte();
+		}
+	}
+
 	/** Read up to 8 bits from the underlying stream.
 	 * If bitpacking is not enabled, this function reads an entire byte.
 	 * The upper bits of the returned int will be clear.
@@ -450,21 +468,22 @@ public class UserpDecoder {
 				tcode= scalarAsInt();
 			}
 		}
-		return codeMap.getType(tcode);
+		return codeMap.getCodec(tcode);
 	}
 
-	public final UserpType[] readTypeTable() throws IOException {
+	public final Codec[] readTypeTable() throws IOException {
+		throw new Error("Unimplemented");
 		// Find the range of codes being redefined
-		readVarQty();
-		int startIdx= scalarAsInt();
-		readVarQty();
-		int count= scalarAsInt();
-		if (count == 0)
-			return new UserpType[0];
-
-		// Prevent type tables from being nested within this one
-		typeTableInProgress= true;
-
+//		readVarQty();
+//		int startIdx= scalarAsInt();
+//		readVarQty();
+//		int count= scalarAsInt();
+//		if (count == 0)
+//			return new UserpType[0];
+//
+//		// Prevent type tables from being nested within this one
+//		typeTableInProgress= true;
+//
 //		// Create the new types
 //		UserpType[] newTypes= new UserpType[count];
 //		int[] classCodes= new int[count];
@@ -497,7 +516,7 @@ public class UserpDecoder {
 //			reader.startFreshElement(ProtocolTypes.TMetadata);
 //			newTypes[i].setMeta((TypedData[]) reader.readValue());
 //		}
-		UserpType[] table= new UserpType[count];
+//		UserpType[] table= new UserpType[count];
 //		for (int i=0; i<count; i++) {
 //			table[i]= newTypes[i].resolve();
 //			codeMap.redefine(startIdx+i, table[i]);
@@ -505,7 +524,6 @@ public class UserpDecoder {
 //
 //		// Restore disrupted variables in the reader
 //		reader.elemType= prevType;
-		typeTableInProgress= false;
-		return table;
+//		typeTableInProgress= false;
 	}
 }
