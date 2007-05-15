@@ -27,11 +27,14 @@
   <property category="javaFormatting" name="wrapAtColumn" value="120"/>
   <property category="javaFormatting" name="wrapBeforeOperator" value="1"/>
   <property category="javadoc" name="custom.tags.1" value="todo;a;To Do:"/>
-  <property category="personality" name="personality" value=""/>
+  <property category="personality" name="personality" value="com.borland.jbuilder.personality.CorbaPersonality com.borland.jbuilder.personality.VisualDesignerPersonality "/>
   <property category="runtime" name="DefaultConfiguration" value="-1"/>
-  <property category="runtime.0" name="ConfigurationName" value="_TestWholeType"/>
+  <property category="runtime.0" name="BuildTargetOnRun" value="com.borland.jbuilder.build.ProjectBuilder$ProjectBuildAction;make"/>
+  <property category="runtime.0" name="ConfigurationName" value="Test Cases"/>
   <property category="runtime.0" name="RunnableType" value="com.borland.jbuilder.runtime.TestRunner"/>
-  <property category="runtime.0" name="test.class" value="com.silverdirk.userp._TestWholeType"/>
+  <property category="runtime.0" name="test.class" value="com.silverdirk.userp._Test_Package"/>
+  <property category="runtime.0" name="test.harness" value="com.borland.jbuilder.unittest.JBTestRunner"/>
+  <property category="runtime.0" name="test.vmparameters" value="-ea:com.silverdirk.userp..."/>
   <property category="serverservices" name="single.server.name" value="Tomcat 4.0"/>
   <property category="sys" name="AuthorLabel" value="@author"/>
   <property category="sys" name="BackupPath" value="bak"/>
