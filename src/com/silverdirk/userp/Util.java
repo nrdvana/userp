@@ -51,33 +51,30 @@ public class Util {
 		}
 	}
 
-	static final boolean typeArrayDeepEquals(UserpType[] a, UserpType[] b, Map<UserpType.TypeHandle,UserpType.TypeHandle> equalityMap) {
-		if (a.length != b.length)
-			return false;
-		for (int i=0,stop=a.length; i<stop; i++)
-			if (!a[i].equals(b[i], equalityMap))
-				return false;
-		return true;
-	}
-
-	// The following is derived from
-	// "Find the log base 2 of an N-bit integer in O(lg(N)) operations with multiply and lookup"
-	// from http://graphics.stanford.edu/~seander/bithacks.html
-	// written by Eric Cole
+	// from http://graphics.stanford.edu/~seander/bithacks.html, see javadoc of "getBitLength".
 	static final int[] MultiplyDeBruijnBitPosition= new int[] {
 		0, 1, 28, 2, 29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4, 8,
 		31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6, 11, 5, 10, 9
 	};
+
+	/** Get the bit-length of a number, considering 0 to be 0 bits long.
+	 * The following is a slight modification of
+	 * "Find the log base 2 of an N-bit integer in O(lg(N)) operations with multiply and lookup"
+	 * from http://graphics.stanford.edu/~seander/bithacks.html
+	 * and was submitted by Eric Cole
+	 */
 	public static int getBitLength(int val) {
+		if (val == 0) return 0;
 		val|= val >>> 1; // first round down to power of 2
 		val|= val >>> 2;
 		val|= val >>> 4;
 		val|= val >>> 8;
 		val|= val >>> 16;
 		val= (val >>> 1) + 1;
-		int log2= MultiplyDeBruijnBitPosition[(val * 0x077CB531) >>> 27];
-		return (val == 0)? 0 : log2+1; // +1 because we want bit-length, not highest-bit-set-index
+		// +1 because we want bit-length, not highest-bit-set-index
+		return MultiplyDeBruijnBitPosition[(val * 0x077CB531) >>> 27]+1;
 	}
+
 	// I didn't feel like calculating a new DeBruijin sequence, so we have this cheap hack
 	public static int getBitLength(long val) {
 		return (val >>> 32 != 0)? getBitLength((int)(val>>32))+32 : getBitLength((int)val);
