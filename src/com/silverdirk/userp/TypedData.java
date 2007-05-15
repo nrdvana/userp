@@ -11,7 +11,7 @@ import java.util.*;
  * @author Michael Conrad
  * @version $Revision$
  */
-public class TypedData implements UserpType.RecursiveAware {
+public class TypedData {
 	UserpType dataType;
 	Object data;
 
@@ -33,15 +33,10 @@ public class TypedData implements UserpType.RecursiveAware {
 	}
 
 	public boolean equals(Object other) {
-		return equals(other, new HashMap<UserpType.TypeHandle,UserpType.TypeHandle>());
-	}
-
-	public boolean equals(Object other, Map<UserpType.TypeHandle,UserpType.TypeHandle> equalityMap) {
-		return other instanceof TypedData && equals((TypedData)other, equalityMap);
-	}
-
-	public boolean equals(TypedData other, Map<UserpType.TypeHandle,UserpType.TypeHandle> equalityMap) {
-		return dataType.equals(other.dataType, equalityMap)
-			&& data.equals(other.data);
+		if (!(other instanceof TypedData))
+			return false;
+		TypedData tdOther= (TypedData) other;
+		return dataType.equals(tdOther.dataType)
+			&& data.equals(tdOther.data);
 	}
 }

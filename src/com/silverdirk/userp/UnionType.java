@@ -42,10 +42,8 @@ public class UnionType extends UserpType {
 			return Arrays.deepHashCode(members);
 		}
 
-		protected boolean equals(TypeDef other, Map<TypeHandle,TypeHandle> equalityMap) {
-			throw new Error("Unimplemented");
-//			return (other instanceof UnionDef)
-//				&& Arrays.equals(members, ((UnionDef)other).Members);
+		public boolean equals(Object other) {
+			return super.equals(other) && Arrays.deepEquals(members, ((UnionDef)other).members);
 		}
 
 		public String toString() {

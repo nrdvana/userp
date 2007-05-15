@@ -77,28 +77,102 @@ public abstract class UserpType {
 		return (other instanceof UserpType) && equals((UserpType)other);
 	}
 
+	static class IntVar {
+		int val;
+	}
+
+	public static final ThreadLocal<IntVar> recursionCount
+		= new ThreadLocal<IntVar>() {
+			protected IntVar initialValue() {
+				IntVar result= new IntVar();
+				result.val= 0;
+				return result;
+			}
+		};
+	private static final int RECURSION_TRIGGER= 16;
+
 	public final boolean equals(UserpType other) {
-		return equals(other, new HashMap<TypeHandle,TypeHandle>());
+		if (this == other)
+			return true;
+		if (!name.equals(other.name))
+			return false;
+		IntVar depth= recursionCount.get();
+		if (depth.val > 0) return equals_fastImpl(other);
+		if (depth.val < 0) return equals_correctImpl(other);
+		return equals_root(other);
+	}
+
+	static class SuspectedInfiniteRecursion extends RuntimeException {}
+
+	private final boolean equals_root(UserpType other) {
+		boolean result;
+		try {
+			try {
+				recursionCount.get().val= 1;
+				result= equals_fastImpl(other);
+			}
+			catch (SuspectedInfiniteRecursion ex) {
+				recursionCount.get().val= -1;
+				result= equals_correctImpl(other);
+				equalityMap.get().clear();
+			}
+		}
+		finally {
+			recursionCount.get().val= 0;
+		}
+		return result;
+	}
+
+	private final boolean equals_fastImpl(UserpType other) {
+		if (recursionCount.get().val++ > RECURSION_TRIGGER)
+			throw new SuspectedInfiniteRecursion();
+		boolean result= definitionEquals(other);
+		recursionCount.get().val--;
+		return result;
+	}
+
+	public static final ThreadLocal<Map<TypeHandle,Map>> equalityMap
+		= new ThreadLocal<Map<TypeHandle,Map>>() {
+			protected Map<TypeHandle,Map> initialValue() {
+				return new WeakHashMap<TypeHandle,Map>();
+			}
+		};
+
+	private final boolean equals_correctImpl(UserpType other) {
+		Map<TypeHandle,Map> equalityMap= this.equalityMap.get();
+		Map equalSet= null;
+		int hc1= handle.hashCode(), hc2= other.handle.hashCode();
+		if (hc1 <= hc2) {
+			equalSet= equalityMap.get(handle);
+			if (equalSet != null && equalSet.containsKey(other.handle))
+				return true;
+		}
+		if (hc2 <= hc1) {
+			equalSet= equalityMap.get(other.handle);
+			if (equalSet != null && equalSet.containsKey(handle))
+				return true;
+		}
+		if (equalSet == null)
+			equalityMap.put((hc2 <= hc1? other.handle : handle), equalSet= new WeakHashMap());
+		boolean result= false;
+		try {
+			equalSet.put((hc2 <= hc1? handle : other.handle), null);
+			result= definitionEquals(other);
+		}
+		finally {
+			if (!result)
+				equalSet.remove((hc2 <= hc1? handle : other.handle));
+		}
+		return result;
 	}
 
 	public final boolean definitionEquals(UserpType other) {
-		HashMap equalityMap= new HashMap<TypeHandle,TypeHandle>();
-		equalityMap.put(handle, other.handle);
-		return definitionEquals(other, equalityMap);
-	}
-
-	protected final boolean equals(UserpType other, Map<TypeHandle,TypeHandle> equalityMap) {
-		equalityMap.put(handle, other.handle);
-		return name.equals(other.name) && definitionEquals(other, equalityMap);
-	}
-
-	protected final boolean definitionEquals(UserpType other, Map<TypeHandle,TypeHandle> equalityMap) {
 		TypeDef idef= getDefinition(), odef= other.getDefinition();
 		if (idef == null)
 			throw new UninitializedTypeException(this, "equals");
 		if (odef == null)
 			throw new UninitializedTypeException(other, "equals");
-		return idef.equals(odef, equalityMap);
+		return idef.equals(odef);
 	}
 
 	public UserpType cloneAs(String newName) {
@@ -159,28 +233,18 @@ public abstract class UserpType {
 		}
 	}
 
-	interface RecursiveAware {
-		public boolean equals(Object other, Map<TypeHandle,TypeHandle> equalityMap);
-	}
-
-	public abstract static class TypeDef implements RecursiveAware {
+	public abstract static class TypeDef {
 		/** Generate a hash code for this type definition.
 		 * The generated hash is a "deep hash" incorperating the hash codes of
-		 * all referenced types, however the hash code is a type only a hash
-		 * of the metadata.
+		 * all referenced UserpTypes, however the hash code of each UserpType
+		 * is only a hash of name and class.
 		 * @return int The hash code for this type definition
 		 */
 		public abstract int hashCode();
 
 		public boolean equals(Object other) {
-			return equals((TypeDef)other, new HashMap<TypeHandle,TypeHandle>());
+			return getClass() == other.getClass();
 		}
-
-		public boolean equals(Object other, Map<TypeHandle,TypeHandle> equalityMap) {
-			return (other instanceof TypeDef) && equals(other, equalityMap);
-		}
-
-		protected abstract boolean equals(TypeDef other, Map<TypeHandle,TypeHandle> equalityMap);
 
 		public abstract String toString();
 	}

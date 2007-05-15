@@ -20,7 +20,7 @@ public class AnyType extends UserpType {
 			return ~42;
 		}
 
-		protected boolean equals(TypeDef other, Map<TypeHandle,TypeHandle> equalityMap) {
+		public boolean equals(Object other) {
 			return other == this;
 		}
 

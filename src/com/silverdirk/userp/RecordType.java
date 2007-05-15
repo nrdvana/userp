@@ -53,12 +53,12 @@ public class RecordType extends TupleType {
 			return ~Arrays.deepHashCode(fieldNames) ^ Arrays.deepHashCode(fieldTypes);
 		}
 
-		protected boolean equals(TypeDef other, Map<TypeHandle,TypeHandle> equalityMap) {
-			if (!(other instanceof RecordDef))
+		public boolean equals(Object other) {
+			if (!super.equals(other))
 				return false;
 			RecordDef otherDef= (RecordDef) other;
 			return Arrays.deepEquals(fieldNames, otherDef.fieldNames)
-				&& Util.typeArrayDeepEquals(fieldTypes, otherDef.fieldTypes, equalityMap);
+				&& Arrays.deepEquals(fieldTypes, otherDef.fieldTypes);
 		}
 
 		public String toString() {

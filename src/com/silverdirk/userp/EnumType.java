@@ -29,6 +29,7 @@ public class EnumType extends ScalarType {
 			// assert each component is one of Symbol, String (convert to symbol),
 			// TypeData, or Range.  Assert ranges are non-infinite, except last one.
 			int singleCount= 0;
+			spec= new Object[specComponents.length];
 			BigInteger rangeWidth= BigInteger.ZERO;
 			for (int i=0; i<specComponents.length; i++) {
 				Object spec_i= specComponents[i];
@@ -49,6 +50,7 @@ public class EnumType extends ScalarType {
 						throw new RuntimeException("Enum spec components must be one of Symbol, TypedData, or Range");
 					singleCount++;
 				}
+				spec[i]= spec_i;
 			}
 			if (rangeWidth == INF)
 				scalarRange= INF;
@@ -57,11 +59,11 @@ public class EnumType extends ScalarType {
 		}
 
 		public int hashCode() {
-			throw new Error("Unimplemented");
+			return Arrays.deepHashCode(spec);
 		}
 
-		protected boolean equals(TypeDef other, Map<TypeHandle,TypeHandle> equalityMap) {
-			throw new Error("Unimplemented");
+		public boolean equals(Object other) {
+			return super.equals(other) && Arrays.deepEquals(spec, ((EnumDef)other).spec);
 		}
 
 		public String toString() {
@@ -96,7 +98,7 @@ public class EnumType extends ScalarType {
 		}
 	}
 
-	public static class Range implements RecursiveAware {
+	public static class Range {
 		ScalarType domain;
 		BigInteger from, to;
 
@@ -127,18 +129,14 @@ public class EnumType extends ScalarType {
 		}
 
 		public boolean equals(Object other) {
-			return equals(other, new HashMap<TypeHandle,TypeHandle>());
+			return other instanceof Range && equals((Range)other);
 		}
 
-		public boolean equals(Object other, Map<TypeHandle,TypeHandle> equalityMap) {
-			return other instanceof Range && equals((Range)other, equalityMap);
-		}
-
-		protected boolean equals(Range other, Map<TypeHandle,TypeHandle> equalityMap) {
+		public boolean equals(Range other) {
 			return from.equals(other.from)
 				// InfFlag will assert that the other is also an InfFlag, but BigInteger.ZERO will see itself equal to INF
 				&& other.to.equals(to) && to.equals(other.to)
-				&& domain.equals(other.domain, equalityMap);
+				&& domain.equals(other.domain);
 		}
 
 		// re-reference these values so users can find them more easily

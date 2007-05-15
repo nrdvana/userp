@@ -35,12 +35,12 @@ public class ArrayType extends TupleType {
 			return ~length ^ elemType.hashCode();
 		}
 
-		protected boolean equals(TypeDef other, Map<TypeHandle,TypeHandle> equalityMap) {
-			if (!(other instanceof ArrayDef))
+		public boolean equals(Object other) {
+			if (!super.equals(other))
 				return false;
 			ArrayDef otherDef= (ArrayDef) other;
 			return length == otherDef.length
-				&& elemType.equals(otherDef.elemType, equalityMap);
+				&& elemType.equals(otherDef.elemType);
 		}
 
 		public String toString() {
