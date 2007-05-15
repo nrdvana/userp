@@ -2,6 +2,7 @@ package com.silverdirk.userp;
 
 import java.util.*;
 import java.io.IOException;
+import java.math.BigInteger;
 
 /**
  * <p>Project: </p>
@@ -27,7 +28,7 @@ public class UserpReader {
 		long[] elemEndAddrs;
 	}
 
-	final ValRegister valRegister= new ValRegister();
+	public final ValRegister valRegister= new ValRegister();
 
 	public UserpReader(UserpDecoder src, Codec rootCodec) {
 		this.src= src;
@@ -97,71 +98,48 @@ public class UserpReader {
 	}
 
 	public final boolean readAsBool() throws IOException {
-		return readAsLong() != 0;
+		loadValue();
+		return valRegister.asBool();
 	}
 
 	public final byte readAsByte() throws IOException {
-		return (byte) readAsLong();
+		loadValue();
+		return valRegister.asByte();
 	}
 
 	public final short readAsShort() throws IOException {
-		return (short) readAsLong();
+		loadValue();
+		return valRegister.asShort();
 	}
 
 	public final int readAsInt() throws IOException {
-		return (int) readAsLong();
+		loadValue();
+		return valRegister.asInt();
 	}
 
 	public final long readAsLong() throws IOException {
-		nodeCodec.impl.readValue(this, valRegister);
-		tupleState.TupleImpl.nextElement(this);
-		switch (valRegister.sto) {
-		case BOOL:  case BYTE:
-		case SHORT: case INT:
-		case CHAR:  case LONG:
-			return valRegister.i64;
-		case FLOAT:  return (long) Float.intBitsToFloat((int)valRegister.i64);
-		case DOUBLE: return (long) Double.longBitsToDouble(valRegister.i64);
-		case OBJECT: return ((Number)valRegister.obj).longValue();
-		default:
-			throw new Error();
-		}
+		loadValue();
+		return valRegister.asLong();
 	}
 
 	public final float readAsFloat() throws IOException {
-		nodeCodec.impl.readValue(this, valRegister);
-		tupleState.TupleImpl.nextElement(this);
-		switch (valRegister.sto) {
-		case BOOL:  case BYTE:
-		case SHORT: case INT:
-		case CHAR:  case LONG:
-			return (float) valRegister.i64;
-		case FLOAT:  return Float.intBitsToFloat((int)valRegister.i64);
-		case DOUBLE: return (float) Double.longBitsToDouble(valRegister.i64);
-		case OBJECT: return ((Number)valRegister.obj).floatValue();
-		default:
-			throw new Error();
-		}
+		loadValue();
+		return valRegister.asFloat();
 	}
 
 	public final double readAsDouble() throws IOException {
-		nodeCodec.impl.readValue(this, valRegister);
-		tupleState.TupleImpl.nextElement(this);
-		switch (valRegister.sto) {
-		case BOOL:  case BYTE:
-		case SHORT: case INT:
-		case CHAR:  case LONG:
-			return (double) valRegister.i64;
-		case FLOAT:  return (double) Float.intBitsToFloat((int)valRegister.i64);
-		case DOUBLE: return Double.longBitsToDouble(valRegister.i64);
-		case OBJECT: return ((Number)valRegister.obj).doubleValue();
-		default:
-			throw new Error();
-		}
+		loadValue();
+		return valRegister.asDouble();
 	}
 
 	public final char readAsChar() throws IOException {
-		return (char) readAsLong();
+		loadValue();
+		return valRegister.asChar();
+	}
+
+	public final BigInteger readAsBigInt() throws IOException {
+		loadValue();
+		return valRegister.asBigInt();
 	}
 }
 
