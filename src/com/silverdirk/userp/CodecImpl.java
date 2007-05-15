@@ -21,8 +21,8 @@ import com.silverdirk.userp.UserpWriter.Event;
 public abstract class CodecImpl {
 	Codec descriptor;
 
-	protected CodecImpl(Codec cd) {
-		descriptor= cd;
+	protected CodecImpl(Codec c) {
+		descriptor= c;
 	}
 
 	final Codec getDescriptor() {
@@ -58,15 +58,15 @@ public abstract class CodecImpl {
 abstract class ScalarImpl extends CodecImpl {
 	ScalarType type;
 
-	protected ScalarImpl(ScalarType t, Codec cd) {
-		super(cd);
+	protected ScalarImpl(ScalarType t, Codec c) {
+		super(c);
 		this.type= t;
 	}
 }
 
 class IntegerImpl extends ScalarImpl {
-	protected IntegerImpl(ScalarType t, Codec cd) {
-		super(t, cd);
+	protected IntegerImpl(ScalarType t, Codec c) {
+		super(t, c);
 	}
 
 	public void writeValue(UserpWriter writer, ValRegister.StoType type, long val_i64, Object val_o) throws IOException {
@@ -128,13 +128,13 @@ class EnumImpl_inf extends ScalarImpl {
 	int bitLen;
 	BigInteger max= null;
 
-	protected EnumImpl_inf(ScalarType t, Codec cd) {
-		super(t, cd);
-		BigInteger range= t.getValueCount();
+	protected EnumImpl_inf(ScalarType t, EnumCodec c) {
+		super(t, c);
+		BigInteger range= c.getScalarRange();
 		if (range == UserpType.INF)
 			bitLen= -1;
 		else {
-			max= t.getValueCount().subtract(BigInteger.ONE);
+			max= range.subtract(BigInteger.ONE);
 			bitLen= max.bitLength();
 		}
 	}
@@ -173,14 +173,16 @@ class EnumImpl_inf extends ScalarImpl {
 	}
 }
 
-class EnumImpl_63 extends EnumImpl_inf {
+class EnumImpl_63 extends ScalarImpl {
 	ValRegister.StoType stoClass;
 	long max;
+	int bitLen;
 
-	protected EnumImpl_63(ScalarType t, Codec cd) {
-		super(t, cd);
-		max= t.getValueCount().subtract(BigInteger.ONE).longValue();
-		stoClass= ValRegister.getTypeForBitLen(Util.getBitLength(max));
+	protected EnumImpl_63(ScalarType t, EnumCodec c) {
+		super(t, c);
+		max= c.getScalarRange().subtract(BigInteger.ONE).longValue();
+		bitLen= Util.getBitLength(max);
+		stoClass= ValRegister.getTypeForBitLen(bitLen);
 	}
 
 	public void writeValue(UserpWriter writer, ValRegister.StoType type, long val_i64, Object val_o) throws IOException {
@@ -218,8 +220,8 @@ class EnumImpl_63 extends EnumImpl_inf {
  * having copy&pasted read/write/skip methods.
  */
 abstract class UnionishImpl extends CodecImpl {
-	public UnionishImpl(Codec cd) {
-		super(cd);
+	public UnionishImpl(Codec c) {
+		super(c);
 	}
 
 	public void writeValue(UserpWriter writer, ValRegister.StoType type, long val_i64, Object val_o) throws IOException {
@@ -267,12 +269,12 @@ abstract class UnionImpl extends UnionishImpl {
 	boolean bitpack;
 	boolean[] memberInlineFlags;
 
-	protected UnionImpl(UnionType t, UnionCodec cd) {
-		super(cd);
+	protected UnionImpl(UnionType t, UnionCodec c) {
+		super(c);
 		this.type= t;
-		this.members= cd.members;
-		this.bitpack= cd.bitpack;
-		this.memberInlineFlags= cd.inlineMember;
+		this.members= c.members;
+		this.bitpack= c.bitpack;
+		this.memberInlineFlags= c.inlineMember;
 	}
 
 	void selectType(UserpWriter writer, UserpType whichUnionMember) throws IOException {
@@ -297,8 +299,8 @@ class UnionImpl_bi extends UnionImpl {
 	BigInteger[] offsets;
 	BigInteger max;
 
-	public UnionImpl_bi(UnionType t, UnionCodec cd, BigInteger scalarRange, BigInteger[] offsets) {
-		super(t, cd);
+	public UnionImpl_bi(UnionType t, UnionCodec c, BigInteger scalarRange, BigInteger[] offsets) {
+		super(t, c);
 		this.offsets= offsets;
 		if (scalarRange == UserpType.INF)
 			selectorBitLen= -1;
@@ -345,8 +347,8 @@ class UnionImpl_63 extends UnionImpl {
 	long[] offsets;
 	long max;
 
-	public UnionImpl_63(UnionType t, UnionCodec cd, long range, BigInteger[] offsets) {
-		super(t, cd);
+	public UnionImpl_63(UnionType t, UnionCodec c, long range, BigInteger[] offsets) {
+		super(t, c);
 		this.offsets= new long[offsets.length];
 		for (int i=0; i<offsets.length; i++)
 			this.offsets[i]= offsets[i].longValue();
@@ -399,14 +401,14 @@ abstract class TupleImpl extends CodecImpl {
 		super(c);
 	}
 
-	protected TupleImpl(TupleType t, Codec cd, TupleCoding encMode) {
-		super(cd);
+	protected TupleImpl(TupleType t, Codec c, TupleCoding encMode) {
+		super(c);
 		this.type= t;
 		this.encMode= encMode;
-		if (cd instanceof RecordCodec)
-			elemCodecs= ((RecordCodec)cd).elemTypes;
+		if (c instanceof RecordCodec)
+			elemCodecs= ((RecordCodec)c).elemTypes;
 		else
-			elemCodec= ((ArrayCodec)cd).elemType;
+			elemCodec= ((ArrayCodec)c).elemType;
 	}
 
 	Codec elemCodec(int idx) {
@@ -480,12 +482,12 @@ abstract class TupleImpl extends CodecImpl {
 }
 
 class PackedTupleImpl extends TupleImpl {
-	protected PackedTupleImpl(TupleType t, Codec cd, TupleCoding encMode) {
-		super(t, cd, encMode);
+	protected PackedTupleImpl(TupleType t, Codec c, TupleCoding encMode) {
+		super(t, c, encMode);
 	}
 
 	int inspectTuple(UserpReader reader) throws IOException {
-		reader.tupleState.TupleImpl= this;
+		reader.tupleState.tupleImpl= this;
 		reader.tupleState.elemCount= readElemCount(reader);
 		reader.tupleState.elemIdx= 0;
 		reader.nodeCodec= elemCodec(0);
@@ -539,8 +541,9 @@ class PackedTupleImpl extends TupleImpl {
 }
 
 class ArrayOfByteImpl extends PackedTupleImpl {
-	protected ArrayOfByteImpl(TupleType t, Codec cd, TupleCoding encMode) {
-		super(t, cd, encMode);
+	protected ArrayOfByteImpl(TupleType t, Codec c, TupleCoding encMode) {
+		super(t, c, encMode);
+		assert(encMode == TupleCoding.BITPACK || encMode == TupleCoding.PACK);
 	}
 
 	public void writeValue(UserpWriter writer, ValRegister.StoType stoType, long val_i64, Object val_o) throws IOException {
@@ -569,6 +572,71 @@ class ArrayOfByteImpl extends PackedTupleImpl {
 	}
 }
 
+class ArrayOfBoolImpl extends PackedTupleImpl {
+	protected ArrayOfBoolImpl(TupleType t, Codec c, TupleCoding encMode) {
+		super(t, c, encMode);
+		assert(encMode == TupleCoding.BITPACK);
+	}
+
+	public void writeValue(UserpWriter writer, ValRegister.StoType stoType, long val_i64, Object val_o) throws IOException {
+		if (stoType != StoType.OBJECT)
+			throw new ClassCastException("Cannot cast from "+Util.getReadableClassName(stoType.javaCls)+" to boolean[]");
+		boolean[] valArray= (boolean[]) val_o;
+		int fixedCount= type.getElemCount();
+		if (fixedCount < 0)
+			writer.dest.writeVarQty(valArray.length);
+		// stream should technically be in bitpack mode before the VarQty, but
+		// VarQty is an even multiple of bytes, so it doesn't matter.
+		writer.dest.enableBitpack(true);
+		byte[] buffer= writer.dest.tempBuffer;
+		int pos= 0;
+		while (pos < valArray.length) {
+			// TODO: Unroll/optimize
+			int from= pos;
+			for (int i=0; i<buffer.length && pos < valArray.length; pos++) {
+				byte val= (byte)((valArray[pos++]?1:0)<<(7-(pos&7)));
+				if ((pos & 7) == 0)
+					buffer[i]= val;
+				else
+					buffer[i]|= val;
+				if ((pos & 7) == 7)
+					i++;
+			}
+			writer.dest.writeBits(buffer, 0, pos-from);
+		}
+	}
+
+	public void readValue(UserpReader reader, ValRegister vr) throws IOException {
+		int elemCount= readElemCount(reader);
+		// stream should technically be in bitpack mode before the VarQty, but
+		// VarQty is an even multiple of bytes, so it doesn't matter.
+		reader.src.enableBitpack(true);
+		boolean[] result= new boolean[elemCount];
+		byte[] buffer= reader.src.tempBuffer;
+		int pos= 0;
+		while (pos < result.length) {
+			// TODO: Unroll/optimize
+			int limit= Math.min(buffer.length<<3, result.length-pos);
+			reader.src.readBits(buffer, 0, limit);
+			for (int i=0; i<buffer.length && pos < result.length; pos++) {
+				result[pos]= (buffer[i] >>> (7-(pos&7))) != 0;
+				if ((pos & 7) == 7)
+					i++;
+			}
+		}
+		vr.obj= result;
+		vr.sto= vr.sto.OBJECT;
+	}
+
+	public void skipValue(UserpReader reader) throws IOException {
+		int elemCount= readElemCount(reader);
+		// stream should technically be in bitpack mode before the VarQty, but
+		// VarQty is an even multiple of bytes, so it doesn't matter.
+		reader.src.enableBitpack(true);
+		reader.src.skipBits(elemCount);
+	}
+}
+
 class NativeTypeConverter implements CodecOverride {
 	ValRegister.StoType specifiedStorage;
 
@@ -576,36 +644,44 @@ class NativeTypeConverter implements CodecOverride {
 		this.specifiedStorage= specifiedStorage;
 	}
 
-	public void writeValue(CodecImpl parent, UserpWriter writer, ValRegister.StoType type, long val_i64, Object val_o) throws IOException {
-		parent.writeValue(writer, type, val_i64, val_o);
+	public void writeValue(UserpWriter writer, ValRegister.StoType type, long val_i64, Object val_o) throws IOException {
+		if (type == type.OBJECT)
+			writer.write(val_o);
+		else
+			writer.write(val_i64);
 	}
 
-	public void readValue(CodecImpl parent, UserpReader reader, ValRegister val) throws IOException {
-		parent.readValue(reader, val);
-		val.sto= specifiedStorage;
+	public void loadValue(UserpReader reader) throws IOException {
+		reader.loadValue();
+		reader.valRegister.sto= specifiedStorage;
 	}
 }
 
 class SymbolConverter implements CodecOverride {
-	public void writeValue(CodecImpl parent, UserpWriter writer, ValRegister.StoType type, long val_i64, Object val_o) throws IOException {
-		parent.writeValue(writer, type, val_i64, ((Symbol)val_o).data);
+	public void writeValue(UserpWriter writer, ValRegister.StoType type, long val_i64, Object val_o) throws IOException {
+		if (type == type.OBJECT)
+			writer.write(((Symbol)val_o).data);
+		else
+			throw new ClassCastException("Cannot convert from 'long' to com.silverdirk.userp.Symbol");
 	}
 
-	public void readValue(CodecImpl parent, UserpReader reader, ValRegister val) throws IOException {
-		parent.readValue(reader, val);
-		val.obj= new Symbol((byte[])val.obj);
+	public void loadValue(UserpReader reader) throws IOException {
+		reader.loadValue();
+		reader.valRegister.obj= new Symbol((byte[])reader.valRegister.obj);
 	}
 
 	static final SymbolConverter INSTANCE= new SymbolConverter();
 }
 
 class NullConverter implements CodecOverride {
-	public void writeValue(CodecImpl parent, UserpWriter writer, ValRegister.StoType type, long val_i64, Object val_o) throws IOException {
+	public void writeValue(UserpWriter writer, ValRegister.StoType type, long val_i64, Object val_o) throws IOException {
+		writer.write(0);
 	}
 
-	public void readValue(CodecImpl parent, UserpReader src, ValRegister val) throws IOException {
-		val.obj= null;
-		val.sto= ValRegister.StoType.OBJECT;
+	public void loadValue(UserpReader reader) throws IOException {
+		reader.skipValue();
+		reader.valRegister.obj= null;
+		reader.valRegister.sto= ValRegister.StoType.OBJECT;
 	}
 
 	static final NullConverter INSTANCE= new NullConverter();

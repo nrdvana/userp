@@ -17,10 +17,11 @@ public class UserpReader {
 	UserpDecoder src;
 	Codec nodeCodec;
 	TupleStackEntry tupleState;
+	boolean codecOverrideInProgress= false;
 
 	Stack<TupleStackEntry> tupleStateStack= new Stack<TupleStackEntry>();
 	static class TupleStackEntry {
-		TupleImpl TupleImpl;
+		TupleImpl tupleImpl;
 //		Checkpoint meta;
 		boolean bitpack;
 		int elemCount;
@@ -34,7 +35,7 @@ public class UserpReader {
 		this.src= src;
 		nodeCodec= rootCodec;
 		tupleState= new TupleStackEntry();
-		tupleState.TupleImpl= RootSentinelCodec.INSTANCE;
+		tupleState.tupleImpl= RootSentinelCodec.INSTANCE;
 		tupleState.elemIdx= 0;
 	}
 
@@ -59,42 +60,52 @@ public class UserpReader {
 	}
 
 	public final int inspectUnion() throws IOException {
+		codecOverrideInProgress= false;
 		return nodeCodec.impl.inspectUnion(this);
 	}
 
 	public final int inspectTuple() throws IOException {
+		codecOverrideInProgress= false;
 		tupleStateStack.push(tupleState);
 		tupleState= new TupleStackEntry();
 		return nodeCodec.impl.inspectTuple(this);
 	}
 
 	public final void closeTuple() throws IOException {
-		tupleState.TupleImpl.closeTuple(this);
+		tupleState.tupleImpl.closeTuple(this);
 		tupleState= tupleStateStack.pop();
-		tupleState.TupleImpl.nextElement(this);
+		tupleState.tupleImpl.nextElement(this);
 	}
 
-	public final Object readValue() throws IOException {
-		nodeCodec.impl.readValue(this, valRegister);
-		tupleState.TupleImpl.nextElement(this);
-		switch (valRegister.sto) {
-		case BOOL:   return Boolean.valueOf(valRegister.i64 != 0);
-		case BYTE:   return new Byte((byte)valRegister.i64);
-		case SHORT:  return new Short((short)valRegister.i64);
-		case INT:    return new Integer((int)valRegister.i64);
-		case LONG:   return new Long(valRegister.i64);
-		case FLOAT:  return new Float(Float.intBitsToFloat((int)valRegister.i64));
-		case DOUBLE: return new Double(Double.longBitsToDouble(valRegister.i64));
-		case CHAR:   return new Character((char)valRegister.i64);
-		case OBJECT: return valRegister.obj;
-		default:
-			throw new Error();
+	public final void loadValue() throws IOException {
+		if (nodeCodec.implOverride != null && !codecOverrideInProgress) {
+			codecOverrideInProgress= true;
+			int startIdx= tupleState.elemIdx;
+			int startDepth= tupleStateStack.size();
+			CodecOverride co= nodeCodec.implOverride;
+			co.loadValue(this);
+			if (tupleStateStack.size() != startDepth)
+				throw new CodecOverride.ImplementationError(co, startDepth, tupleStateStack.size(), true);
+			if (tupleState.elemIdx-startIdx != 1)
+				throw new CodecOverride.ImplementationError(co, tupleState.elemIdx-startIdx, true);
+			codecOverrideInProgress= false;
+		}
+		else {
+			int startIdx= tupleState.elemIdx;
+			nodeCodec.impl.readValue(this, valRegister);
+			if (tupleState.elemIdx == startIdx)
+				tupleState.tupleImpl.nextElement(this);
 		}
 	}
 
 	public final void skipValue() throws IOException {
 		nodeCodec.impl.skipValue(this);
-		tupleState.TupleImpl.nextElement(this);
+		tupleState.tupleImpl.nextElement(this);
+	}
+
+	public final Object readValue() throws IOException {
+		loadValue();
+		return valRegister.asObject();
 	}
 
 	public final boolean readAsBool() throws IOException {

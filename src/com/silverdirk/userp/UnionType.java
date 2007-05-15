@@ -115,10 +115,10 @@ public class UnionType extends UserpType {
 		return inlines != null;
 	}
 
-	public Codec makeCodecDescriptor() {
+	public Codec createCodec() {
 		if (def == null)
 			throw new UninitializedTypeException(this, "getCodecDescriptor");
-		return new UnionCodec(this, bitpack, inlines);
+		return new UnionCodec(this, bitpack, getEncoderParam_Inline());
 	}
 
 	public boolean getEncoderParam_Bitpack() {

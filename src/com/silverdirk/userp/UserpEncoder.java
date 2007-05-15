@@ -77,7 +77,6 @@ public class UserpEncoder {
 	}
 
 	public void flush() throws IOException {
-		flushToByteBoundary();
 		dest.flush();
 	}
 
@@ -123,6 +122,7 @@ public class UserpEncoder {
 	}
 
 	protected void intern_writeVarQty(long val) throws IOException {
+		assert(val >= 0);
 		if (val < 0x20000000) {
 			if (val < 0x2000) {
 				if (val < 0x80) // 2^7, contained by the code
@@ -144,6 +144,7 @@ public class UserpEncoder {
 	}
 
 	protected void intern_writeVarQty(BigInteger val) throws IOException {
+		assert(val.signum() >= 0);
 		if (val.bitLength() < 64)
 			intern_writeVarQty(val.longValue());
 		else {
@@ -160,9 +161,13 @@ public class UserpEncoder {
 
 
 	protected void intern_writeQty(BigInteger val, int bitLen) throws IOException {
+		assert(val.signum() >= 0);
+		assert(val.bitLength() <= bitLen);
 		// this would be SO MUCH SIMPLER if BigInteger would write its bytes into a supplied buffer...
 		byte[] valBytes= val.toByteArray();
 		int bitsAvail= valBytes.length<<3;
+		// if we need more bits than BigInteger gave us, write zeroes
+		// Unrolled for speed
 		while (bitLen - bitsAvail > 64) {
 			writeBits(0L, 64);
 			bitLen-= 64;
@@ -178,6 +183,7 @@ public class UserpEncoder {
 	}
 
 	public final void writeBits(long value, int count) throws IOException {
+		assert(count >= 0 && count <= 64);
 		int i=0;
 		switch ((count+7)>>3) {
 		case 8: tempBuffer[i++]= (byte) (value >>> 56);
@@ -205,6 +211,7 @@ public class UserpEncoder {
 	// optimized for 'int'
 	// on a 64-bit processor, this function is pointless
 	public final void writeBits(int value, int count) throws IOException {
+		assert(count >= 0 && count <= 32);
 		int i=0;
 		switch ((count+7)>>3) {
 		case 4: tempBuffer[i++]= (byte) (value >>> 24);
@@ -241,6 +248,7 @@ public class UserpEncoder {
 	}
 
 	public void writeBitsAndDestroyBuffer(byte[] buffer, int byteOffset, int numBits) throws IOException {
+		assert(numBits >= 0);
 		if (!bitpack)
 			dest.write(buffer, byteOffset, (numBits+7)>>>3);
 		else {
@@ -269,6 +277,8 @@ public class UserpEncoder {
 	}
 
 	public void writeBits8(int val, int count) throws IOException {
+		assert(val >= 0);
+		assert(count >= 0 && count <= 8);
 		if (!bitpack)
 			dest.write(val);
 		else {
@@ -395,21 +405,29 @@ public class UserpEncoder {
 		}
 	}
 */
+	public void writeType(UserpType t) throws IOException {
+		writeType(typeMap.get(t.handle));
+	}
 
-   public void writeType(Codec t) throws IOException {
-	   if (t.encoderTypeCode < 0) {
-		   writeVarQty(0);
-		   writeTypeTable(collectTypesWithoutCodes(t));
-	   }
-	   writeVarQty(t.encoderTypeCode);
-   }
+	public void writeType(Codec c) throws IOException {
+		if (c.encoderTypeCode <= 0)
+			writeTypeTable(collectTypesWithoutCodes(c));
+		writeVarQty(c.encoderTypeCode);
+	}
 
-   public void writeTypeTable(Collection<Codec> typList) throws IOException {
-	   typeTableInProgress= true;
-	   typeTableInProgress= false;
-   }
+	public void writeTypeTable(Collection<Codec> typList) throws IOException {
+		if (typeTableInProgress)
+			throw new Error("BUG: attempt to write a undefined type within a type table");
+		typeTableInProgress= true;
+		writeVarQty(0);
+		writeVarQty(typList.size());
+		// write type specs
+		// write enum spec lists
+		// write metadata
+		typeTableInProgress= false;
+	}
 
-   private Collection<Codec> collectTypesWithoutCodes(Codec root) {
-	   throw new Error("Unimplemented");
-   }
+	private Collection<Codec> collectTypesWithoutCodes(Codec root) {
+		throw new Error("Unimplemented");
+	}
 }

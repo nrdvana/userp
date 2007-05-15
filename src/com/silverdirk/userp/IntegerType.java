@@ -49,7 +49,7 @@ public class IntegerType extends ScalarType {
 		return false;
 	}
 
-	public Codec makeCodecDescriptor() {
+	public Codec createCodec() {
 		return new IntegerCodec(this);
 	}
 

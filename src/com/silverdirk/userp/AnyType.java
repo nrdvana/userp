@@ -61,7 +61,7 @@ public class AnyType extends UserpType {
 		return false;
 	}
 
-	public Codec makeCodecDescriptor() {
+	public Codec createCodec() {
 		return TAnyCodec.INSTANCE;
 	}
 

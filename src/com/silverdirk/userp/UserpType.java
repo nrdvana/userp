@@ -188,7 +188,7 @@ public abstract class UserpType {
 	protected abstract UserpType cloneAs_internal(Symbol newName);
 
 	public String toString() {
-		return getName()+"="+getDefinition();
+		return (name.data.length == 0? "" : getName()+"=")+getDefinition();
 	}
 
 	public abstract boolean hasEncoderParamDefaults();
@@ -201,7 +201,7 @@ public abstract class UserpType {
 		defaultCodec= cc;
 	}
 
-	abstract Codec makeCodecDescriptor();
+	abstract Codec createCodec();
 
 	protected static class InfFlag extends BigInteger {
 		InfFlag() {

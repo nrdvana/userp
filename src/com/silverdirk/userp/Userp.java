@@ -4,6 +4,7 @@ import java.io.*;
 import java.util.*;
 import java.math.BigInteger;
 import com.silverdirk.userp.EnumType.Range;
+import com.silverdirk.userp.RecordType.Field;
 import com.silverdirk.userp.ValRegister.StoType;
 
 /**
@@ -19,9 +20,7 @@ public class Userp {
 	public static final IntegerType TInt;
 	public static final EnumType TNull, TWhole, TBool, TByte, TInt8, TInt16u, TInt16, TInt32u, TInt32, TInt64u, TInt64;
 	public static final ArrayType TBoolArray, TByteArray, TSymbol, TStrUTF8, TStrUTF16;
-	public static final RecordType
-		TFloat32= null,
-		TFloat64= null;
+	public static final RecordType TFloat32, TFloat64;
 	public static final UserpType TAny;
 
 	static final UserpType[] predefTypes;
@@ -33,6 +32,7 @@ public class Userp {
 		TNull= new EnumType("TNull").init(new Object[] {"Null"});
 		TNull.setCustomCodec(NullConverter.INSTANCE);
 		TBool= new EnumType("TBool").init(new Object[] {"False","True"});
+		TBool.setCustomCodec(new NativeTypeConverter(StoType.BOOL));
 		TByte= new EnumType("TByte").init(new Object[] {new Range(TInt, 0, 0xFF)});
 		TByte.setCustomCodec(new NativeTypeConverter(StoType.BYTE));
 		TInt8= new EnumType("TInt8").init(new Object[] {new Range(TInt, 0, 0x7F), new Range(TInt, -0x80, -1)});
@@ -49,14 +49,25 @@ public class Userp {
 		TInt64u.setCustomCodec(new NativeTypeConverter(StoType.LONG));
 		TInt64=  new EnumType("TInt64" ).init(new Object[] {new Range(TInt, 0, 0x7FFFFFFFFFFFFFFFL), new Range(TInt, -0x8000000000000000L, -1)});
 		TInt64.setCustomCodec(new NativeTypeConverter(StoType.LONG));
-		TBoolArray= new ArrayType("TBoolArray").init(TBool);
-		TByteArray= new ArrayType("TByteArray").init(TByte);
+		EnumType floatSign= new EnumType(Symbol.NIL).init(new Object[] {"Positive", "Negative"});
+		TFloat32= new RecordType("TFloat32").init(new Field[] {
+			new Field("Sign", floatSign),
+			new Field("Significand", new EnumType(Symbol.NIL).init(new Object[] {new Range(TInt, 0, 0x7FFFFF)})),
+			new Field("Exponent", new EnumType(Symbol.NIL).init(new Object[] {"Denormalized", new Range(TInt, -0x7E, 0x7F), "NaN"}))
+		}).setEncParam(TupleCoding.BITPACK);
+		TFloat64= new RecordType("TFloat32").init(new Field[] {
+			new Field("Sign", floatSign),
+			new Field("Significand", new EnumType(Symbol.NIL).init(new Object[] {new Range(TInt, 0, 0xFFFFFFFFFFFFFL)})),
+			new Field("Exponent", new EnumType(Symbol.NIL).init(new Object[] {"Denormalized", new Range(TInt, -0x3FE, 0x3FF), "NaN"}))
+		}).setEncParam(TupleCoding.BITPACK);
+		TBoolArray= new ArrayType("TBoolArray").init(TBool).setEncParam(TupleCoding.BITPACK);
+		TByteArray= new ArrayType("TByteArray").init(TByte).setEncParam(TupleCoding.PACK);
 		TSymbol= (ArrayType) TByteArray.cloneAs("TSymbol");
 		TSymbol.setCustomCodec(SymbolConverter.INSTANCE);
 		TStrUTF8= (ArrayType) TByteArray.cloneAs("TStrUTF8");
 		TStrUTF16= (ArrayType) TByteArray.cloneAs("TStrUTF16");
 		predefTypes= new UserpType[] {
-			TNull, TInt, TWhole, TByte, TInt8, TInt16u, TInt16, TInt32u, TInt32,
+			TNull, TInt, TWhole, TBool, TByte, TInt8, TInt16u, TInt16, TInt32u, TInt32,
 			TInt64u, TInt64, TFloat32, TFloat64, TBoolArray, TByteArray, TSymbol,
 			TStrUTF8, TStrUTF16
 		};

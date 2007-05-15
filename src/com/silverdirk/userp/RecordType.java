@@ -102,7 +102,7 @@ public class RecordType extends TupleType {
 		return def;
 	}
 
-	public Codec makeCodecDescriptor() {
+	public Codec createCodec() {
 		if (getDefinition() == null)
 			throw new UninitializedTypeException(this, "getCodecDescriptor");
 		return new RecordCodec(this, getEncoderParam_TupleCoding());

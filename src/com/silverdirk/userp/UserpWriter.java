@@ -1,7 +1,6 @@
 package com.silverdirk.userp;
 
 import java.util.*;
-import java.math.BigInteger;
 import java.io.IOException;
 
 /**
@@ -15,11 +14,13 @@ import java.io.IOException;
  */
 public class UserpWriter {
 	UserpEncoder dest;
-	Codec nodeCodec;
 	CodecBuilder codecSet= new CodecBuilder(true);
-	TupleStackEntry tupleState;
 	Action eventActions[];
 	LinkedList<String> warnings= new LinkedList<String>();
+	TupleStackEntry tupleState;
+	Codec nodeCodec;
+	boolean codecOverrideInProgress= false;
+	boolean flushAtEnd= true;
 
 	Stack<TupleStackEntry> tupleStateStack= new Stack<TupleStackEntry>();
 	static class TupleStackEntry {
@@ -84,6 +85,7 @@ public class UserpWriter {
 		if (nodeCodec == null)
 			tupleState.tupleImpl.nextElement(this);
 		nodeCodec.impl.selectType(this, memberType);
+		codecOverrideInProgress= false;
 		return this;
 	}
 
@@ -91,6 +93,7 @@ public class UserpWriter {
 		if (nodeCodec == null)
 			tupleState.tupleImpl.nextElement(this);
 		nodeCodec.impl.selectType(this, unionMemberDesc);
+		codecOverrideInProgress= false;
 		return this;
 	}
 
@@ -104,11 +107,11 @@ public class UserpWriter {
 		}
 	}
 
-	void checkWhetherCodecDefined(Codec cd) {
-		if (cd.encoderTypeCode < 0) {
+	void checkWhetherCodecDefined(Codec c) {
+		if (c.encoderTypeCode < 0) {
 			switch (eventActions[Event.TYPE_DEFINED_MID_STREAM.ordinal()]) {
-			case ERROR: throw new RuntimeException("Type "+cd.type+" was not declared at the start of the stream, and mid-stream declarations are disabled.");
-			case WARN:  addWarning("The type "+cd.type+" was declared mid-stream");
+			case ERROR: throw new RuntimeException("Type "+c.type+" was not declared at the start of the stream, and mid-stream declarations are disabled.");
+			case WARN:  addWarning("The type "+c.type+" was declared mid-stream");
 			case IGNORE:
 			}
 		}
@@ -125,6 +128,7 @@ public class UserpWriter {
 		tupleStateStack.push(tupleState);
 		tupleState= new TupleStackEntry();
 		nodeCodec.impl.beginTuple(this, elemCount);
+		codecOverrideInProgress= false;
 		return this;
 	}
 
@@ -132,6 +136,9 @@ public class UserpWriter {
 		tupleState.tupleImpl.endTuple(this);
 		tupleState= tupleStateStack.pop();
 		nodeCodec= null;
+		// check for end of writing
+		if (tupleStateStack.size() == 0)
+			endStream();
 		return this;
 	}
 
@@ -146,12 +153,35 @@ public class UserpWriter {
 	private UserpWriter write(ValRegister.StoType sto, long val_i64, Object val_obj) throws IOException {
 		if (nodeCodec == null)
 			tupleState.tupleImpl.nextElement(this);
-		if (nodeCodec.implOverride != null)
-			nodeCodec.implOverride.writeValue(nodeCodec.impl, this, sto, val_i64, val_obj);
+		if (nodeCodec.implOverride != null && !codecOverrideInProgress) {
+			codecOverrideInProgress= true;
+			int startIdx= tupleState.elemIdx;
+			int startDepth= tupleStateStack.size();
+			CodecOverride co= nodeCodec.implOverride;
+			co.writeValue(this, sto, val_i64, val_obj);
+			if (tupleStateStack.size() != startDepth)
+				throw new CodecOverride.ImplementationError(co, startDepth, tupleStateStack.size(), false);
+			if (tupleState.elemIdx != startIdx || nodeCodec != null)
+				throw new CodecOverride.ImplementationError(co, nodeCodec != null? 0 : tupleState.elemIdx-startIdx+1, false);
+			codecOverrideInProgress= false;
+		}
 		else
 			nodeCodec.impl.writeValue(this, sto, val_i64, val_obj);
 		nodeCodec= null;
+		// check for end of writing
+		if (tupleStateStack.size() == 0)
+			endStream();
 		return this;
+	}
+
+	/** After completing the root element, write out any leftover bits,
+	 * and flush the underlying stream.
+	 */
+	private void endStream() throws IOException {
+		if (flushAtEnd) {
+			dest.flushToByteBoundary();
+			dest.flush();
+		}
 	}
 
 	public final UserpWriter writeBool(boolean value) throws IOException {
@@ -193,33 +223,6 @@ public class UserpWriter {
 	public final UserpWriter writeString(String value) throws IOException {
 		return select(Userp.TStrUTF8).write(ValRegister.StoType.OBJECT, 0, value);
 	}
-
-//	static class UserpWriterSpecialAccess {
-//		UserpWriter owner;
-//		UserpWriterSpecialAccess(UserpWriter owner) {
-//			this.owner= owner;
-//		}
-//		public UserpWriter beginTuple(int elemCount) throws IOException {
-//			owner.nodeCodec.beginTuple(owner, elemCount);
-//			return owner;
-//		}
-//		public UserpWriter write(Object value) throws IOException {
-//			owner.nodeCodec.writeValue(owner, value);
-//			return owner;
-//		}
-//		public UserpWriter write(long value) throws IOException {
-//			owner.nodeCodec.writeValue(owner, value);
-//			return owner;
-//		}
-//		public UserpWriter select(UserpType memberType) throws IOException {
-//			owner.nodeCodec.selectType(owner, memberType);
-//			return owner;
-//		}
-//		public UserpWriter select(Codec unionMemberDesc) throws IOException {
-//			owner.nodeCodec.selectType(owner, unionMemberDesc);
-//			return owner;
-//		}
-//	}
 }
 
 class SentinelCodec extends Codec {
@@ -232,7 +235,7 @@ class SentinelCodec extends Codec {
 	protected void initCodec() {}
 
 	protected void serializeFields(UserpWriter writer) throws IOException {
-		throw new Error("TAny not serializable");
+		throw new Error("SentinelCodec not serializable");
 	}
 }
 
@@ -291,10 +294,12 @@ class RootSentinelCodec extends SentinelCodecImpl {
 
 	void nextElement(UserpWriter writer) throws IOException {
 		writer.nodeCodec= descriptor;
+		writer.tupleState.elemIdx++; // satisfy some assertions
 	}
 
 	void nextElement(UserpReader reader) throws IOException {
 		reader.nodeCodec= descriptor;
+		reader.tupleState.elemIdx++; // satisfy some assertions
 	}
 
 	static final RootSentinelCodec INSTANCE= new RootSentinelCodec();

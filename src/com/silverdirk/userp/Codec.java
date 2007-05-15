@@ -5,6 +5,7 @@ import java.util.*;
 import java.io.*;
 import com.silverdirk.userp.RecordType.Field;
 import com.silverdirk.userp.EnumType.Range;
+import com.silverdirk.userp.ValRegister.StoType;
 import com.silverdirk.userp.UserpWriter.Action;
 import com.silverdirk.userp.UserpWriter.Event;
 
@@ -22,7 +23,7 @@ abstract class Codec {
 		ISTAT_READY= 3;
 
 	static Codec forType(UserpType t) {
-		return t.makeCodecDescriptor();
+		return t.createCodec();
 	}
 
 	static Codec forType(UnionType t, boolean bitpack, boolean[] inlineMember) {
@@ -41,7 +42,7 @@ abstract class Codec {
 	}
 
 	public boolean equals(Object other) {
-		return (other.getClass() == getClass()) && ((Codec)other).type == type;
+		return (getClass() == other.getClass()) && type.equals(((Codec)other).type);
 	}
 
 	static final BigInteger SCALAR_IN_PROGRESS;
@@ -74,7 +75,8 @@ abstract class Codec {
 
 	static Codec deserialize(UserpReader src) throws IOException {
 		Codec result;
-		assert(src.inspectTuple() == 2);
+		int elemCnt= src.inspectTuple();
+		assert(elemCnt == 2);
 		Symbol name= (Symbol) src.readValue();
 		switch (src.inspectUnion()) {
 		case 0: result= new IntegerCodec(name, src); break;
@@ -102,14 +104,15 @@ abstract class Codec {
 	abstract protected void serializeFields(UserpWriter writer) throws IOException;
 
 	static final Codec
-		CTypeSpec;
+		CTypeSpec, CEnumSpec;
 	static final UserpType
-		TEnumSpec, TIntSpec, TUnionSpec, TArraySpec, TRecordSpec;
+		TEnumSize, TEnumSpec, TIntSpec, TUnionSpec, TArraySpec, TRecordSpec,
+		TInfinities, TEnumSpecRange;
 	static {
 		IMPL_IN_PROGRESS= new TypeAnyImpl();
 		SCALAR_IN_PROGRESS= new BigInteger("-1"); // need to use a constructor to ensure that we have a unique object
 		TIntSpec= Userp.TNull.cloneAs("TIntSpec");
-		TEnumSpec= Userp.TWhole.cloneAs("TEnumSpec");
+		TEnumSize= Userp.TWhole.cloneAs("TEnumSize");
 		UserpType TWholeArray= new ArrayType("TWholeArray").init(Userp.TWhole);
 		TUnionSpec= new RecordType("TUnionSpec").init(new Field[]{
 			new Field("Bitpack", Userp.TBool),
@@ -132,17 +135,96 @@ abstract class Codec {
 			new Field("Fields", new ArrayType(Symbol.NIL).init(TField)),
 		});
 		UserpType TSpecUnion= new UnionType("SpecUnion")
-			.init(new UserpType[] {TIntSpec, TUnionSpec, TArraySpec, TRecordSpec, TEnumSpec})
-			.setEncParams(false, new boolean[] {true, true, true, true, true});
+			.init(new UserpType[] {TIntSpec, TUnionSpec, TArraySpec, TRecordSpec, TEnumSize})
+			.setEncParams(false, new boolean[] {false, true, true, true, true});
 		UserpType TTypeSpec= new RecordType("TTypeSpec").init(new Field[] {
 			new Field("Name", Userp.TSymbol),
 			new Field("Spec", TSpecUnion)
 		});
 
-		CTypeSpec= new CodecBuilder(true).getCodecFor(TTypeSpec);
+		// Enum ranges can extend to +INF or -INF
+		TInfinities= new EnumType(Symbol.NIL).init(new Object[] {"+INF", "-INF"});
+		// Enum ranges are a scalar type, and a 'to' and 'from' value
+		TEnumSpecRange= new RecordType("TEnumRange").init(new Field[] {
+			new Field("To",
+				new UnionType(Symbol.NIL).init(new UserpType[] {TInfinities, Userp.TInt}).setEncParams(false, new boolean[] {true, false})
+			),
+			new Field("From", Userp.TInt),
+			new Field("Type", Userp.TWhole)
+		}).setEncParam(TupleCoding.PACK);
+		TEnumSpecRange.setCustomCodec(new EnumRangeConverter());
+
+		// Each element of an enum spec is either a Range, Value, or Symbol
+		UserpType TEnumSpecElement= new UnionType("TEnumSpec").init(
+			new UserpType[] {Userp.TAny, TEnumSpecRange, Userp.TSymbol}
+		).setEncParams(false, new boolean[] {false, true, true});
+		TEnumSpecElement.setCustomCodec(new EnumSpecElementConverter());
+
+		// The enum spec is an array of spec elements
+		TEnumSpec= new ArrayType(Symbol.NIL).init(TEnumSpecElement);
+
+		// Build codecs that will be used for encoding and decoding type tables.
+		CodecBuilder cb= new CodecBuilder(true);
+		CTypeSpec= cb.getCodecFor(TTypeSpec);
+		CEnumSpec= cb.getCodecFor(TEnumSpec);
+	}
+
+	/** Automatic conversion to/from class EnumType.Range
+	 */
+	static class EnumRangeConverter implements CodecOverride {
+		public void writeValue(UserpWriter writer, ValRegister.StoType type, long val_i64, Object val_o) throws IOException {
+			Range r= (Range) val_o;
+			writer.beginTuple();
+			if (r.to instanceof UserpType.InfFlag)
+				writer.select(TInfinities).write(r.to == Range.INF? 0 : 1);
+			else
+				writer.select(Userp.TInt).write(r.to);
+			writer.write(r.from);
+			writer.dest.writeType(r.domain);
+		}
+		public void loadValue(UserpReader reader) throws IOException {
+			BigInteger from, to;
+			reader.inspectTuple();
+			// read the "to" field, which is a union of "+Inf/-Inf" enum and a BigInteger.
+			if (reader.inspectUnion() == 0)
+				to= reader.readAsInt() == 0? Range.INF : Range.NEG_INF;
+			else
+				to= reader.readAsBigInt();
+
+			from= reader.readAsBigInt();
+
+			UserpType t= reader.src.readType().type;
+			if (!(t instanceof ScalarType))
+				throw new UserpProtocolException("Invalid enum range domain encountered: "+t+" is not a scalar type.");
+
+			reader.valRegister.obj= new Range((ScalarType) t, from, to);
+			reader.valRegister.sto= StoType.OBJECT;
+		}
+	}
+
+	/** Automatic conversion to/from the allowed classes in an element of an enum spec.
+	 */
+	static class EnumSpecElementConverter implements CodecOverride {
+		public void writeValue(UserpWriter writer, ValRegister.StoType type, long val_i64, Object val_o) throws IOException {
+			if (val_o instanceof Symbol)
+				writer.select(Userp.TSymbol);
+			else if (val_o instanceof Range)
+				writer.select(TEnumSpecRange);
+			else {
+				assert(val_o instanceof TypedData);
+				writer.select(Userp.TAny);
+			}
+			writer.write(val_o);
+		}
+		public void loadValue(UserpReader reader) throws IOException {
+			reader.inspectUnion();
+			reader.loadValue();
+		}
 	}
 }
 
+/** Codec for type TAny.
+ */
 class TAnyCodec extends Codec {
 	private TAnyCodec() {
 		type= Userp.TAny;
@@ -164,8 +246,12 @@ class TAnyCodec extends Codec {
 	public static final TAnyCodec INSTANCE= new TAnyCodec();
 }
 
+/** Base class used to identify scalar types: Integer, Enum
+ */
 abstract class ScalarCodec extends Codec {}
 
+/**
+ */
 class IntegerCodec extends ScalarCodec {
 	IntegerCodec(IntegerType t) {
 		type= t;
@@ -179,14 +265,14 @@ class IntegerCodec extends ScalarCodec {
 
 	IntegerCodec(Symbol name, UserpReader src) throws IOException {
 		this(new IntegerType(name));
-		src.skipValue(); // no actual value, but we have to advance the stream's current-node
+		src.skipValue(); // no actual value, but we have to advance the stream's current node
 	}
 
 	void resolveDescriptorRefs(UserpDecoder.TypeCodeMap tcm) {}
 
 	protected void serializeFields(UserpWriter writer) throws IOException {
 		writer.select(TIntSpec);
-		writer.write(null);
+		writer.write(0);
 	}
 
 	protected void initScalarRange() {}
@@ -216,8 +302,30 @@ class EnumCodec extends ScalarCodec {
 	void resolveDescriptorRefs(UserpDecoder.TypeCodeMap tcm) {}
 
 	protected void serializeFields(UserpWriter writer) throws IOException {
-		writer.select(TEnumSpec);
+		writer.select(TEnumSize);
 		writer.write(scalarRange == UserpType.INF? BigInteger.ZERO : scalarRange);
+	}
+
+	void deserializeSpec(UserpReader reader) throws IOException {
+		int specElemCount= reader.inspectTuple();
+		Object[] spec= new Object[specElemCount];
+		for (int i=0; i<specElemCount; i++)
+			spec[i]= reader.readValue();
+		reader.closeTuple();
+		((EnumType)type).init(spec);
+
+		BigInteger specValCount= ((EnumType)type).getValueCount();
+		// must perform comparison both ways, because BigInteger.ZERO will think it is equal to InfFlag.
+		if (!scalarRange.equals(specValCount) || !specValCount.equals(scalarRange))
+			throw new UserpProtocolException("Invalid encoding of an Enum definition.  Stated size of "+scalarRange+" does not match actual size of "+specValCount);
+	}
+
+	void serializeSpec(UserpWriter writer) throws IOException {
+		Object[] spec= ((EnumType)type).def.spec;
+		writer.beginTuple(spec.length);
+		for (Object elem: spec)
+			writer.write(elem);
+		writer.endTuple();
 	}
 
 	protected void initScalarRange() {}
@@ -253,7 +361,7 @@ class UnionCodec extends Codec {
 
 	void resolveDescriptorRefs(CodecBuilder cb) {
 		for (int i=0; i<members.length; i++)
-			members[i]= cb.getCodecFor(((UnionType)type).getMember(i));
+			members[i]= cb.getIncompleteCodecFor(((UnionType)type).getMember(i));
 		initStatus= ISTAT_NEED_IMPL;
 	}
 
@@ -348,7 +456,7 @@ class ArrayCodec extends TupleCodec {
 	}
 
 	void resolveDescriptorRefs(CodecBuilder cb) {
-		elemType= cb.getCodecFor(((ArrayType)type).getElemType(0));
+		elemType= cb.getIncompleteCodecFor(((ArrayType)type).getElemType(0));
 		initStatus= ISTAT_NEED_IMPL;
 	}
 
@@ -389,7 +497,6 @@ class ArrayCodec extends TupleCodec {
 		switch (encoding) {
 		case PACK:
 		case BITPACK:
-			impl= null; // dump the "CODEC_IN_PROGRESS" flag so we can tell if we found a codec, later
 			if (elemType instanceof ScalarCodec) {
 				BigInteger elemRange= elemType.getScalarRange();
 				if (elemRange.bitLength() < 10 && elemRange.intValue() <= 256 && elemRange.intValue() > 128
@@ -397,25 +504,20 @@ class ArrayCodec extends TupleCodec {
 					&& elemType.implOverride.getClass() == NativeTypeConverter.class
 					&& ((NativeTypeConverter)elemType.implOverride).specifiedStorage == ValRegister.StoType.BYTE)
 					impl= new ArrayOfByteImpl((TupleType)type, this, encoding);
+				else if (encoding == TupleCoding.BITPACK
+					&& elemRange.bitLength() == 2 && elemRange.intValue() == 2
+					&& elemType.implOverride != null
+					&& elemType.implOverride.getClass() == NativeTypeConverter.class
+					&& ((NativeTypeConverter)elemType.implOverride).specifiedStorage == ValRegister.StoType.BOOL)
+					impl= new ArrayOfBoolImpl((TupleType)type, this, encoding);
 			}
-			if (impl == null)
+			if (impl == IMPL_IN_PROGRESS)
 				impl= new PackedTupleImpl((TupleType)type, this, encoding);
 			break;
 		default:
 			throw new Error("Unimplemented");
 		}
 	}
-
-//	private Codec getSpecialArrayCodec() {
-//		if (type instanceof ScalarType && elemType.getScalarRange().bitLength() <= 64) {
-//			long scalarMax= elemType.getScalarRange().longValue()-1;
-//			// scalarMax could be negative, because we pulled in any/all 64-bit quantities
-//			if (scalarMax >= 0x80 && scalarMax <= 0xFF)
-//				return new ArrayOfByteImpl((TupleType)type, this, encoding);
-//			if (scalarMax >= 0x80000000 && scalarMax <= 0xFFFFFFFF)
-//				return new ArrayOfIntCodec((TupleType)type, this, encoding);
-//		}
-//	}
 }
 
 class RecordCodec extends TupleCodec {
@@ -425,7 +527,7 @@ class RecordCodec extends TupleCodec {
 
 	public boolean equals(Object other) {
 		return super.equals(other)
-			&& encoding == ((ArrayCodec)other).encoding;
+			&& encoding == ((RecordCodec)other).encoding;
 	}
 
 	public RecordCodec(RecordType t, TupleCoding encoding) {
@@ -438,7 +540,7 @@ class RecordCodec extends TupleCodec {
 
 	void resolveDescriptorRefs(CodecBuilder cb) {
 		for (int i=0; i<elemTypes.length; i++)
-			elemTypes[i]= cb.getCodecFor(((RecordType)type).getElemType(i));
+			elemTypes[i]= cb.getIncompleteCodecFor(((RecordType)type).getElemType(i));
 		initStatus= ISTAT_NEED_IMPL;
 	}
 
@@ -460,6 +562,7 @@ class RecordCodec extends TupleCodec {
 
 		type= new RecordType(name)
 			.init(new RecordType.RecordDef(names, new UserpType[fieldCount]));
+		elemTypes= new Codec[fieldCount];
 		initStatus= ISTAT_NEED_DESC_REFS;
 	}
 

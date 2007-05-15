@@ -73,12 +73,18 @@ public class _TestCodecs extends TestCase {
 		// write an invalid value, so we can check our error handling
 		enc.writeBits(3, 2);
 		prepDecoder();
-		byte[] expected= bytesFromHex(!bitpack? "00 01 02 03" : "1B");
+		byte[] expected= bytesFromHex(!bitpack? "00 01 02 03" : "00 40 80 C0");
 		assertTrue(Arrays.equals(expected, bytes));
 		dec.enableBitpack(bitpack);
 		assertEquals(0, new UserpReader(dec, c1).readAsInt());
+		dec.enableBitpack(false);
+		dec.enableBitpack(bitpack);
 		assertEquals(1, new UserpReader(dec, c1).readAsInt());
+		dec.enableBitpack(false);
+		dec.enableBitpack(bitpack);
 		assertEquals(2, new UserpReader(dec, c1).readAsInt());
+		dec.enableBitpack(false);
+		dec.enableBitpack(bitpack);
 		try {
 			new UserpReader(dec, c1).readAsInt();
 			assertTrue("Missed an expected exception", false);

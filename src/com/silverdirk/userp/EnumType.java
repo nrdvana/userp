@@ -174,7 +174,7 @@ public class EnumType extends ScalarType {
 		return false;
 	}
 
-	public Codec makeCodecDescriptor() {
+	public Codec createCodec() {
 		if (def == null)
 			throw new UninitializedTypeException(this, "getCodecDescriptor");
 		return new EnumCodec(this);

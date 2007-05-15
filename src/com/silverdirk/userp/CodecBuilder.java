@@ -38,45 +38,49 @@ public class CodecBuilder {
 		addDescriptor(Codec.forType(t, encMode));
 	}
 
-	protected Codec addDescriptor(Codec cd) {
-		Codec curVal= typeMap.get(cd.type.handle);
+	protected Codec addDescriptor(Codec c) {
+		Codec curVal= typeMap.get(c.type.handle);
 		if (curVal == null) {
-			typeMap.put(cd.type.handle, cd);
-			if (cd.initStatus <= Codec.ISTAT_NEED_DESC_REFS)
-				resolveRefsList.add(cd);
-			else if (cd.initStatus != Codec.ISTAT_READY)
-				resolveCodecList.add(cd);
+			typeMap.put(c.type.handle, c);
+			if (c.initStatus <= Codec.ISTAT_NEED_DESC_REFS)
+				resolveRefsList.add(c);
+			else if (c.initStatus != Codec.ISTAT_READY)
+				resolveCodecList.add(c);
 		}
-		else if (curVal.equals(cd))
-			cd= curVal;
+		else if (curVal.equals(c))
+			c= curVal;
 		else
-			throw new RuntimeException("Attempt to re-add type "+cd.type+" with different encoding parameters");
-		return cd;
+			throw new RuntimeException("Attempt to re-add type "+c.type+" with different encoding parameters");
+		return c;
 	}
 
 	public Codec getCodecFor(UserpType t) {
-		Codec result= typeMap.get(t.handle);
-		if (result == null) {
-			if (!autoAdd)
-				throw new RuntimeException("Foreign type encountered while automatic type inclusion was disabled: "+t);
-			result= addDescriptor(Codec.forType(t));
-		}
+		Codec result= getIncompleteCodecFor(t);
 		finishCodecInit();
 		return result;
+	}
+
+	Codec getIncompleteCodecFor(UserpType t) {
+		Codec result= typeMap.get(t.handle);
+		if (result != null)
+			return result;
+		if (!autoAdd)
+			throw new RuntimeException("Foreign type encountered while automatic type inclusion was disabled: "+t);
+		return addDescriptor(Codec.forType(t));
 	}
 
 	protected void finishCodecInit() {
 		// can't use an iterator because new types could get added
 		while (!resolveRefsList.isEmpty()) {
-			Codec cd= resolveRefsList.removeFirst();
-			cd.resolveDescriptorRefs(this);
-			if (cd.initStatus != Codec.ISTAT_READY)
-				resolveCodecList.add(cd);
+			Codec c= resolveRefsList.removeFirst();
+			c.resolveDescriptorRefs(this);
+			if (c.initStatus != Codec.ISTAT_READY)
+				resolveCodecList.add(c);
 		}
 		if (!resolveCodecList.isEmpty()) {
 			// alloc the codec objects
-			for (Codec cd: resolveCodecList)
-				cd.resolveCodec();
+			for (Codec c: resolveCodecList)
+				c.resolveCodec();
 			// clear the list, because they're all resolved
 			resolveCodecList.clear();
 		}
