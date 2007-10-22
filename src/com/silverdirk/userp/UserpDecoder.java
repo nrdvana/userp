@@ -472,58 +472,52 @@ public class UserpDecoder {
 	}
 
 	public final Codec[] readTypeTable() throws IOException {
-		throw new Error("Unimplemented");
+		// Prevent type tables from being nested within this one
+		typeTableInProgress= true;
+
 		// Find the range of codes being redefined
-//		readVarQty();
-//		int startIdx= scalarAsInt();
-//		readVarQty();
-//		int count= scalarAsInt();
-//		if (count == 0)
-//			return new UserpType[0];
-//
-//		// Prevent type tables from being nested within this one
-//		typeTableInProgress= true;
-//
-//		// Create the new types
-//		UserpType[] newTypes= new UserpType[count];
-//		int[] classCodes= new int[count];
-//		enableBitpack(true);
-//		for (int i=0; i<newTypes.length; i++)
-//			classCodes[i]= readBits8(2);
-//		enableBitpack(false);
-//		for (int i=0; i<newTypes.length; i++) {
-//			readVarQty();
-//			byte[] nameBytes= new byte[scalarAsInt()];
-//			src.readFully(nameBytes);
-//			newTypes[i]= typeFromClassCode(classCodes[i], new Symbol(nameBytes));
-//		}
-//		// And register them with the code-map
-//		codeMap.redefine(startIdx, newTypes);
-//
-//		// Save a copy of the current type; we're about to abuse the fields of the reader
-//		UserpType prevType= reader.elemType;
-//
-//		for (int i=0; i<count; i++) {
-//			reader.startFreshElement(ProtocolTypes.TTypedef);
-//			newTypes[i].setDef((TypeDef) reader.readValue());
-//		}
-//		// XXX problem here, if the metadata contains a type that is still being defined.
-//		// TODO: find a way to catch exceptions caused by this special case
-//		//  and generate the type on the fly, and resume the reading....
-//		// Or just disallow using a newly defined type in metadata
-//		// Or make a way to post-assign the metadata to an existing type object, updating things like hash code.
-//		for (int i=0; i<count; i++) {
-//			reader.startFreshElement(ProtocolTypes.TMetadata);
-//			newTypes[i].setMeta((TypedData[]) reader.readValue());
-//		}
-//		UserpType[] table= new UserpType[count];
-//		for (int i=0; i<count; i++) {
-//			table[i]= newTypes[i].resolve();
-//			codeMap.redefine(startIdx+i, table[i]);
-//		}
-//
-//		// Restore disrupted variables in the reader
-//		reader.elemType= prevType;
-//		typeTableInProgress= false;
+		readVarQty();
+		int startIdx= scalarAsInt();
+
+		UserpReader reader= new UserpReader(this, Codec.CTypeTableSpec);
+		int count= reader.inspectTuple();
+
+		// Create the new types
+		Codec[] newTypes= new Codec[count];
+		for (int i=0; i<count; i++)
+			newTypes[i]= Codec.deserialize(reader);
+
+		// Set their references to eachother
+		for (Codec c: newTypes)
+			c.resolveDescriptorRefs(codeMap);
+
+		// Resolve their codec implementation
+		for (Codec c: newTypes)
+			c.resolveCodec();
+
+		// And register them with the code-map
+		codeMap.redefine(startIdx, newTypes);
+
+		// Collect the missing enum definitions, which have to occour after the
+		//  codecs are resolved.
+		for (Codec c: newTypes)
+			if (c instanceof EnumCodec) {
+				reader.reInit(Codec.CEnumSpec);
+				((EnumCodec)c).deserializeSpec(reader);
+			}
+
+		for (int i=0; i<count; i++) {
+			reader.reInit(MetaTreeReader.CMetadata);
+			int mcount= reader.inspectTuple();
+			ArrayList<TypedData> meta= newTypes[i].type.meta;
+			meta.clear();
+			meta.ensureCapacity(mcount);
+			for (int j=0; j<mcount; j++)
+				meta.add((TypedData)reader.readValue());
+			reader.closeTuple();
+		}
+
+		typeTableInProgress= false;
+		return newTypes;
 	}
 }

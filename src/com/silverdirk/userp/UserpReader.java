@@ -39,6 +39,14 @@ public class UserpReader {
 		tupleState.elemIdx= 0;
 	}
 
+	public void reInit(Codec newRootCodec) {
+		if (tupleStateStack.size() != 0)
+			throw new RuntimeException("Current tree is not finished.");
+		nodeCodec= newRootCodec;
+		tupleState.tupleImpl= RootSentinelCodec.INSTANCE;
+		tupleState.elemIdx= 0;
+	}
+
 	public final UserpType getType() {
 		return nodeCodec.type;
 	}

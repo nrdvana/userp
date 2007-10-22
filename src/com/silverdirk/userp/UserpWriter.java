@@ -55,6 +55,14 @@ public class UserpWriter {
 		Arrays.fill(eventActions, Action.IGNORE);
 	}
 
+	public void reInit(Codec rootType) {
+		if (tupleStateStack.size() != 0)
+			throw new RuntimeException("Current tree is not finished.");
+		nodeCodec= rootType;
+		tupleState.tupleImpl= RootSentinelCodec.INSTANCE;
+		tupleState.elemIdx= -1;
+	}
+
 	public void setEventAction(Event e, Action a) {
 		int idx= e.ordinal();
 		if (eventActions[idx] != a)

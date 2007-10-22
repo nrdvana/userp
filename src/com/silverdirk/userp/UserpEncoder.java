@@ -415,19 +415,46 @@ public class UserpEncoder {
 		writeVarQty(c.encoderTypeCode);
 	}
 
-	public void writeTypeTable(Collection<Codec> typList) throws IOException {
+	public void writeTypeTable(Codec[] codecs) throws IOException {
 		if (typeTableInProgress)
 			throw new Error("BUG: attempt to write a undefined type within a type table");
 		typeTableInProgress= true;
 		writeVarQty(0);
-		writeVarQty(typList.size());
-		// write type specs
-		// write enum spec lists
-		// write metadata
+		// write the starting index.  we always choose the next available code.
+		int startIdx= typeMap.size();
+		writeVarQty(startIdx);
+		// set the type codes for each codec
+		for (int i=0,limit=codecs.length; i<limit; i++)
+			codecs[i].encoderTypeCode= startIdx+i;
+		// write type definitions
+		UserpWriter writer= new UserpWriter(this, Codec.CTypeTableSpec);
+		writer.beginTuple(codecs.length);
+		for (Codec c: codecs)
+			c.serialize(writer);
+		writer.endTuple();
+		// Enum specifications must be written after, because it could involve
+		//  writing values of types that we just defined
+		for (Codec c: codecs)
+			if (c instanceof EnumCodec) {
+				writer.reInit(Codec.CEnumSpec);
+				((EnumCodec)c).serializeSpec(writer);
+			}
+		// Write metadata
+		for (Codec c: codecs) {
+			writer.reInit(MetaTreeReader.CMetadata);
+			writer.write(c.type.meta);
+		}
 		typeTableInProgress= false;
 	}
 
-	private Collection<Codec> collectTypesWithoutCodes(Codec root) {
-		throw new Error("Unimplemented");
+	private Codec[] collectTypesWithoutCodes(Codec root) {
+		HashSet<Codec.CodecHandle> set= new HashSet<Codec.CodecHandle>();
+		set.add(root.handle);
+
+		Codec[] result= new Codec[set.size()];
+		int i= 0;
+		for (Codec.CodecHandle ch: set)
+			result[i++]= ch.owner;
+		return result;
 	}
 }

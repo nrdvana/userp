@@ -14,7 +14,7 @@ import java.math.BigInteger;
  */
 public abstract class UserpType {
 	Symbol name;
-	public final List meta= new LinkedList();
+	public final ArrayList<TypedData> meta= new ArrayList<TypedData>();
 
 	int hashCache= -1; // -1 == uninitialized, any other value is the actual hash
 	public final TypeHandle handle= new TypeHandle(this);

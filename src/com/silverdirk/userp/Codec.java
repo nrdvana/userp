@@ -16,6 +16,18 @@ abstract class Codec {
 	protected BigInteger scalarRange;
 	int initStatus;
 	int encoderTypeCode= -1;
+	final CodecHandle handle;
+
+	static class CodecHandle {
+		final Codec owner;
+		CodecHandle(Codec c) {
+			owner= c;
+		}
+	}
+
+	Codec() {
+		handle= new CodecHandle(this);
+	}
 
 	static final int
 		ISTAT_NEED_DESC_REFS= 0,
@@ -104,7 +116,7 @@ abstract class Codec {
 	abstract protected void serializeFields(UserpWriter writer) throws IOException;
 
 	static final Codec
-		CTypeSpec, CEnumSpec;
+		CTypeTableSpec, CEnumSpec;
 	static final UserpType
 		TEnumSize, TEnumSpec, TIntSpec, TUnionSpec, TArraySpec, TRecordSpec,
 		TInfinities, TEnumSpecRange;
@@ -165,7 +177,7 @@ abstract class Codec {
 
 		// Build codecs that will be used for encoding and decoding type tables.
 		CodecBuilder cb= new CodecBuilder(true);
-		CTypeSpec= cb.getCodecFor(TTypeSpec);
+		CTypeTableSpec= cb.getCodecFor(new ArrayType(Symbol.NIL).init(TTypeSpec));
 		CEnumSpec= cb.getCodecFor(TEnumSpec);
 	}
 
