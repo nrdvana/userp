@@ -1,0 +1,26 @@
+gcc_debug:
+  CFLAGS: $CFLAGS -std=c99 -Wall -O1 -g
+  CXXFLAGS: $CXXFLAGS -Wall -O1 -g
+
+gcc_profile:
+  CFLAGS: $CFLAGS -std=c99 -Wall -O2 -g -pg
+  CXXFLAGS: $CXXFLAGS -Wall -O2 -g -pg
+
+gcc_release:
+  CFLAGS: $CFLAGS -std=c99 -O2
+  CXXFLAGS: $CXXFLAGS -Wall -O2
+
+gcc_libflags:
+  CFLAGS: $CFLAGS -fPIC
+  CXXFLAGS: $CXXFLAGS -fPIC
+  LDFLAGS: $LDFLAGS --shared
+
+compile:
+  inherit: gcc_debug gcc_libflags
+  CMD: g++ $CXXFLAGS -c `[ "$output" ] && echo "-o $output"` $sources
+  CMD_DISP: hide-cmd hide-stdout hide-stderr limit_20
+
+liblink:
+  inherit: gcc_debug gcc_libflags
+  CMD: gcc $LDFLAGS `[ "$output" ] && echo "-o $output"` $objs
+  CMD_DISP: hide-cmd hide-stdout hide-stderr limit_20

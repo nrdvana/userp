@@ -1,0 +1,5 @@
+libuserp.so: OctetSequence.o
+	./run liblink output="$@" objs="$<"
+
+OctetSequence.o: OctetSequence.cpp
+	./run compile output="$@" sources="$<"

@@ -1,0 +1,76 @@
+#! /bin/sh
+
+Config="Profiles"
+ExecName=${0##*/}
+Debug=$Debug
+
+((Debug)) && echo "[Profiles: $IBPATH]";
+
+die() {
+	echo "$@";
+	exit 1;
+}
+
+match() {
+	echo "$2" | grep "$1" >/dev/null;
+	return $?
+}
+
+LoadProfile() {
+	local inherit='' ProfName;
+	while [ -n "$1" ]; do
+		ProfName="$1"; shift;
+
+		((Debug)) && echo "$ExecName: LoadProfile($ProfName)";
+
+		inherit=`sed -n "/^$ProfName:"'[    ]*$/,/^[^ ]/s/^ *\inherit: \(.*\)/\1/p' $Config`
+		[ -n "$inherit" ] && LoadProfile $inherit
+
+		ProfileBody=`sed -n "/^$ProfName:"'[ 	]*$/,/^[^ ]/s/^ *\([^ #]*\): \(.*\)/\1="\2";/p' $Config`;
+
+		((Debug)) && echo "$ProfileBody"
+		eval $ProfileBody;
+	done
+}
+
+RunCmd() {
+	match hide-cmd "$CMD_DISP" || echo "$CMD";
+	if match hide-stdout "$CMD_DISP" && match hide-stderr "$CMD_DISP"; then
+		OutputCapture="$(eval $CMD 2>&1)";
+		Result=$?;
+	elif match hide-stdout "$CMD_DISP"; then
+		OutputCapture="$(eval $CMD)";
+		Result=$?;
+	elif match hide-stderr "$CMD_DISP"; then
+		OutputCapture="$(eval $CMD 3>&1 1>&2 2>&3)";
+		Result=$?;
+	else
+		OutputCapture='';
+		eval $CMD;
+		Result=$?;
+	fi
+	if ((Result!=0)); then
+		echo -n "Command Failed:"
+		match hide-cmd "$CMD_DISP" && echo -n " $CMD"
+		echo
+		echo
+		if match limit_ "$CMD_DISP"; then
+			LineLimit=`echo $CMD_DISP | sed -ne 's/.*limit_\([0-9]*\).*/\1/p'`;
+			ActualLines=`echo "$OutputCapture" | wc -l`;
+			echo "$OutputCapture" | head -n $LineLimit;
+			[ "$ActualLines" -gt "$LineLimit" ] && echo '<<< output truncated >>>'
+		else
+			echo "$OutputCapture";
+		fi
+	fi
+	return $Result;
+}
+
+Action=$1; shift
+while match '[^=]*=.*' "$1"; do
+	eval $1
+	shift;
+done
+
+LoadProfile "$Action"
+RunCmd
