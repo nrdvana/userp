@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "HeaderDefs.h"
 #include "Misc.h"
+#include "BufferTracker.h"
 
 #ifdef USERP_CXX_IFACE
 #include <exception>
@@ -12,6 +13,7 @@ namespace Userp {
 
 // "Octet Sequence" class
 struct userp_octet_sequence;
+typedef struct userp_octet_sequence userp_octet_sequence_t;
 
 // type used for addresses within an octet sequence
 typedef uint64_t userp_octet_seq_addr_t;
@@ -23,10 +25,7 @@ typedef uint64_t userp_octet_seq_addr_t;
 typedef TArray<const uint8_t> TOctetSegment;
 typedef TOctetSegment userp_octet_seg_t;
 #else
-typedef struct userp_octet_seg {
-	const uint8_t* Start;
-	int Len;
-} userp_octet_seg_t;
+typedef struct const_byte_array userp_octet_seg_t;
 #endif
 
 /* The mode for an octet sequence iterator */
@@ -41,19 +40,20 @@ typedef int userp_octet_iter_mode_t;
 #endif
 
 /* A struct describing an iterator for an octet sequence */
-struct userp_octet_iter_t {
-	userp_octet_seq_t *Owner;
+typedef struct userp_octet_iter {
+	userp_octet_sequence_t *Owner;
 	userp_octet_seq_addr_t LimitAddr;
 	const uint8_t *Start, *Limit;
 	userp_octet_iter_mode_t IterMode;
-};
-USERP_EXTERN userp_octet_iter_Init(struct octet_iter_t*, octet_sequence_t* Owner, TAddr StartAddr, TOctetIterateMode IterMode);
-USERP_EXTERN userp_octet_seg_t userp_octet_iter_GetBufSeg(struct octet_iter_t*);
-USERP_EXTERN bool userp_octet_iter_NextBufSeg(struct octet_iter_t*);
-USERP_EXTERN userp_octet_seq_addr_t userp_octet_iter_GetAddr(struct octet_iter_t*);
+} userp_octet_iter_t;
+
+USERP_EXTERN void userp_octet_iter_Init(userp_octet_iter_t*, userp_octet_sequence_t* Owner, userp_octet_seq_addr_t StartAddr, userp_octet_iter_mode_t IterMode);
+USERP_EXTERN userp_octet_seg_t userp_octet_iter_GetBufSeg(userp_octet_iter_t*);
+USERP_EXTERN bool userp_octet_iter_NextBufSeg(userp_octet_iter_t*);
+USERP_EXTERN userp_octet_seq_addr_t userp_octet_iter_GetAddr(const userp_octet_iter_t*);
 #define USERP_OCTET_ITER_EOF(iter) ( iter->Start == Limit && !userp_octet_iter_NextBufSeg(iter) )
 #ifdef USERP_CXX_IFACE
-USERP_CLASSEXPORT class TOctetIter: protected userp_octet_iter_t {
+USERP_CLASSEXPORT class TOctetIter: public userp_octet_iter_t {
 public:
 	typedef userp_octet_seq_addr_t TAddr;
 
@@ -69,7 +69,7 @@ public:
 	 * Values are stored.  No other actions are taken.
 	 * The iterator will not point to real data until NextBufSeg is called.
 	 */
-	TOctetIter(userp_octet_seq_t *Owner, TAddr StartAddr, TOctetIterateMode IterMode)
+	TOctetIter(userp_octet_sequence_t *Owner, TAddr StartAddr, TOctetIterMode IterMode)
 		{ this->Owner= Owner, this->LimitAddr= StartAddr, this->Start= NULL, this->Limit= NULL, this->IterMode= IterMode; }
 
 	/** Get the sequence address of the current position of the iterator */
@@ -96,7 +96,7 @@ public:
 	/** Get the next buffer segment for this iterator.
 	 * @return true, if there is a new segment, and false if there is not
 	 */
-	inline bool NextBufSeg() { return userp_octet_iter_NextBufSeg(this); }
+	inline bool NextBufSeg();
 
 	/** Get the current octet this iterator points to. */
 	inline uint8_t operator * () {
@@ -129,28 +129,29 @@ public:
 };
 #endif
 
-struct octet_sequence_t {
-	int OctetSequence_Flags;
-	octet_sequence_addr_t OctetSequence_Min;
-	octet_sequence_addr_t OctetSequence_Max;
-};
+typedef struct userp_octet_sequence {
+} userp_octet_sequence_t;
 #define OCTET_SEQUENCE_FLAG_EOF 1
 #define OCTET_SEQUENCE_FLAG_ERR 2
 
-typedef bool octet_sequence_acquire_proc(void* CallbackData, struct buffer_tracker_t *BufTracker, const uint8_t **DataStart, int *DataLen, bool ShouldBlock);
+typedef bool userp_octet_sequence_acquire_proc(void* CallbackData, userp_buftracker_t *BufTracker, const uint8_t **DataStart, int *DataLen, bool ShouldBlock);
+typedef void userp_octet_sequence_acquire_cleanup_proc(void* CallbackData);
 
-OCTETSEQUENCE_H_EXTERN struct octet_sequence_t* octet_sequence_Create(octet_sequence_acquire_proc* AcquireProc);
-OCTETSEQUENCE_H_EXTERN struct octet_sequence_t* octet_sequence_Create(int FileDescriptor);
-OCTETSEQUENCE_H_EXTERN struct octet_sequence_t* octet_sequence_Create(FILE* file);
-OCTETSEQUENCE_H_EXTERN bool octet_sequence_GetIter(struct octet_sequence_t *Sequence, octet_sequence_addr_t Offset, iterate_mode_t Mode, struct octet_iter_t* Result);
-OCTETSEQUENCE_H_EXTERN void octet_sequence_ReleaseUpTo(struct octet_sequence_t *Sequence, octet_sequence_addr_t Offset);
-OCTETSEQUENCE_H_EXTERN void octet_sequence_AcquireMore(struct octet_sequence_t *Sequence, bool ShouldBlock);
-OCTETSEQUENCE_H_EXTERN void octet_sequence_Destroy(struct octet_sequence_t *Sequence);
+USERP_EXTERN userp_octet_sequence_t* userp_octet_sequence_CreateCustom(userp_octet_sequence_acquire_proc* AcquireProc, userp_octet_sequence_acquire_cleanup_proc* CleanupProc, void* passback);
+USERP_EXTERN userp_octet_sequence_t* userp_octet_sequence_CreateFromFd(int FileDescriptor);
+USERP_EXTERN userp_octet_sequence_t* userp_octet_sequence_CreateFromFile(FILE* file);
+USERP_EXTERN userp_octet_seq_addr_t userp_octet_sequence_getMinAddr(const userp_octet_sequence_t *Sequence);
+USERP_EXTERN userp_octet_seq_addr_t userp_octet_sequence_getMaxAddr(const userp_octet_sequence_t *Sequence);
+USERP_EXTERN bool userp_octet_sequence_getEOF(const userp_octet_sequence_t *Sequence);
+USERP_EXTERN bool userp_octet_sequence_getERR(const userp_octet_sequence_t *Sequence);
+USERP_EXTERN void userp_octet_sequence_ReleaseUpTo(userp_octet_sequence_t *Sequence, userp_octet_seq_addr_t Offset);
+USERP_EXTERN void userp_octet_sequence_AcquireMore(userp_octet_sequence_t *Sequence, bool ShouldBlock);
+USERP_EXTERN void userp_octet_sequence_Destroy(userp_octet_sequence_t *Sequence);
 
 #ifdef USERP_CXX_IFACE
-class IOctetSequence {
+class USERP_CLASSEXPORT IOctetSequence: public userp_octet_sequence_t {
 public:
-	typedef octet_sequence_addr_t TAddr;
+	typedef userp_octet_seq_addr_t TAddr;
 	typedef TOctetSegment TSegment;
 
 	struct EAddressOutOfBounds: public std::exception {
@@ -165,61 +166,89 @@ public:
 	typedef const uint8_t value_type;
 
 protected:
-	void SetEof() { OctetSequence_Flags|= OCTET_SEQUENCE_FLAG_EOF; }
-	void SetErr() { OctetSequence_Flags|= OCTET_SEQUENCE_FLAG_ERR; }
-	virtual bool NextBuf(TSegment *Result, TAddr Addr, TIterateMode IterMode)= 0;
-public:
-	IOctetSequence() { OctetSequence_Flags= 0, OctetSequence_Min= 0, OctetSequence_Max= 0; }
-	virtual ~IOctetSequence() {}
-	virtual TOctetIter GetIter(TAddr offset, TIterateMode mode)= 0;
-	virtual void ReleaseUpTo(TAddr offset)= 0;
-	virtual bool AcquireMore(bool block)= 0;
-	inline bool AcquireMore() { return AcquireMore(true); }
+	int
+	  OctSeq_Eof: 1,
+	  OctSeq_Err: 1;
+	TAddr OctSeq_Min;
+	TAddr OctSeq_Max;
 
-	inline TAddr StartAddr() { return OctetSequence_Min; }
-	inline TAddr EndAddr() { return OctetSequence_Max; }
-	inline iterator begin() { return GetIter(OctetSequence_Min, imNoGrow); }
-	inline iterator end() { return GetIter(OctetSequence_Max, imNoGrow); }
-	inline bool Eof() { return OctetSequence_Flags&1; }
-	inline bool Err() { return OctetSequence_Flags&2; }
+	virtual bool NextBuf(TSegment *Result, TAddr Addr, TOctetIterMode IterMode)= 0;
+	friend class TOctetIter;
+public:
+	IOctetSequence(): OctSeq_Eof(0), OctSeq_Err(0), OctSeq_Min(0), OctSeq_Max(0) {}
+	virtual ~IOctetSequence();
+
+	inline TOctetIter GetIter(TAddr addr, TOctetIterMode mode) {
+		if (addr < OctSeq_Min || addr > OctSeq_Max)
+			throw EAddressOutOfBounds(addr, OctSeq_Min, OctSeq_Max);
+		return TOctetIter(this, addr, mode);
+	}
+
+	virtual void ReleaseUpTo(TAddr offset)= 0;
+	virtual bool AcquireMore(bool block= true)= 0;
+
+	inline TAddr StartAddr() const { return OctSeq_Min; }
+	inline TAddr EndAddr() const { return OctSeq_Max; }
+	inline iterator begin() { return GetIter(OctSeq_Min, imNoGrow); }
+	inline iterator end() { return GetIter(OctSeq_Max, imNoGrow); }
+	inline bool Eof() const { return OctSeq_Eof; }
+	inline bool Err() const { return OctSeq_Err; }
 };
 
-class TStreamedOctetSequence: public IOctetSequence {
+class USERP_CLASSEXPORT TOctetSource {
+public:
+	static bool StaticAcquire(void* CallbackData, userp_buftracker_t *BufTracker, const uint8_t **DataStart, int *DataLen, bool ShouldBlock);
+	static void StaticAcquireCleanup(void* CallbackData);
+
+	TOctetSource() {}
+	virtual ~TOctetSource() {}
+	virtual bool Acquire(userp_buftracker_t *BufTracker, const uint8_t **DataStart, int *DataLen, bool ShouldBlock)= 0;
+};
+
+class USERP_CLASSEXPORT TStreamedOctetSequence: public IOctetSequence {
 	class Impl;
-	Impl *impl; // implementation, which we want to hide fomr the header file
+	Impl *impl; // implementation, which we want to hide from the header file
 	friend class Impl;
-public:
-	typedef bool TAcquireFunc(void* CallbackData, TBufferTracker *BufTracker, const uint8_t **DataStart, int *DataLen, bool Block);
-
 protected:
-	virtual bool NextBuf(TData *Result, TAddr Addr, TIterateMode IterMode);
-	virtual bool Acquire_Internal(TBufferTracker *BufTracker, const uint8_t **DataStart, int *DataLen, bool Block)= 0;
+	typedef userp_octet_sequence_acquire_proc TAcquireProc;
+	typedef userp_octet_sequence_acquire_cleanup_proc TAcquireCleanupProc;
 
+	TAcquireProc *acquire_proc;
+	TAcquireCleanupProc *acquire_cleanup;
+	void *acquire_passback;
+
+	virtual bool NextBuf(TSegment *Result, TAddr Addr, TOctetIterMode IterMode);
 public:
-	TStreamedOctetSequence();
+	TStreamedOctetSequence(TAcquireProc *acquire_proc, TAcquireCleanupProc *acquire_cleanup, void* passback);
+	TStreamedOctetSequence(TOctetSource *source);
 	virtual ~TStreamedOctetSequence();
 
-	virtual TDataIter GetIter(TAddr addr, TIterateMode mode);
 	virtual void ReleaseUpTo(TAddr addr);
 	virtual bool AcquireMore(bool block);
 };
-/*
-	class FDSource {
-		int fd;
-		uint8_t *Buffer;
-		unsigned BufferLen;
-		int AllocSize;
-		int BufPos;
-		unsigned ReadLimit;
-		bool Acquire(TBufferTracker *BufTracker, const uint8_t **DataStart, int *DataLen, bool Block);
-	public:
-		FDSource(int fd, unsigned ReadLimit= 0U-1U): fd(fd), Buffer(NULL),
-			AllocSize(256), ReadLimit(ReadLimit) {}
-		void SetAllocSize(int NewSize) { AllocSize= NewSize; }
-		static bool AcquireProc(void* CallbackData, TBufferTracker *BufTracker, const uint8_t **DataStart, int *DataLen, bool Block);
-	};
+
+#if 0
+class USERP_CLASSEXPORT TFDSource: public TOctetSource {
+	int fd;
+	uint8_t *Buffer;
+	unsigned BufferLen;
+	int AllocSize;
+	int BufPos;
+	unsigned ReadLimit;
+public:
+	TFDSource(int fd, unsigned ReadLimit= 0U-1U): fd(fd), Buffer(NULL),
+		AllocSize(256), ReadLimit(ReadLimit) {}
+	virtual ~TFDSource();
+	void SetAllocSize(int NewSize) { AllocSize= NewSize; }
+	bool Acquire(TBufTracker *BufTracker, const uint8_t **DataStart, int *DataLen, bool Block);
 };
-*/
+
+class USERP_CLASSEXPORT TFileSource: public TOctetSource {
+	bool Acquire(TBufTracker *BufTracker, const uint8_t **DataStart, int *DataLen, bool Block);
+};
+#endif
+#endif
+
 #ifdef USERP_CXX_IFACE
 } // namespace
 #else

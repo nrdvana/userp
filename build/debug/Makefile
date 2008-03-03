@@ -16,9 +16,9 @@ libuserp.so: OctetSequence.o BufferTracker.o
 	./run liblink output="$@" objs="$<" CXXFLAGS="\"$(CXXFLAGS)\""
 
 OctetSequence.o: OctetSequence.cpp
-	./run compile output="$@" sources="$<" CXXFLAGS="\"$(CXXFLAGS)\"" && mv $*.Tpo $*.Po
+	./run compile output="$@" sources="$<" CXXFLAGS="\"$(CXXFLAGS)\"" && mv .deps/$*.Tpo .deps/$*.Po
 BufferTracker.o: BufferTracker.cpp
-	./run compile output="$@" sources="$<" CXXFLAGS="\"$(CXXFLAGS)\"" && mv $*.Tpo $*.Po
+	./run compile output="$@" sources="$<" CXXFLAGS="\"$(CXXFLAGS)\"" && mv .deps/$*.Tpo .deps/$*.Po
 
 %.Po:
 	touch $@

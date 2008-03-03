@@ -69,6 +69,8 @@ public:
 		if (bt) userp_buftracker_Destroy(bt);
 	}
 
+	operator userp_buftracker_t* () { return bt; }
+
 	inline bool IsTracking(const uint8_t* Pointer) const {
 		return BufferOf(Pointer) != NULL;
 	}
