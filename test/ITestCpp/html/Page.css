@@ -1,0 +1,86 @@
+/*
+ I want to toss out a huge thank-you to Stu Nichols, author of http://cssplay.co.uk/
+ While I didn't end up using any of his examples directly, his huge variety of
+ clear-cut examples helped me decipher the mystery of hover-over css menus,
+ and uncover some of the crazy things that need to be done to get it to work
+ in a variety of browsers.
+*/
+
+html, body, div, form, pre, code, ul, ol {
+	margin:0;
+	padding:0;
+}
+html {
+	height:100%;
+}
+body {
+	height:100%;
+	background-color:black;
+	color:white;
+}
+#content {
+	min-height:100%;
+	margin:0 24px 0 0;
+	padding:0;
+}
+* html body #content {
+	height:100%;
+}
+#roomForFooter {
+	height:4em;
+}
+#footer {
+	margin:-31px 0 0 0;
+	padding:0;
+}
+#footer .validate, #footer .validate * {
+	margin:0;
+	padding:0;
+	border:none;
+}
+
+.main {
+	padding:2em 10% 2em 10%;
+}
+
+.testname, .testpass, .testfail {
+	font-size:15pt;
+	padding-bottom: 0px;
+	margin-bottom: -4px;
+}
+.testname {
+	color: #5577FF;
+}
+.testpass {
+	padding-left: 1em;
+	color: lime;
+}
+.testfail {
+	padding-left: 1em;
+	color: red;
+}
+
+.stack-header {
+	font: 8pt "Arial" sans-serif;
+	background-color: #333;
+}
+
+.frame-header {
+	font: 8pt "Arial" sans-serif;
+	border-bottom: solid 1px #555;
+}
+
+.stack-func, .stack-srcfile, .stack-srcline {
+	font: 12pt "Courier New" sans-serif;
+	font-weight: bold;
+	background-color: #275;
+}
+
+.stack-func {
+	background-color: #25C;
+}
+
+.stack-vars {
+	font: 9pt "Courier New" sans-serif;
+	font-weight: 600;
+}
