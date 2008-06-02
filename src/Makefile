@@ -1,5 +1,6 @@
 build:
-	[ -d ../build -a ../build/Makefile -nt Makefile -a ../build/Makefile -nt ../configure ] || ( cd .. && ./configure update_build; );
+	[ -d ../build ] || mkdir ../build
+	[ ../build/Makefile -nt Makefile -a ../build/Makefile -nt ../configure ] || ( cd ../build && ../configure; );
 	cd ../build && $(MAKE)
 
 libuserp_OBJS=RBTree.o
