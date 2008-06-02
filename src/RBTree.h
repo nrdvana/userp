@@ -62,7 +62,7 @@ extern void RBTree_Clear( RBTree* Tree, RBTree_DeleteProc* DelProc, void* Passba
 extern void RBTree_InsertWithHint(RBTree *Tree, void *DataItem, RBTreeNode *InsHint);
 #ifdef USE_INLINES
   inline int RBTree_GetCount(RBTree *Tree)
-	{ return RBTNode_GetCount(&Tree->RootSentinel); }
+	{ return RBTNode_GetCount(Tree->RootSentinel.Left); }
   inline RBTreeNode* RBTree_Find( RBTree *Tree, void *SearchKey )
 	{ return RBTNode_Find(Tree->RootSentinel.Left, SearchKey, Tree->compare, Tree->KeyOffset); }
   inline int RBTree_FindAll( RBTree *Tree, void *SearchKey, RBTreeNode** Result_First, RBTreeNode** Result_Last, RBTreeNode** Result_Nearest )
@@ -85,7 +85,7 @@ extern void RBTree_InsertWithHint(RBTree *Tree, void *DataItem, RBTreeNode *InsH
   #define RBTree_Insert( Tree, DataItem ) (RBTree_InsertWithHint(Tree, DataItem, 0))
   #define RBTree_DataFromNode(Tree, Node) ((void*) (((char*)(void*)(Node))+(Tree)->DataOffset))
   #define RBTree_KeyFromNode(Tree, Node)  ((void*) (((char*)(void*)(Node))+(Tree)->KeyOffset))
-  #define RBTree_GetCount(Tree)           (RBTNode_GetCount(&(Tree)->RootSentinel))
+  #define RBTree_GetCount(Tree)           (RBTNode_GetCount((Tree)->RootSentinel.Left))
 #endif
 
 /******************************************************************************\
