@@ -164,7 +164,7 @@ public class EnumType extends ScalarType {
 		return this;
 	}
 
-	public UserpType cloneAs(Symbol newName) {
+	protected UserpType cloneAs_internal(Symbol newName) {
 		return new EnumType(newName).init(def);
 	}
 
@@ -174,6 +174,12 @@ public class EnumType extends ScalarType {
 
 	public boolean hasEncoderParamDefaults() {
 		return false;
+	}
+
+	public CodecDescriptor makeCodecDescriptor() {
+		if (def == null)
+			throw new UninitializedTypeException(this, "getCodecDescriptor");
+		return new EnumCodecDescriptor(this);
 	}
 
 	public boolean isDoublyInfinite() {

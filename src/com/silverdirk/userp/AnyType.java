@@ -41,7 +41,7 @@ public class AnyType extends UserpType {
 	 * @param newName Symbol
 	 * @return UserpType
 	 */
-	public UserpType cloneAs(Symbol newName) {
+	protected UserpType cloneAs_internal(Symbol newName) {
 		throw new UnsupportedOperationException("Cannot clone type TAny");
 	}
 
@@ -59,6 +59,10 @@ public class AnyType extends UserpType {
 	 */
 	public boolean hasEncoderParamDefaults() {
 		return false;
+	}
+
+	public CodecDescriptor makeCodecDescriptor() {
+		return TAnyCodecDescriptor.INSTANCE;
 	}
 
 	public static final AnyType INSTANCE= new AnyType();

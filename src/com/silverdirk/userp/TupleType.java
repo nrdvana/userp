@@ -25,6 +25,6 @@ public abstract class TupleType extends UserpType {
 	}
 
 	public TupleCoding getEncoderParam_TupleCoding() {
-		return defaultTupleCoding;
+		return defaultTupleCoding != null? defaultTupleCoding : TupleCoding.PACK;
 	}
 }

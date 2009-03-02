@@ -20,6 +20,7 @@ public class _Test_Package extends TestCase {
 		suite.addTestSuite(com.silverdirk.userp._TestBufferChainIStream.class);
 		suite.addTestSuite(com.silverdirk.userp._TestUserpEncoderDecoder.class);
 		suite.addTestSuite(com.silverdirk.userp._TestCodecs.class);
+		suite.addTestSuite(com.silverdirk.userp._TestCodecSerialization.class);
 		return suite;
 	}
 }

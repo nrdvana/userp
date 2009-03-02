@@ -105,7 +105,7 @@ public class UnionType extends UserpType {
 		return this;
 	}
 
-	public UserpType cloneAs(Symbol newName) {
+	protected UserpType cloneAs_internal(Symbol newName) {
 		return new UnionType(newName).init(def);
 	}
 
@@ -117,12 +117,24 @@ public class UnionType extends UserpType {
 		return inlines != null;
 	}
 
+	public CodecDescriptor makeCodecDescriptor() {
+		if (def == null)
+			throw new UninitializedTypeException(this, "getCodecDescriptor");
+		return new UnionCodecDescriptor(this, bitpack, inlines);
+	}
+
 	public boolean getEncoderParam_Bitpack() {
 		return bitpack;
 	}
 
 	public boolean[] getEncoderParam_Inline() {
-		return inlines;
+		if (inlines == null) {
+			boolean[] result= new boolean[getMemberCount()];
+			Arrays.fill(result, false);
+			return result;
+		}
+		else
+			return inlines;
 	}
 
 	public final int getMemberCount() {

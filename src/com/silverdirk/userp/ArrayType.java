@@ -78,12 +78,18 @@ public class ArrayType extends TupleType {
 		return this;
 	}
 
-	public UserpType cloneAs(Symbol newName) {
+	protected UserpType cloneAs_internal(Symbol newName) {
 		return new ArrayType(newName).init(def);
 	}
 
 	public TypeDef getDefinition() {
 		return def;
+	}
+
+	public CodecDescriptor makeCodecDescriptor() {
+		if (getDefinition() == null)
+			throw new UninitializedTypeException(this, "getCodecDescriptor");
+		return new ArrayCodecDescriptor(this, getEncoderParam_TupleCoding());
 	}
 
 	public int getElemCount() {

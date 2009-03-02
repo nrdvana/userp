@@ -27,7 +27,7 @@ public class _TestUserpEncoderDecoder extends TestCase {
 	private void prepDecoder() throws IOException {
 		enc.flush();
 		InputStream src= new ByteArrayInputStream(dest.toByteArray());
-		dec= new UserpDecoder(new BufferChainIStream(src), new Codec[0]);
+		dec= new UserpDecoder(new BufferChainIStream(src), new CodecDescriptor[0]);
 	}
 
 	protected void tearDown() throws Exception {

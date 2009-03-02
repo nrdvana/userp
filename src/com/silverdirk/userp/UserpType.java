@@ -19,6 +19,8 @@ public abstract class UserpType {
 	int hashCache= -1; // -1 == uninitialized, any other value is the actual hash
 	public final TypeHandle handle= new TypeHandle(this);
 
+	CustomCodec defaultCodec;
+
 	protected UserpType(Symbol name) {
 		this.name= name;
 	}
@@ -100,16 +102,32 @@ public abstract class UserpType {
 	}
 
 	public UserpType cloneAs(String newName) {
-		return cloneAs(new Symbol(newName));
+		return cloneAs_internal(new Symbol(newName));
 	}
 
-	public abstract UserpType cloneAs(Symbol newName);
+	public UserpType cloneAs(Symbol newName) {
+		UserpType result= cloneAs_internal(newName);
+		result.setCustomCodec(getCustomCodec());
+		return result;
+	}
+
+	protected abstract UserpType cloneAs_internal(Symbol newName);
 
 	public String toString() {
 		return getName()+"="+getDefinition();
 	}
 
 	public abstract boolean hasEncoderParamDefaults();
+
+	public CustomCodec getCustomCodec() {
+		return defaultCodec;
+	}
+
+	public void setCustomCodec(CustomCodec cc) {
+		defaultCodec= cc;
+	}
+
+	abstract CodecDescriptor makeCodecDescriptor();
 
 	protected static class InfFlag extends BigInteger {
 		InfFlag() {

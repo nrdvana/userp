@@ -37,7 +37,7 @@ public class IntegerType extends ScalarType {
 		super(name);
 	}
 
-	public UserpType cloneAs(Symbol newName) {
+	protected UserpType cloneAs_internal(Symbol newName) {
 		return new IntegerType(newName);
 	}
 
@@ -47,6 +47,10 @@ public class IntegerType extends ScalarType {
 
 	public boolean hasEncoderParamDefaults() {
 		return false;
+	}
+
+	public CodecDescriptor makeCodecDescriptor() {
+		return new IntegerCodecDescriptor(this);
 	}
 
 	public boolean isDoublyInfinite() {
