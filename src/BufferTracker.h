@@ -33,8 +33,14 @@ namespace Userp {
  * point in freeing memory if you plan to exit) then you can call FreeAllBuffers(), which
  * will just iterate through the set and call each buffer's free proc regardless of refcnt.
  */
+ #ifndef USERP_CXX_IFACE
 struct userp_buftracker;
 typedef struct userp_buftracker userp_buftracker_t;
+#else
+class TBufTracker;
+typedef TBufTracker userp_buftracker_t;
+#endif
+
 typedef void (*userp_buftracker_release_proc_t)(const uint8_t *Buffer);
 
 USERP_EXTERN userp_buftracker_t* userp_buftracker_Create();
@@ -54,46 +60,31 @@ USERP_EXTERN void userp_buftracker_StdFreeProc(const uint8_t* Buffer);
 #ifdef USERP_CXX_IFACE
 USERP_CLASSEXPORT class TBufTracker {
 private:
-	userp_buftracker_t* bt;
+	struct Impl;
+	Impl* impl;
 	TBufTracker(const TBufTracker&); // deny copying
 	TBufTracker& operator = (const TBufTracker&); // deny assignment
 public:
 	typedef userp_buftracker_release_proc_t TReleaseProc;
 
-	TBufTracker() {
-		bt= NULL;
-		bt= userp_buftracker_Create();
-	}
-
-	~TBufTracker() {
-		if (bt) userp_buftracker_Destroy(bt);
-	}
-
-	operator userp_buftracker_t* () { return bt; }
+	TBufTracker();
+	~TBufTracker();
 
 	inline bool IsTracking(const uint8_t* Pointer) const {
 		return BufferOf(Pointer) != NULL;
 	}
 
-	inline const uint8_t* BufferOf(const uint8_t* Pointer) const {
-		return userp_buftracker_BufferOf(const_cast<userp_buftracker_t*>(bt), Pointer);
-	}
+	const uint8_t* BufferOf(const uint8_t* Pointer) const;
 
-	inline void Register(const uint8_t* Buffer, int Len, TReleaseProc FreeProc) {
-		userp_buftracker_Register(bt, Buffer, Len, FreeProc);
-	}
-	inline uint8_t* RegisterNew(int Len) {
-		return userp_buftracker_RegisterNew(bt, Len);
-	}
-	inline void Unregister(const uint8_t *Buffer) {
-		userp_buftracker_Unregister(bt, Buffer);
-	}
-	inline void Acquire(const uint8_t* Pointer) {
-		userp_buftracker_AcquireRef(bt, Pointer);
-	}
-	inline void Release(const uint8_t* Pointer) {
-		userp_buftracker_ReleaseRef(bt, Pointer);
-	}
+	void Register(const uint8_t* Buffer, int Len, TReleaseProc FreeProc);
+
+	uint8_t* RegisterNew(int Len);
+
+	void Unregister(const uint8_t *Buffer);
+
+	void Acquire(const uint8_t* Pointer);
+
+	void Release(const uint8_t* Pointer);
 };
 #endif
 

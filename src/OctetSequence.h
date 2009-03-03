@@ -227,7 +227,6 @@ public:
 	virtual bool AcquireMore(bool block);
 };
 
-#if 0
 class USERP_CLASSEXPORT TFDSource: public TOctetSource {
 	int fd;
 	uint8_t *Buffer;
@@ -240,11 +239,12 @@ public:
 		AllocSize(256), ReadLimit(ReadLimit) {}
 	virtual ~TFDSource();
 	void SetAllocSize(int NewSize) { AllocSize= NewSize; }
-	bool Acquire(TBufTracker *BufTracker, const uint8_t **DataStart, int *DataLen, bool Block);
+	bool Acquire(userp_buftracker_t *BufTracker, const uint8_t **DataStart, int *DataLen, bool Block);
 };
 
+#if 0
 class USERP_CLASSEXPORT TFileSource: public TOctetSource {
-	bool Acquire(TBufTracker *BufTracker, const uint8_t **DataStart, int *DataLen, bool Block);
+	bool Acquire(userp_buftracker_t *BufTracker, const uint8_t **DataStart, int *DataLen, bool Block);
 };
 #endif
 #endif

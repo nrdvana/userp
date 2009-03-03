@@ -244,26 +244,17 @@ void TOctetSource::StaticAcquireCleanup(void* CallbackData) {
 }
 
 //-------------------------------- TFDSource -------------------------------------
-#if 0
 
 USERP_EXTERN userp_octet_sequence_t* userp_octet_sequence_CreateFromFd(int fd) {
 	return new TStreamedOctetSequence(new TFDSource(fd));
 }
 
-USERP_EXTERN userp_octet_sequence_t* userp_octet_sequence_CreateFromFile(FILE* file) {
-	return new TStreamedOctetSequence(new TFileSource(file));
-}
-
-bool TStreamedOctetSequence::FDSource::AcquireProc(void* CallbackData, TBufferTracker *BufTracker, const uint8_t **DataStart, int *DataLen, bool Block) {
-	return ((FDSource*) CallbackData)->Acquire(BufTracker, DataStart, DataLen, Block);
-}
-
-bool TStreamedOctetSequence::FDSource::Acquire(TBufferTracker *BufTracker, const uint8_t **DataStart, int *DataLen, bool Block) {
+bool TFDSource::Acquire(userp_buftracker_t *BufTracker, const uint8_t **DataStart, int *DataLen, bool Block) {
 	if (!Block)
 		throw "FDSource::AcquireProc: nonblocking acquire is not supported (yet)";
 	if (Buffer == NULL) {
 		BufferLen= AllocSize;
-		Buffer= BufTracker->RegisterNew(BufferLen);
+		Buffer= userp_buftracker_RegisterNew(BufTracker, BufferLen);
 		BufPos= 0;
 	}
 	int red;
@@ -279,6 +270,11 @@ bool TStreamedOctetSequence::FDSource::Acquire(TBufferTracker *BufTracker, const
 	if (BufferLen - BufPos < 16) // just get a new buffer next time
 		Buffer= NULL;
 	return true;
+}
+
+#if 0
+USERP_EXTERN userp_octet_sequence_t* userp_octet_sequence_CreateFromFile(FILE* file) {
+	return new TStreamedOctetSequence(new TFileSource(file));
 }
 #endif
 } // namespace

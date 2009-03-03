@@ -9,7 +9,7 @@ namespace Userp {
 
 using namespace std;
 
-struct userp_buftracker {
+struct TBufTracker::Impl {
 	struct TBufferInfo {
 		int RefCnt;
 		int Length;
@@ -30,7 +30,7 @@ struct userp_buftracker {
 	void PrintBuffers(FILE* dest);
 };
 
-userp_buftracker::~userp_buftracker() {
+TBufTracker::Impl::~Impl() {
 	if (BufferInfoMap.size()) {
 		fprintf(stderr, "All buffers must be released before freeing the buffer tracker!\n");
 		PrintBuffers(stderr);
@@ -38,7 +38,7 @@ userp_buftracker::~userp_buftracker() {
 	}
 }
 
-bool userp_buftracker::Find(const uint8_t* Pointer, TBufInfMap::iterator *Result) {
+bool TBufTracker::Impl::Find(const uint8_t* Pointer, TBufInfMap::iterator *Result) {
 	TBufInfMap::iterator Nearest= BufferInfoMap.lower_bound(Pointer);
 	// if nearest entry is not equal to pointer, then it is greater than pointer
 	if (Nearest == BufferInfoMap.end() || Nearest->first != Pointer) {
@@ -55,10 +55,28 @@ bool userp_buftracker::Find(const uint8_t* Pointer, TBufInfMap::iterator *Result
 	return true;
 }
 
-void userp_buftracker::PrintBuffers(FILE* dest) {
+void TBufTracker::Impl::PrintBuffers(FILE* dest) {
 	fprintf(stderr, "Registered buffers:\n");
 	FOREACH(entry, BufferInfoMap.begin(), BufferInfoMap.end())
 		fprintf(stderr, "\t%p + %d  (%d refs)\n", entry->first, entry->second.Length, entry->second.RefCnt);
+}
+
+const uint8_t* BufferOf(const uint8_t* Pointer) const {
+}
+
+void Register(const uint8_t* Buffer, int Len, TReleaseProc FreeProc) {
+}
+
+uint8_t* RegisterNew(int Len) {
+}
+
+void Unregister(const uint8_t *Buffer) {
+}
+
+void Acquire(const uint8_t* Pointer) {
+}
+
+void Release(const uint8_t* Pointer) {
 }
 
 extern "C" {
