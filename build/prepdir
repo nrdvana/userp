@@ -1,0 +1,29 @@
+#! /bin/sh
+
+die() {
+	echo "$@"
+	exit 1;
+}
+
+SCRIPTDIR="$PWD/${0%/*}"
+SRCDIR="$1"
+DESTDIR="$2"
+CONFDIR="$3"
+
+[ ! "$SRCDIR" -o ! "$DESTDIR" -o ! "$CONFDIR" ] && die "Usage: prepdir SRCDIR DESTDIR CONFDIR"
+
+[ -f "$SRCDIR/Makefile.ib" ] || die "$SRCDIR/Makefile.ib does not exist"
+cp "$SRCDIR/Makefile.ib" "$DESTDIR/Makefile"
+cat >> "$DESTDIR/Makefile" <<END
+%.c:
+	ln -s "$SRCDIR/\$@" .
+%.cpp:
+	ln -s "$SRCDIR/\$@" .
+END
+
+ln -fs "${SCRIPTDIR}/run" "$DESTDIR"
+
+[ -d "$DESTDIR/include" ] || mkdir "$DESTDIR/include"
+[ -d "$DESTDIR/lib" ] || mkdir "$DESTDIR/lib"
+
+ln -fs "$CONFDIR/Profiles" "$DESTDIR/Profiles"
