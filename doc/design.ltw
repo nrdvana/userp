@@ -1,0 +1,80 @@
+### Overview ###
+
+Userp is a binary serialization format that contains its own schema.
+
+Some serialization formats require a specification to be compiled into code
+that performs the serialization, as part of the build process of the program
+using it.  Userp is capable of doing this, but can also serialize the schema
+itself so that the payload can be encoded/decoded on the fly by programs with
+no prior schema knowledge.
+
+Other serialization formats are schema-less, with ad-hoc key/value pairs and
+arrays of arbitrary type.  Userp can be used this way too, but allows you to
+mix in strongly-typed data which lets you do type-checking instead of deep
+structure validation, and can save time when loading lots of data.
+
+One further benefit not offered by many other serialization formats is that
+Userp data structures can be directly used by C code without any parsing at
+all, if you trust the sender.  You can load the blocks or mmap the files and
+use the data directly from there without having to copy it to/from buffers.
+(though you must weigh alignment speed vs. data size when doing this)
+
+Userp does not handle rewriting or random seeks very well, however, so it is
+not as versatile/useful for indexed data as formats like SQLite or Berkley DB.
+
+### Structure ###
+
+=== Blocks ===
+
+Userp is organized into Blocks.  Each block is variable-sized, and contains
+a single typed data structure.  Each block has an address, and can be referred
+to by the [[#Block Pointer]] data type.
+
+When loaded into memory, blocks will start at a page boundary and occupy some
+number of pages of RAM.  When stored on disk in "performance" mode, blocks will
+likely be aligned the same page size as RAM.  They could also be stored each as
+a separate file, or other mechanisms for fast retrieval.  When streamed or
+packed, the blocks would be stored end-to-end with length delimiters.
+
+-- Sizing your data into Blocks --
+
+When defining types, it is important to consider the block sizes that result.
+You could set the type of a block to be "array of String", but then you must
+fit all your strings into memory at once in order to write out that block.
+If instead you design a type which is a linked list of strings, then each string
+becomes its own block, and you might have lots of wasted space in memory if your
+strings are small and you collect the entire list in RAM.
+
+In short, the writer of the data is somewhat in control of the memory management
+of the reader.  If that seems like a horrible idea to you, imagine this:
+
+:microcontroller packets
+
+A program wants to send data packets to a microcontroller, which only has 2Kb
+of RAM.  It's writing the block over a serial port, using a length-delimited
+protocol.  The microcontroller can immediately see whether the block will
+fit in its incoming buffer, and can immediately reject the packet if it is
+too large.  If the block does fit, the microcontroller doesn't have to begin
+processing the packet until it has received the full size.  (and more to the
+point, it won't need a state-driven parsing algorithm)  Once it receives
+the block, it knows it can access the full data structure without having to
+read more. (and won't need a state-driven algorithm to process the data).
+
+In the case of USB transfers, you might choose 64-byte block sizes, so that
+each message fits in a single USB packet.
+
+All these aspects simplify the code on the receiving end.  The sender must
+in turn plan small enough data structures to fit in the microcontroller's
+RAM.  (however, it probably needed to do this anyway)
+
+:video frames
+
+One block could refer to the following block and declare its type to be
+"video frame".  Subsequently the next block would get loaded and //be
+automatically aligned on a page boundary//, allowing you to use SSE
+instructions to process it.  You get this benefit without having to copy
+the entire video frame into a properly aligned buffer, like would happen
+with most serialization protocols.  Also, NONE of the video frame needed
+to be parsed to continue reading blocks, and in a seekable medium the
+video frame wouldn't even need to be loaded if the reader didn't need it.
+
