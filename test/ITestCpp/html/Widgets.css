@@ -1,0 +1,75 @@
+div.container {
+	position: relative;
+	margin:0;
+	padding:0;
+}
+div.tab-header {
+	border: none;
+	padding: 0px;
+	margin: 0px;
+}
+div.tab-header input {
+	margin:0 0.2em 0 0.2em;
+	padding:0.1em 0.3em 0.1em 0.3em;
+	border:solid 1px;
+	z-index:1;
+}
+div.tab-header input.tab-selected {
+	margin-bottom:-1px;
+	padding-bottom:6px;
+	border-color:#FFF;
+	border-bottom:none
+}
+div.tab-body {
+	border:solid 1px;
+	padding: 4px;
+	margin: 0px;
+}
+
+span.prompt { font-weight:600; font-size:12pt; }
+div.checkbox-list {
+	border:solid 1px;
+}
+span.listitem { font-weight:500; font-size:9pt; }
+
+.groupbox {
+	position:relative;
+	margin:1em;
+	padding:1em;
+	border:1px solid white;
+}
+.groupbox .caption {
+	position:absolute;
+	padding:0.1em 0.5em 0.1em 0.5em;
+	top:-0.5em;
+	background-color:black;
+	border:1px solid white;
+}
+.error .groupbox {
+	color:#FAA;
+	background-color:#522;
+	font-weight:700;
+}
+.error h4 { padding-bottom:1em; }
+
+.btn img { background-color:white; border:1px solid white; padding:0; }
+
+.menu {
+	position:relative;
+	z-index:200;
+	margin:0;
+}
+.menu dl {
+	position:absolute; top:0; left:0;
+	margin:0; padding:0;
+}
+.menu dt {
+	margin: 0;
+}
+.menu dd {
+	margin:0;
+	display:none;
+}
+.menu a.IE-hack, .menu a.IE-hack:visited { display:block; }
+.menu a.IE-hack:hover { border:0; }
+.menu a.IE-hack:hover dl dd, .menu dl:hover dd { display:block; }

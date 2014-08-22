@@ -1,0 +1,102 @@
+die() {
+	echo "$@"
+	exit 1;
+}
+
+gen_config_h() {
+	cat <<END
+#ifdef USE_NULL
+#include <string.h>
+#endif
+#ifdef USE_BOOL
+#include <stdbool.h>
+#endif
+#ifdef USE_PRINTF
+#include <stdio.h>
+#endif
+#ifdef USE_ABORT
+#include <stdlib.h>
+#endif
+END
+}
+
+gen_config_c() {
+	echo ""
+}
+
+gen_makefile_conf() {
+	conf_opt_libtype='shared'
+	echo 'conf_target_libuserp_version_major=0'
+	echo 'conf_target_libuserp_version_abi=0'
+	echo 'conf_target_libuserp_version_minor=0'
+	echo 'conf_target_libuserp_version_str=0.0.0'
+	echo 'conf_target_libuserp_name=libuserp.so.0.0.0'
+	echo 'conf_install_libdir=lib'
+	echo 'conf_opt_libtype=shared'
+	echo 'conf_ccompile_flags=-O2 -g -Wall'
+	echo 'COMPILE=gcc -c -o $@ $(COMPILE_LINKOPTS) $(conf_ccompile_flags) $<'
+	if [ "$conf_opt_libtype" == "shared" ]; then
+		echo 'COMPILE_LINKOPTS=-fPIC'
+		echo 'LINK=gcc -shared -Wl,-soname,libuserp.so.0 -o $@ $<'
+	else
+		echo 'LINK=ar rcs $@ $<'
+	fi
+	cat <<END
+.PHONY: update_build libuserp test clean
+all: update_build libuserp
+
+update_build: Makefile out
+
+Makefile: $PROJDIR/src/Makefile $PROJDIR/configure
+	@echo "Updating build configuration"
+	@"$PROJDIR"/configure
+
+out:
+	@echo "Creating output directory"
+	@mkdir out out/include out/lib
+
+libuserp: out out/\$(conf_install_libdir)/\$(conf_target_libuserp_name)
+
+END
+	sed -ne '/^$/,$p' "$PROJDIR"/src/Makefile
+	cat <<"END"
+clean:
+	rm -r *.o out
+
+tests.dyn.cpp:
+	@sh ITestCpp/scripts/JoinTests.sh UnitTests > tests.dyn.cpp || ( rm -f tests.dyn.cpp && false; )
+
+unittests: libuserp tests.dyn.cpp $(wildcard ITestCpp/*)
+	g++ -o unittests -g -O0 -IITestCpp -I. ITestCpp/*.cpp tests.dyn.cpp *.o
+
+test: update_build unittests
+	./unittests
+	@ITestCpp/scripts/ShowInBrowser.sh TestResult.html
+
+END
+	find "$PROJDIR"/test/UnitTests | while read fname; do echo "tests.dyn.cpp: $fname"; done
+}
+
+do_conf() {
+	true
+}
+
+update_builddir() {
+	[ -d include ] || mkdir include || die
+	
+	ln -sf "$PROJDIR"/src/*.c "$PROJDIR"/src/*.h . || die
+	ln -sf "$PROJDIR"/test/ITestCpp "$PROJDIR"/test/UnitTests . || die
+	gen_config_h > config.h || die
+	gen_config_c > config.c || die
+	gen_makefile_conf > Makefile || die
+}
+
+PROJDIR="${0%/configure}"
+case "$1" in
+'')
+	do_conf
+	update_builddir
+	;;
+*)
+	die "Unknown command: $1"
+esac
