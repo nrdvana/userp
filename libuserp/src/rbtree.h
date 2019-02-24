@@ -7,13 +7,13 @@
  */
 typedef struct RBTreeNode_s {
 	struct RBTreeNode_s *left, *right, *parent;
-	unsigned size_t color: 1;
+	size_t color: 1;
 #if SIZE_MAX == 0xFFFF
-	unsigned size_t count: 15;
-#if SIZE_MAX == 0xFFFFFFFF
-	unsigned size_t count: 31;
+	size_t count: 15;
+#elif SIZE_MAX == 0xFFFFFFFF
+	size_t count: 31;
 #else
-	unsigned size_t count: 63;
+	size_t count: 63;
 #endif
 } RBTreeNode_t;
 
@@ -34,7 +34,7 @@ extern RBTreeNode_t* rbtree_node_right_leaf( RBTreeNode_t* node );
 // Returns left-most child of this node, or NULL
 extern RBTreeNode_t* rbtree_node_left_leaf( RBTreeNode_t* node );
 // Returns Nth child of a node, or NULL
-extern RBTreeNode_t* rbtree_node_child_n( RBTreeNode_t* node, size_t index );
+extern RBTreeNode_t* rbtree_node_child_at_index( RBTreeNode_t* node, size_t index );
 // Add a node to a tree
 extern void rbtree_node_insert( RBTreeNode_t *hint, RBTreeNode_t *node, RBTreeCmpFn *compare, int node_key_ofs);
 // Find a child with the given key.  Returns count of nodes that matched.
@@ -54,7 +54,13 @@ typedef struct RBTree_s {
 /* Initialize the tree.  Use macro RBTREE_INIT to automatically resolve offsets to member fields. */
 static inline void rbtree_init( RBTree_t *tree, int key_ofs, int obj_ofs, RBTreeCmpFn *compare ) {
 	tree->root_sentinel.count= 0;
+	tree->root_sentinel.parent= NULL;
+	tree->root_sentinel.left= &tree->sentinel;
+	tree->root_sentinel.right= &tree->sentinel;
 	tree->sentinel.count= 0;
+	tree->sentinel.left= &tree->sentinel;
+	tree->sentinel.right= &tree->sentinel;
+	tree->sentinel.parent= &tree->sentinel;
 	tree->compare= compare;
 	tree->node_key_ofs= key_ofs;
 	tree->node_obj_ofs= obj_ofs;
@@ -78,7 +84,7 @@ static inline void rbtree_init( RBTree_t *tree, int key_ofs, int obj_ofs, RBTree
  * on each node.  This avoids all the node removal operations.
  */
 typedef void RBTreeElemDestructor( void *obj, void *opaque );
-extern void rbtree_destroy( RBTree_t *tree, RBTreeNodeDestructor *del_proc, void *opaque );
+extern void rbtree_clear( RBTree_t *tree, RBTreeElemDestructor *del_fn, void *opaque );
 
 /** rbtree_count( tree )
  *
@@ -91,8 +97,8 @@ static inline size_t rbtree_count( RBTree_t *tree ) { return tree->root_sentinel
  * Insert an object into the tree.  The object must have a RBTreeNode at -tree->node_obj_ofs
  * or your program will crash.
  */
-static inline void rbtree_insert( RBTRee_t *tree, void *obj ) {
-	rbtree_node_insert(tree->root_sentinel.left, (RBTreeNode*) (((char*)obj) - tree->node_obj_ofs), tree->compare, tree->node_key_ofs);
+static inline void rbtree_insert( RBTree_t *tree, void *obj ) {
+	rbtree_node_insert(tree->root_sentinel.left, (RBTreeNode_t*) (((char*)obj) - tree->node_obj_ofs), tree->compare, tree->node_key_ofs);
 }
 
 /** rbtree_remove( tree, object )
@@ -100,7 +106,7 @@ static inline void rbtree_insert( RBTRee_t *tree, void *obj ) {
  * Remove an object from the tree.  This does not delete the object.
  */
 static inline void rbtree_remove( RBTree_t *tree, void *obj ) {
-	rbtree_node_prune((RBTreeNode*) (((char*)obj) - tree->node_obj_ofs));
+	rbtree_node_prune((RBTreeNode_t*) (((char*)obj) - tree->node_obj_ofs));
 }
 
 /** rbtree_find( tree, key )
@@ -108,7 +114,7 @@ static inline void rbtree_remove( RBTree_t *tree, void *obj ) {
  * Search for an object with a key that matches 'key'.  Returns the object, or NULL if none match.
  */
 static inline void *rbtree_find( RBTree_t *tree, const void *key ) {
-	RBTreeNode *nearest= NULL;
+	RBTreeNode_t *nearest= NULL;
 	return rbtree_node_search(tree->root_sentinel.left, key, tree->compare, tree->node_key_ofs, NULL, NULL, &nearest, NULL)?
 		((char*)nearest) + tree->node_obj_ofs: NULL;
 }
@@ -119,9 +125,9 @@ static inline void *rbtree_find( RBTree_t *tree, const void *key ) {
  * This allows you to iterate forward voer them.
  */
 static inline void *rbtree_find_first( RBTree_t *tree, const void *key ) {
-	RBTreeNode *first= NULL;
+	RBTreeNode_t *first= NULL;
 	return rbtree_node_search(tree->root_sentinel.left, key, tree->compare, tree->node_key_ofs, &first, NULL, NULL, NULL)?
-		((char*)nearest) + tree->node_obj_ofs: NULL;
+		((char*)first) + tree->node_obj_ofs: NULL;
 }
 
 /** rbtree_find_all( tree, key, &first, &last )
@@ -130,7 +136,7 @@ static inline void *rbtree_find_first( RBTree_t *tree, const void *key ) {
  */
 static inline int rbtree_find_all( RBTree_t *tree, const void *key, void **first, void **last) {
 	int count;
-	rbtree_node_search(tree->root_sentinel.left, key, tree->compare, tree->node_key_ofs, first, last, NULL, &count);
+	rbtree_node_search(tree->root_sentinel.left, key, tree->compare, tree->node_key_ofs, (RBTreeNode_t**)first, (RBTreeNode_t**)last, NULL, &count);
 	if (first && *first) { *first= ((char*)*first) + tree->node_obj_ofs; }
 	if (last && *last) { *last= ((char*)*last) + tree->node_obj_ofs; }
 	return count;
@@ -141,7 +147,8 @@ static inline int rbtree_find_all( RBTree_t *tree, const void *key, void **first
  * Get the Nth element in the sorted list of the tree's elements.
  */
 static inline void *rbtree_elem_at( RBTree_t *tree, size_t index ) {
-	return rbtree_node_child_n(tree->root_sentinel.left, index);
+	RBTreeNode_t *node= rbtree_node_child_at_index(tree->root_sentinel.left, index);
+	return node? ((char*)node) + tree->node_obj_ofs : NULL;
 }
 
 /** rbtree_first( tree )
@@ -167,7 +174,7 @@ static inline void *rbtree_last( RBTree_t *tree ) {
  * Return the previous element of the tree, in sort order.
  */
 static inline void *rbtree_prev( RBTree_t *tree, void *obj ) {
-	RBTreeNode_t *node= rbtree_node_prev( (RBTreeNode_t*) (((char*)obj) - tree->node_obj_ofs)
+	RBTreeNode_t *node= rbtree_node_prev( (RBTreeNode_t*) (((char*)obj) - tree->node_obj_ofs) );
 	return node? ((char*)node) + tree->node_obj_ofs : NULL;
 }
 
@@ -176,7 +183,7 @@ static inline void *rbtree_prev( RBTree_t *tree, void *obj ) {
  * Return the next element of the tree, in sort order.
  */
 static inline void *rbtree_next( RBTree_t *tree, void *obj ) {
-	RBTreeNode_t *node= rbtree_node_next( (RBTreeNode_t*) (((char*)obj) - tree->node_obj_ofs)
+	RBTreeNode_t *node= rbtree_node_next( (RBTreeNode_t*) (((char*)obj) - tree->node_obj_ofs) );
 	return node? ((char*)node) + tree->node_obj_ofs : NULL;
 }
 
