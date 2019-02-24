@@ -1,0 +1,11 @@
+#! /bin/sh
+
+# if run from proj root, inform user whats going on
+if [ -d ./automake ]; then
+	mkdir -p build && cd build && ../automake/configure "$@"
+	echo
+	echo "Makefile created in ./build/"
+else
+	echo "Note: running ${0%/*}/automake/configure"
+	${0%/*}/automake/configure "$@"
+fi
