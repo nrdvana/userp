@@ -11,16 +11,16 @@ our $VERSION= '0.1';
     ->write_impl('foo.c')
     ->write_wrapper(
 		'sometype-rb.h',
-		obj => 'SomeType',
-		node => 'NodeFieldName',
-		cmp => 'CompareFunc'
+		obj_t => 'SomeType',
+		node => 'NodeFieldName',  # struct SomeType { RBTreeNode_t NodeFieldName; }
+		cmp => 'CompareFunc'      # int CompareFunc(SomeType *a, SomeType *b);
 	)
     ->write_wrapper(
 		'sometype-rb.h',
-		obj => SomeType',
+		obj_t => SomeType',
 		node => 'NodeField2',
-		key => 'KeyField',
-		cmp => 'CompareFunc'
+		key_t => 'const char*', key => 'KeyField',
+		cmp => 'strcmp'
 	);
 
 =head1 DESCRIPTION
@@ -81,6 +81,9 @@ typedef struct ${ns}RBNode_s {
 	size_t count: 63;
 #endif
 } $nd;
+
+/* Initialize a tree */
+$api void ${ns}init_tree( $nd *root_sentinel, $nd *leaf_sentinel );
 
 /* Returns previous node in conceptual sorted list of nodes, or NULL */
 $api $nd *${ns}node_prev( $nd *node );
@@ -191,6 +194,17 @@ static void RotateRight( $nd *node );
 static void RotateLeft( $nd *node );
 static void PruneLeaf( $nd *node );
 static void InsertAtLeaf( $nd *leaf, $nd *new_node, bool on_left);
+
+void ${ns}init_tree( $nd *root_sentinel $nd *leaf_sentinel ) {
+	SET_COUNT(root_sentinel, 0);
+	root_sentinel->parent= NULL;
+	root_sentinel->left= leaf_sentinel;
+	root_sentinel->right= leaf_sentinel;
+	SET_COUNT(leaf_sentinel, 0);
+	leaf_sentinel->left= leaf_sentinel;
+	leaf_sentinel->right= leaf_sentinel;
+	leaf_sentinel->parent= leaf_sentinel;
+}
 
 $nd *${ns}node_left_leaf( $nd *node ) {
 	while (NOT_SENTINEL(node->left))
@@ -770,7 +784,7 @@ int ${ns}check_structure($nd *node, int(*compare)(void *a, void *b), int cmp_poi
 	return CheckSubtree(node, compare, node_key_ofs, &black_count);
 }
 
-int CheckSubtree(RBTreeNode_t *node, RBTreeCmpFn *compare, int cmp_pointer_ofs, int *black_count) {
+int CheckSubtree($nd *node, int(*compare)(void *a, void *b), int cmp_pointer_ofs, int *black_count) {
 	// This node should be fully attached to the tree
 	if (!node || !node->parent || !node->left || !node->right || !GET_COUNT(node))
 		return RBTREE_INVALID_NODE;
@@ -820,132 +834,126 @@ sub _append {
 
 sub write_wrapper {
 	my ($self, $dest, %opts)= @_;
-	die "unimplemented";
-<<END
+	my $nd= $self->node_type;
+	my $ns= $self->namespace;
+	my $obj_t= $opts{obj_t} or croak "'obj_t' required (name of type being stored in tree)";
+	my $node= $opts{node} or croak "'node' required (name of $nd field within $obj)";
+	my $cmp= $opts{cmp} or croak "'cmp' required (name of compare function)";
+	my $key_t= $opts{key_t};
+	my $key= $opts{key};
+	croak "'key_t' and 'key' are co-dependent" if $key && !$key_t or $key_t && !$key;
+	my $obj_ofs= "( ((char*)10000) - ((char*) &((($obj_t *)(void*)10000)->$node)) )";
+	my $cmp_ofs= $key? "( ((char*) &((($obj_t *)(void*)10000)->$key)) - ((char*) &((($obj_t *)(void*)10000)->$node)) )" : $obj_ofs;
+	my $node_to_obj= sub { "(($obj_t *)(((char*)$_[0]) + $obj_ofs))" };
+	my $tree_t= $opts{tree_type} : do { (my $x= $obj_t.'_'.$node) =~ s/_t(_|$)/\1/g; };
+	(my $tree_ns= $tree_t) =~ s/_t//;
+	my $code= <<"END";
 
-/* rbtree_destroy( tree, elem_destructor, opaque )
- *
- * Efficiently destroy a large tree by iterating bottom to top and running a destructor
- * on each node.  This avoids all the node removal operations.
- */
-/** rbtree_count( tree )
- *
- * Return the number of objects in the tree.
- */
-/** rbtree_insert( tree, object )
- *
- * Insert an object into the tree.  The object must have a RBTreeNode at -tree->node_obj_ofs
- * or your program will crash.
- */
-/** rbtree_remove( tree, object )
- *
- * Remove an object from the tree.  This does not delete the object.
- */
-/** rbtree_find( tree, key )
- *
- * Search for an object with a key that matches 'key'.  Returns the object, or NULL if none match.
- */
-/** rbtree_find_first( tree, key )
- *
- * In a tree with duplicate values, search for the lowest-indexed match to the key.
- * This allows you to iterate forward voer them.
- */
-/** rbtree_find_all( tree, key, &first, &last )
- *
- * Find the first match, last match, and count of matches.
- */
-/** rbtree_elem_at( tree, index )
- *
- * Get the Nth element in the sorted list of the tree's elements.
- */
-/** rbtree_first( tree )
- *
- * Return the first element of the tree, in sort order.
- */
-/** rbtree_last( tree )
- *
- * Return the last element of the tree, in sort order.
- */
-/** rbtree_prev( tree )
- *
- * Return the previous element of the tree, in sort order.
- */
-/** rbtree_next( tree )
- *
- * Return the next element of the tree, in sort order.
- */
-/*
-#define RBTREE_OFS_TO(type, field) ( ((intptr_t)&((((type)*)(void*)10000)->field)) - 10000 )
-#define RBTREE_FIELD_TO_OBJ(type, field, pointer) (
-#define RBTREE_DECLARE(tree_type, elem_type, elem_nodefield, elem_keyfield, elem_keycmp, ) \
-  typedef struct tree_type##_s { \
-    RBTreeNode_t root_sentinel; \
-    RBTreeNode_t sentinel; \
-  } tree_type; \
-  static inline void tree_type##_init( tree_type *tree ) { \
-    tree->root_sentinel.count= 0; \
-    tree->root_sentinel.parent= NULL; \
-    tree->root_sentinel.left= &tree->sentinel; \
-    tree->root_sentinel.right= &tree->sentinel; \
-    tree->sentinel.count= 0; \
-    tree->sentinel.left= &tree->sentinel; \
-    tree->sentinel.right= &tree->sentinel; \
-    tree->sentinel.parent= &tree->sentinel; \
-  } \
-  static inline size_t tree_type##_count( tree_type *tree ) { return tree->root_sentinel.left->count; } \
-  static inline void tree_type##_insert( tree_type *tree, elem_type *obj ) { \
-    RBTREE_API_PREFIX##node_insert(tree->root_sentinel.left, (RBTreeNode_t*) (((char*)obj) - tree->node_obj_ofs), tree->compare, tree->node_key_ofs);
-}
-static inline void rbtree_remove( RBTree_t *tree, void *obj ) {
-	rbtree_node_prune((RBTreeNode_t*) (((char*)obj) - tree->node_obj_ofs));
+/* Auto-Generated by ${\ref $self} version ${\$self->VERSION} on ${\localtime} */
+
+/* Tree of $obj_t sorted by $cmp ${\($key? "on $key" : "")} */
+struct $tree_ns {
+	$nd root_sentinel;
+	$nd leaf_sentinel;
+} $tree_t;
+
+/* Initialize the $tree_t structure */
+static inline void ${tree_ns}_init($tree_t *tree) {
+	${ns}init_tree(&tree->root_sentinel, &tree->leaf_sentinel);
 }
 
-static inline void *rbtree_find( RBTree_t *tree, const void *key ) {
-	RBTreeNode_t *nearest= NULL;
-	return rbtree_node_search(tree->root_sentinel.left, key, tree->compare, tree->node_key_ofs, NULL, NULL, &nearest, NULL)?
-		((char*)nearest) + tree->node_obj_ofs: NULL;
+/* Return the first element of the tree, in sort order. */
+static inline $obj_t *${tree_ns}first($tree_t *tree) {
+	$nd *node= ${ns}node_left_leaf(tree->root_sentinel.left);
+	return node? ${\$node_to_obj->("node")} : NULL;
 }
 
-static inline void *rbtree_find_first( RBTree_t *tree, const void *key ) {
-	RBTreeNode_t *first= NULL;
-	return rbtree_node_search(tree->root_sentinel.left, key, tree->compare, tree->node_key_ofs, &first, NULL, NULL, NULL)?
-		((char*)first) + tree->node_obj_ofs: NULL;
+/* Return the last element of the tree, in sort order */
+static inline $obj_t *${tree_ns}last($tree_t *tree) {
+	$nd *node= ${ns}node_right_leaf(tree->root_sentinel.left);
+	return node? ${\$node_to_obj->("node")} : NULL;
 }
 
-static inline int rbtree_find_all( RBTree_t *tree, const void *key, void **first, void **last) {
+/* Return the previous element of the tree, in sort order. */
+static inline $obj_t *${tree_ns}prev($obj_t *obj) {
+	$nd *node= ${ns}node_prev(&(obj->$node));
+	return node? ${\$node_to_obj->("node")} : NULL;
+}
+
+/* Return the next element of the tree, in sort order. */
+static inline $obj_t *${tree_ns}next($obj_t *obj ) {
+	$nd *node= ${ns}node_next(&(obj->$node));
+	return node? ${\$node_to_obj->("node")} : NULL;
+}
+
+/* Insert an object into the tree */
+static inline void ${tree_ns}insert($tree_t *tree, $obj_t *obj) {
+    ${ns}node_insert(tree->root_sentinel.left, &(obj->$node), $cmp, $cmp_ofs);
+}
+
+/* Search for an object matching 'goal'.  Returns the object, or NULL if none match. */
+static inline $obj_t *${tree_ns}find($tree_t *tree, ${\($key_t || $obj_t)} *goal) {
+	$nd *nearest= NULL;
+	return ${ns}search(tree->root_sentinel.left, goal, $cmp, $cmp_ofs, NULL, NULL, &nearest, NULL)?
+		${\$node_to_obj->("nearest")} : NULL;
+}
+
+/* In a tree with duplicate values, search for the lowest-indexed match to the key. */
+static inline void *${tree_ns}find_first($tree_t *tree, ${\($key_t || $obj_t)} *goal) {
+	$nd *first= NULL;
+	return ${ns}search(tree->root_sentinel.left, goal, $cmp, $cmp_ofs, &first, NULL, NULL, NULL)?
+		${\$node_to_obj->("first")} : NULL;
+}
+
+/* Find the first match, last match, and count of matches. */
+static inline int ${tree_ns}find_all( RBTree_t *tree, const void *key, void **first, void **last) {
 	int count;
-	rbtree_node_search(tree->root_sentinel.left, key, tree->compare, tree->node_key_ofs, (RBTreeNode_t**)first, (RBTreeNode_t**)last, NULL, &count);
-	if (first && *first) { *first= ((char*)*first) + tree->node_obj_ofs; }
-	if (last && *last) { *last= ((char*)*last) + tree->node_obj_ofs; }
+	$nd *n_first, *n_last;
+	${ns}search(tree->root_sentinel.left, goal, $cmp, $cmp_ofs, first? &n_first : NULL, last? &n_last : NULL, NULL, &count);
+	if (first && *n_first) *first= ${\$node_to_obj->("n_first")};
+	if (last && *last) *last= ${\$node_to_obj->("n_last")};
 	return count;
 }
 
-static inline void *rbtree_elem_at( RBTree_t *tree, size_t index ) {
-	RBTreeNode_t *node= rbtree_node_child_at_index(tree->root_sentinel.left, index);
-	return node? ((char*)node) + tree->node_obj_ofs : NULL;
-}
-
-static inline void *rbtree_first( RBTree_t *tree ) {
-	RBTreeNode_t *node= rbtree_node_left_leaf(tree->root_sentinel.left);
-	return node? ((char*)node) + tree->node_obj_ofs : NULL;
-}
-
-static inline void *rbtree_last( RBTree_t *tree ) {
-	RBTreeNode_t *node= rbtree_node_right_leaf(tree->root_sentinel.left);
-	return node? ((char*)node) + tree->node_obj_ofs : NULL;
-}
-
-static inline void *rbtree_prev( RBTree_t *tree, void *obj ) {
-	RBTreeNode_t *node= rbtree_node_prev( (RBTreeNode_t*) (((char*)obj) - tree->node_obj_ofs) );
-	return node? ((char*)node) + tree->node_obj_ofs : NULL;
-}
-
-static inline void *rbtree_next( RBTree_t *tree, void *obj ) {
-	RBTreeNode_t *node= rbtree_node_next( (RBTreeNode_t*) (((char*)obj) - tree->node_obj_ofs) );
-	return node? ((char*)node) + tree->node_obj_ofs : NULL;
-}
-*/
-#endif
 END
+
+	$code .= <<"END" if $self->with_index;
+
+/* Return the number of objects in the tree. */
+static inline size_t ${tree_ns}count($tree_t *tree) {
+	return tree->root_sentinel.left->count;
+}
+
+/* Get the Nth element in the sorted list of the tree's elements. */
+static inline $obj_t *${tree_ns}elem_at($tree_t *tree, size_t n) {
+	$nd *node= ${ns}node_child_at_index(tree->root_sentinel.left, n);
+	return node? ${\$node_to_obj->("node")} : NULL;
+}
+
+END
+
+	$code .= <<"END" if $self->with_remove;
+
+/* Remove an object from the tree.  This does not delete the object. */
+static inline void ${tree_ns}remove($tree_t *tree, $obj_t *obj) {
+	${ns}node_prune(&(obj->$node));
+}
+
+END
+
+	$code .= <<"END" if $self->with_clear;
+
+/* Efficiently clear a large tree by iterating bottom to top and running a destructor
+ * on each node.  This avoids all the node removal operations. 
+ */
+static inline void ${tree_ns}clear($tree_t *tree, void (*destructor)($obj_t *obj, void *opaque), void *opaque) {
+	${ns}clear(&tree->root_sentinel, (void (*)(void *, void *)) destructor, $obj_ofs, opaque);
+}
+
+END
+
+	$self->_append($dest, $code);
 	return $self;
 }
+
+1;
