@@ -15,7 +15,7 @@ rbtree.h rbtree.c: $(realsrcdir)/RBGen.pm
 	perl -I$(realsrcdir) -MRBGen -e 'RBGen->new(namespace => "userp_rb")->write_api("rbtree.h")->write_impl("rbtree.c")'
 
 ident_rb.h: $(realsrcdir)/RBGen.pm
-	perl -I$(realsrcdir) -MRBGen -e 'RBGen->new(namespace => "userp_rb")->write_wrapper("ident_rb.h", obj_t => "userp_ident_t", node => "name_tree_node", key_t => "const char *", key => "name", tree_t => "userp_ident_by_name_t", cmp => "strcmp")'
+	perl -I$(realsrcdir) -MRBGen -e 'RBGen->new(namespace => "userp_rb")->write_wrapper("ident_rb.h", obj_t => "userp_ident_t", node => "name_tree_node", key_t => "const char *", key => "name", tree_t => "userp_ident_by_name_t", cmp => "compare_charstar")'
 
 userp.c: $(realsrcdir)/userp.c ident_rb.h
 	$(CP) $< $@
@@ -23,7 +23,7 @@ userp.c: $(realsrcdir)/userp.c ident_rb.h
 testfiles=t/02-rbtree.t
 
 test: t $(testfiles)
-	$(PROVE) -lv
+	$(PROVE) -l
 
 t:
 	mkdir -p t

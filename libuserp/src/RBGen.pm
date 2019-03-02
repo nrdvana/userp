@@ -100,7 +100,7 @@ $api $nd *${ns}node_right_leaf( $nd *node );
 $api $nd *${ns}node_left_leaf( $nd *node );
 
 /* Add a node to a tree */
-$api void ${ns}node_insert( $nd *hint, $nd *node, int(*cmp_fn)(void *a, void *b), int cmp_pointer_ofs);
+$api bool ${ns}node_insert( $nd *hint, $nd *node, int(*cmp_fn)(void *a, void *b), int cmp_pointer_ofs);
 
 /* Find a node matching or close to 'goal'.  Pass NULL for answers that aren't needed.
  * Returns true for an exact match (cmp==0) and false for anything else.
@@ -176,6 +176,7 @@ Credits:
 */
 
 #include "${\$self->header}"
+#include <assert.h>
 
 #define IS_BLACK(node)         (!(node)->color)
 #define IS_RED(node)           ((node)->color)
@@ -209,18 +210,21 @@ void ${ns}init_tree( $nd *root_sentinel, $nd *leaf_sentinel ) {
 }
 
 $nd *${ns}node_left_leaf( $nd *node ) {
+	if (IS_SENTINEL(node)) return NULL;
 	while (NOT_SENTINEL(node->left))
 		node= node->left;
 	return node;
 }
 
 $nd *${ns}node_right_leaf( $nd *node ) {
+	if (IS_SENTINEL(node)) return NULL;
 	while (NOT_SENTINEL(node->right))
 		node= node->right;
 	return node;
 }
 
 $nd *${ns}node_prev( $nd *node ) {
+	if (IS_SENTINEL(node)) return NULL;
 	// If we are not at a leaf, move to the right-most node
 	//  in the tree to the left of this node.
 	if (NOT_SENTINEL(node->left)) {
@@ -243,6 +247,7 @@ $nd *${ns}node_prev( $nd *node ) {
 }
 
 $nd *${ns}node_next( $nd *node ) {
+	if (IS_SENTINEL(node)) return NULL;
 	// If we are not at a leaf, move to the left-most node
 	//  in the tree to the right of this node.
 	if (NOT_SENTINEL(node->right)) {
@@ -254,7 +259,9 @@ $nd *${ns}node_next( $nd *node ) {
 	// Else walk up the tree until we see a parent node to the right
 	else {
 		$nd *parent= node->parent;
+		assert(parent);
 		while (parent->right == node) {
+			assert(parent != parent->parent);
 			node= parent;
 			parent= node->parent;
 		}
@@ -275,22 +282,21 @@ bool ${ns}node_search(
 	$nd *nearest= NULL, *first, *last, *test;
 	int count, cmp;
 	
-	while (1) {
-		if (IS_SENTINEL(node)) {
-			if (result_nearest) *result_nearest= NULL;
-			if (result_first) *result_first= NULL;
-			if (result_last) *result_last= NULL;
-			if (result_count) *result_count= 0;
-			return false;
-		}
+	while (NOT_SENTINEL(node)) {
 		nearest= node;
 		cmp= compare( goal, PTR_OFS(node,cmp_ptr_ofs) );
 		if      (cmp<0) node= node->left;
 		else if (cmp>0) node= node->right;
 		else break;
 	}
-	// no matches
 	if (result_nearest) *result_nearest= nearest;
+	if (IS_SENTINEL(node)) {
+		// no matches
+		if (result_first) *result_first= NULL;
+		if (result_last) *result_last= NULL;
+		if (result_count) *result_count= 0;
+		return false;
+	}
 	// we've found the head of the tree the matches will be found in
 	count= 1;
 	if (result_first || result_count) {
@@ -332,23 +338,24 @@ bool ${ns}node_search(
 /* Insert a new object into the tree.  The initial node is called 'hint' because if the new node
  * isn't a child of hint, this will backtrack up the tree to find the actual insertion point.
  */
-void ${ns}node_insert( $nd *hint, $nd *node, int(*compare)(void *a, void *b), int cmp_ptr_ofs) {
+bool ${ns}node_insert( $nd *hint, $nd *node, int(*compare)(void *a, void *b), int cmp_ptr_ofs) {
 	// Can't insert node if it is already in the tree
 	if (GET_COUNT(node))
-		return;
+		return false;
 	// check for first node scenario
-	if (IS_ROOTSENTINEL(hint) && IS_SENTINEL(hint->left)) {
-		hint->left= node;
-		node->parent= hint;
-		node->left= hint->right; // tree's leaf sentinel
-		node->right= hint->right;
-		SET_COUNT(node, 1);
-		SET_COLOR_BLACK(node);
-		return;
+	if (IS_ROOTSENTINEL(hint)) {
+		if (IS_SENTINEL(hint->left)) {
+			hint->left= node;
+			node->parent= hint;
+			node->left= hint->right; // tree's leaf sentinel
+			node->right= hint->right;
+			SET_COUNT(node, 1);
+			SET_COLOR_BLACK(node);
+			return true;
+		}
+		else
+			hint= hint->left;
 	}
-	// Can't add to a normal sentinel
-	if (IS_SENTINEL(hint))
-		return;
 	// else traverse hint until leaf
 	int cmp;
 	bool leftmost= true, rightmost= true;
@@ -378,8 +385,7 @@ void ${ns}node_insert( $nd *hint, $nd *node, int(*compare)(void *a, void *b), in
 					// Whoops.  Hint was wrong.  Should start over from root.
 					while (NOT_ROOTSENTINEL(parent->parent))
 						parent= parent->parent;
-					${ns}node_insert(parent, node, compare, cmp_ptr_ofs);
-					return;
+					return ${ns}node_insert(parent, node, compare, cmp_ptr_ofs);
 				}
 				else break; // we're fine afterall
 			}
@@ -398,12 +404,13 @@ void ${ns}node_insert( $nd *hint, $nd *node, int(*compare)(void *a, void *b), in
 	node->right= next;
 	SET_COUNT(node, 1);
 	SET_COLOR_RED(node);
-	Balance(pos);
 	for (parent= pos; NOT_ROOTSENTINEL(parent); parent= parent->parent)
 		ADD_COUNT(parent, 1);
+	Balance(pos);
 	// We've iterated to the root sentinel- so node->left is the head of the tree.
 	// Set the tree's root to black
 	SET_COLOR_BLACK(parent->left);
+	return true;
 }
 
 void RotateRight( $nd *node ) {
@@ -782,6 +789,8 @@ int ${ns}check_structure($nd *node, int(*compare)(void *a, void *b), int cmp_poi
 			|| node->right->right != node->right)
 			return RBTREE_INVALID_SENTINEL;
 		if (node->left == node->right) return 0; /* empty tree, nothing more to check */
+		if (node->left->parent != node)
+			return RBTREE_INVALID_ROOT;
 		node= node->left; /* else start checking at first real node */
 	}
 	int black_count;
@@ -797,7 +806,9 @@ int CheckSubtree($nd *node, int(*compare)(void *a, void *b), int cmp_pointer_ofs
 		return RBTREE_INVALID_COUNT;
 	// Check node key order
 	int left_black_count= 0, right_black_count= 0;
-	if (GET_COUNT(node->left)) {
+	if (NOT_SENTINEL(node->left)) {
+		if (node->left->parent != node)
+			return RBTREE_INVALID_NODE;
 		if (IS_RED(node) && IS_RED(node->left))
 			return RBTREE_INVALID_COLOR;
 		if (compare(PTR_OFS(node->left, cmp_pointer_ofs), PTR_OFS(node, cmp_pointer_ofs)) > 0)
@@ -805,7 +816,9 @@ int CheckSubtree($nd *node, int(*compare)(void *a, void *b), int cmp_pointer_ofs
 		int err= CheckSubtree(node->left, compare, cmp_pointer_ofs, &left_black_count);
 		if (err) return err;
 	}
-	if (GET_COUNT(node->right)) {
+	if (NOT_SENTINEL(node->right)) {
+		if (node->right->parent != node)
+			return RBTREE_INVALID_NODE;
 		if (IS_RED(node) && IS_RED(node->right))
 			return RBTREE_INVALID_COLOR;
 		if (compare(PTR_OFS(node->right, cmp_pointer_ofs), PTR_OFS(node, cmp_pointer_ofs)) < 0)
@@ -844,15 +857,14 @@ sub write_wrapper {
 	my $node= $opts{node} or croak "'node' required (name of $nd field within $obj_t)";
 	my $key_t= $opts{key_t};
 	my $key= $opts{key};
-	my $cmp= $opts{cmp};
-	$cmp ||= 'strcmp' if $key_t =~ /char\s*[*]$/;
-	$cmp or croak "'cmp' required (name of compare function)";
+	my $cmp= $opts{cmp} or croak "'cmp' required (name of compare function)";
 	croak "'key_t' and 'key' are co-dependent" if $key && !$key_t or $key_t && !$key;
 	my $obj_ofs= "( ((char*)10000) - ((char*) &((($obj_t *)(void*)10000)->$node)) )";
 	my $cmp_ofs= $key? "( ((char*) &((($obj_t *)(void*)10000)->$key)) - ((char*) &((($obj_t *)(void*)10000)->$node)) )" : $obj_ofs;
 	my $node_to_obj= sub { "(($obj_t *)(((char*)$_[0]) + $obj_ofs))" };
 	my $tree_t= $opts{tree_t} || do { (my $x= $obj_t.'_'.$node) =~ s/_t(_|$)/$1/g; $x.'_tree_t'; };
 	my $goal_t= $key_t || $obj_t.' *';  # goal_t must be a pointer.  No way to check that since user might give a typedef
+	my $goal= $key_t? "((void*)&goal)" : "goal";
 	(my $tree_ns= $tree_t.'_') =~ s/_t_/_/;
 	(my $tree_s= $tree_ns) =~ s/_$//;
 	my $code= <<"END";
@@ -868,6 +880,10 @@ typedef struct $tree_s {
 /* Initialize the $tree_t structure */
 static inline void ${tree_ns}init($tree_t *tree) {
 	${ns}init_tree(&tree->root_sentinel, &tree->leaf_sentinel);
+}
+
+static inline $obj_t *${tree_ns}root($tree_t *tree) {
+	return tree->root_sentinel.left->count? ${\$node_to_obj->("tree->root_sentinel.left")} : NULL;
 }
 
 /* Return the first element of the tree, in sort order. */
@@ -889,21 +905,31 @@ static inline $obj_t *${tree_ns}prev($obj_t *obj) {
 }
 
 /* Return the next element of the tree, in sort order. */
-static inline $obj_t *${tree_ns}next($obj_t *obj ) {
+static inline $obj_t *${tree_ns}next($obj_t *obj) {
 	$nd *node= ${ns}node_next(&(obj->$node));
 	return node? ${\$node_to_obj->("node")} : NULL;
 }
 
+static inline $obj_t *${tree_ns}left($obj_t *obj) {
+	return obj->$node.left->count? ${\$node_to_obj->("obj->$node.left")} : NULL;
+}
+static inline $obj_t *${tree_ns}right($obj_t *obj) {
+	return obj->$node.right->count? ${\$node_to_obj->("obj->$node.right")} : NULL;
+}
+static inline $obj_t *${tree_ns}parent($obj_t *obj) {
+	return obj->$node.parent->count? ${\$node_to_obj->("obj->$node.parent")} : NULL;
+}
+
 /* Insert an object into the tree */
-static inline void ${tree_ns}insert($tree_t *tree, $obj_t *obj) {
-    ${ns}node_insert(tree->root_sentinel.left, &(obj->$node), (int(*)(void*,void*)) $cmp, $cmp_ofs);
+static inline bool ${tree_ns}insert($tree_t *tree, $obj_t *obj) {
+    return ${ns}node_insert(&(tree->root_sentinel), &(obj->$node), (int(*)(void*,void*)) $cmp, $cmp_ofs);
 }
 
 /* Search for an object matching 'goal'.  Returns the object, or NULL if none match. */
 static inline $obj_t *${tree_ns}find($tree_t *tree, $goal_t goal) {
 	$nd *nearest= NULL;
 	return ${ns}node_search(tree->root_sentinel.left,
-		(void*)goal, (int(*)(void*,void*)) $cmp, $cmp_ofs,
+		$goal, (int(*)(void*,void*)) $cmp, $cmp_ofs,
 		NULL, NULL, &nearest, NULL)?
 		${\$node_to_obj->("nearest")} : NULL;
 }
@@ -912,7 +938,7 @@ static inline $obj_t *${tree_ns}find($tree_t *tree, $goal_t goal) {
 static inline bool ${tree_ns}find_nearest($tree_t *tree, $goal_t goal, $obj_t **nearest) {
 	$nd *n_nearest= NULL;
 	int match= ${ns}node_search(tree->root_sentinel.left,
-		(void*)goal, (int(*)(void*,void*)) $cmp, $cmp_ofs,
+		$goal, (int(*)(void*,void*)) $cmp, $cmp_ofs,
 		NULL, NULL, &n_nearest, NULL);
 	if (*nearest) *nearest= n_nearest? ${\$node_to_obj->("n_nearest")} : NULL;
 	return match;
@@ -922,7 +948,7 @@ static inline bool ${tree_ns}find_nearest($tree_t *tree, $goal_t goal, $obj_t **
 static inline $obj_t *${tree_ns}find_first($tree_t *tree, $goal_t goal) {
 	$nd *first= NULL;
 	return ${ns}node_search(tree->root_sentinel.left,
-		(void*)goal, (int(*)(void*,void*)) $cmp, $cmp_ofs,
+		$goal, (int(*)(void*,void*)) $cmp, $cmp_ofs,
 		&first, NULL, NULL, NULL)?
 		${\$node_to_obj->("first")} : NULL;
 }
@@ -932,7 +958,7 @@ static inline int ${tree_ns}find_all($tree_t *tree, $goal_t goal, $obj_t **first
 	int count;
 	$nd *n_first= NULL, *n_last= NULL, *n_nearest= NULL;
 	${ns}node_search(tree->root_sentinel.left,
-		(void*)goal, (int(*)(void*,void*)) $cmp, $cmp_ofs,
+		$goal, (int(*)(void*,void*)) $cmp, $cmp_ofs,
 		first? &n_first : NULL, last? &n_last : NULL, nearest? &n_nearest : NULL, &count);
 	if (first)   *first=   n_first?   ${\$node_to_obj->("n_first")}   : NULL;
 	if (last)    *last=    n_last?    ${\$node_to_obj->("n_last")}    : NULL;
@@ -947,6 +973,11 @@ END
 /* Return the number of objects in the tree. */
 static inline size_t ${tree_ns}count($tree_t *tree) {
 	return tree->root_sentinel.left->count;
+}
+
+/* Get the list index of a node */
+static inline size_t ${tree_ns}elem_index($obj_t *obj) {
+	return ${ns}node_index(&obj->$node);
 }
 
 /* Get the Nth element in the sorted list of the tree's elements. */
@@ -981,6 +1012,8 @@ END
 
 /* Validate all known properties of the tree.  Returns 0 on success, an error code otherwise. */
 static inline int ${tree_ns}check($tree_t *tree) {
+	if (tree->root_sentinel.parent || tree->root_sentinel.count)
+		return RBTREE_INVALID_ROOT;
 	return ${ns}check_structure(&tree->root_sentinel, (int(*)(void*,void*)) $cmp, $cmp_ofs);
 }
 
