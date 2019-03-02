@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <assert.h>
+#include <stdarg.h>
 
 void TAP_run_subtest(TAP_subtest_t *test, TAP_state_t *parent_state) {
 	TAP_state_t state= { .test_id=0, .indent= parent_state->indent+4, .pass=1 };
@@ -14,16 +15,35 @@ void TAP_run_subtest(TAP_subtest_t *test, TAP_state_t *parent_state) {
 	else {
 		printf("%*s%d..%d\n", state.indent, "", 1, state.test_id);
 	}
-	printf("%*sok %d - %s\n", parent_state->indent, state.pass? "" : "not ", ++parent_state->test_id, test->name);
+	printf("%*s%sok %d - %s\n", parent_state->indent, "", state.pass? "" : "not ", ++parent_state->test_id, test->name);
 	if (!state.pass) parent_state->pass= 0;
 }
 
-void TAP_ok(TAP_state_t *state, const char *name, bool pass, const char *expr) {
-	printf("%*sok %d - %s\n", state->indent, pass? "" : "not ", ++state->test_id, name);
+bool TAP_ok(TAP_state_t *state, const char *name, bool pass, const char *expr) {
+	printf("%*s%sok %d - %s\n", state->indent, "", pass? "" : "not ", ++state->test_id, name);
 	if (!pass) {
 		state->pass= false;
-		printf("%*s# failed expression: %s", state->indent, "", expr);
+		printf("%*s# failed expression: %s\n", state->indent, "", expr);
 	}
+	return pass;
+}
+
+bool TAP_note(TAP_state_t *state, const char *fmt, ...) {
+	va_list args;
+	va_start(args, fmt);
+	printf("%*s# ", state->indent, "");
+	vprintf(fmt, args);
+	va_end(args);
+	return true;
+}
+
+bool TAP_diag(TAP_state_t *state, const char *fmt, ...) {
+	va_list args;
+	va_start(args, fmt);
+	fprintf(stderr, "%*s# ", state->indent, "");
+	fprintf(stderr, fmt, args);
+	va_end(args);
+	return true;
 }
 
 int TAP_main(int argc, char **argv) {

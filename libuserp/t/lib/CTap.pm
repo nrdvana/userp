@@ -36,7 +36,7 @@ sub write {
 		map 'void '.$_->{name}.'(TAP_state_t *state);',
 			@{ $self->subtests };
 	my $subtest_init= join ",\n",
-		map '  { .fn= &'.$_->{name}.', .name="'.$_->{name}.'", .plan_count='.($_->{plan}||0).' }',
+		map '  { .fn= &test_'.$_->{name}.', .name="'.$_->{name}.'", .plan_count='.($_->{plan}||0).' }',
 			@{ $self->subtests };
 	my $code= <<"END";
 
