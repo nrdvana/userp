@@ -106,7 +106,7 @@ $api bool ${ns}node_insert( $nd *hint, $nd *node, int(*cmp_fn)(void *a, void *b)
  * Returns true for an exact match (cmp==0) and false for anything else.
  */
 $api bool ${ns}node_search( $nd *node, void *goal, int(*cmp_fn)(void *a, void *b), int cmp_pointer_ofs,
-	$nd **result_first, $nd **result_last, $nd **result_nearest, int *result_count );
+	$nd **result_first, $nd **result_last, int *result_count );
 END
 
 	$src .= <<"END" if $self->with_index;
@@ -200,10 +200,12 @@ static void InsertAtLeaf( $nd *leaf, $nd *new_node, bool on_left);
 
 void ${ns}init_tree( $nd *root_sentinel, $nd *leaf_sentinel ) {
 	SET_COUNT(root_sentinel, 0);
+	SET_COLOR_BLACK(leaf_sentinel);
 	root_sentinel->parent= NULL;
 	root_sentinel->left= leaf_sentinel;
 	root_sentinel->right= leaf_sentinel;
 	SET_COUNT(leaf_sentinel, 0);
+	SET_COLOR_BLACK(leaf_sentinel);
 	leaf_sentinel->left= leaf_sentinel;
 	leaf_sentinel->right= leaf_sentinel;
 	leaf_sentinel->parent= leaf_sentinel;
@@ -277,7 +279,7 @@ $nd *${ns}node_next( $nd *node ) {
  */
 bool ${ns}node_search(
 	$nd *node, void* goal, int(*compare)(void *a,void *b), int cmp_ptr_ofs,
-	$nd **result_first, $nd **result_last, $nd **result_nearest, int *result_count
+	$nd **result_first, $nd **result_last, int *result_count
 ) {
 	$nd *nearest= NULL, *first, *last, *test;
 	int count, cmp;
@@ -289,11 +291,12 @@ bool ${ns}node_search(
 		else if (cmp>0) node= node->right;
 		else break;
 	}
-	if (result_nearest) *result_nearest= nearest;
 	if (IS_SENTINEL(node)) {
-		// no matches
-		if (result_first) *result_first= NULL;
-		if (result_last) *result_last= NULL;
+		/* no matches. Look up neighbor node if requested. */
+		if (result_first)
+			*result_first= cmp < 0? ${ns}node_prev(nearest) : nearest;
+		if (result_last)
+			*result_last=  cmp > 0? ${ns}node_next(nearest) : nearest;
 		if (result_count) *result_count= 0;
 		return false;
 	}
@@ -600,7 +603,7 @@ void PruneLeaf( $nd *node ) {
 	sentinel= IS_SENTINEL(node->left)? node->left : node->right;
 	
 	// first, decrement the count from here to root_sentinel
-	for (current= node; current != NULL; current= current->parent)
+	for (current= node; NOT_ROOTSENTINEL(current); current= current->parent)
 		ADD_COUNT(current, -1);
 
 	// if the node is red and has at most one child, then it has no child.
@@ -647,7 +650,7 @@ void PruneLeaf( $nd *node ) {
 
 	// Loop until the current node is red, or until we get to the root node.
 	// (The root node's parent is the root_sentinel, which will have a NULL parent.)
-	while (IS_BLACK(current) && parent->parent != 0) {
+	while (IS_BLACK(current) && NOT_ROOTSENTINEL(parent)) {
 		// If the sibling is red, we are unable to reduce the number of black
 		//  nodes in the sibling tree, and we can't increase the number of black
 		//  nodes in our tree..  Thus we must do a rotation from the sibling
@@ -672,6 +675,7 @@ void PruneLeaf( $nd *node ) {
 		//  reduce the black node count in the sibling's tree to match ours.
 		// This is Case 2a from the text.
 		if (IS_BLACK(sibling->right) && IS_BLACK(sibling->left)) {
+			assert(NOT_SENTINEL(sibling));
 			SET_COLOR_RED(sibling);
 			// Now we move one level up the tree to continue fixing the
 			// other branches.
@@ -702,6 +706,7 @@ void PruneLeaf( $nd *node ) {
 			}
 			// now Case 4 from the text
 			SET_COLOR_BLACK(sibling->right);
+			assert(NOT_SENTINEL(sibling));
 			COPY_COLOR(sibling, parent);
 			SET_COLOR_BLACK(parent);
 
@@ -717,6 +722,7 @@ void PruneLeaf( $nd *node ) {
 			}
 			// now Case 4 from the text
 			SET_COLOR_BLACK(sibling->left);
+			assert(NOT_SENTINEL(sibling));
 			COPY_COLOR(sibling, parent);
 			SET_COLOR_BLACK(parent);
 
@@ -785,7 +791,7 @@ int ${ns}check_structure($nd *node, int(*compare)(void *a, void *b), int cmp_poi
 	if (node && !node->parent) {
 		if (IS_RED(node) || IS_RED(node->left) || GET_COUNT(node) || GET_COUNT(node->right))
 			return RBTREE_INVALID_ROOT;
-		if (GET_COUNT(node->right) || node->right->left != node->right
+		if (GET_COUNT(node->right) || IS_RED(node->right) || node->right->left != node->right
 			|| node->right->right != node->right)
 			return RBTREE_INVALID_SENTINEL;
 		if (node->left == node->right) return 0; /* empty tree, nothing more to check */
@@ -925,44 +931,29 @@ static inline bool ${tree_ns}insert($tree_t *tree, $obj_t *obj) {
     return ${ns}node_insert(&(tree->root_sentinel), &(obj->$node), (int(*)(void*,void*)) $cmp, $cmp_ofs);
 }
 
-/* Search for an object matching 'goal'.  Returns the object, or NULL if none match. */
+/* Search for an object matching 'goal'.  Returns the object, or NULL if none match.
+ * In a tree with duplicate values, this returns the lowest-indexed match.
+ */
 static inline $obj_t *${tree_ns}find($tree_t *tree, $goal_t goal) {
-	$nd *nearest= NULL;
-	return ${ns}node_search(tree->root_sentinel.left,
-		$goal, (int(*)(void*,void*)) $cmp, $cmp_ofs,
-		NULL, NULL, &nearest, NULL)?
-		${\$node_to_obj->("nearest")} : NULL;
-}
-
-/* Search for object with key closest to 'goal'.  Returns true if matched, false if just nearest. */
-static inline bool ${tree_ns}find_nearest($tree_t *tree, $goal_t goal, $obj_t **nearest) {
-	$nd *n_nearest= NULL;
-	int match= ${ns}node_search(tree->root_sentinel.left,
-		$goal, (int(*)(void*,void*)) $cmp, $cmp_ofs,
-		NULL, NULL, &n_nearest, NULL);
-	if (*nearest) *nearest= n_nearest? ${\$node_to_obj->("n_nearest")} : NULL;
-	return match;
-}
-
-/* In a tree with duplicate values, search for the lowest-indexed match to the key. */
-static inline $obj_t *${tree_ns}find_first($tree_t *tree, $goal_t goal) {
 	$nd *first= NULL;
 	return ${ns}node_search(tree->root_sentinel.left,
 		$goal, (int(*)(void*,void*)) $cmp, $cmp_ofs,
-		&first, NULL, NULL, NULL)?
+		&first, NULL, NULL)?
 		${\$node_to_obj->("first")} : NULL;
 }
 
-/* Find the first match, last match, and count of matches. */
-static inline int ${tree_ns}find_all($tree_t *tree, $goal_t goal, $obj_t **first, $obj_t **last, $obj_t **nearest) {
+/* Find the first match, last match, and count of matches.
+ * If there are no matches, first and last are set to the nodes before and after the goal,
+ * or if no such node exists they will be set to NULL.
+ */
+static inline int ${tree_ns}find_all($tree_t *tree, $goal_t goal, $obj_t **first, $obj_t **last) {
 	int count;
-	$nd *n_first= NULL, *n_last= NULL, *n_nearest= NULL;
+	$nd *n_first= NULL, *n_last= NULL;
 	${ns}node_search(tree->root_sentinel.left,
 		$goal, (int(*)(void*,void*)) $cmp, $cmp_ofs,
-		first? &n_first : NULL, last? &n_last : NULL, nearest? &n_nearest : NULL, &count);
+		first? &n_first : NULL, last? &n_last : NULL, &count);
 	if (first)   *first=   n_first?   ${\$node_to_obj->("n_first")}   : NULL;
 	if (last)    *last=    n_last?    ${\$node_to_obj->("n_last")}    : NULL;
-	if (nearest) *nearest= n_nearest? ${\$node_to_obj->("n_nearest")} : NULL;
 	return count;
 }
 
@@ -991,7 +982,7 @@ END
 	$code .= <<"END" if $self->with_remove;
 
 /* Remove an object from the tree.  This does not delete the object. */
-static inline void ${tree_ns}remove($tree_t *tree, $obj_t *obj) {
+static inline void ${tree_ns}remove($obj_t *obj) {
 	${ns}node_prune(&(obj->$node));
 }
 
