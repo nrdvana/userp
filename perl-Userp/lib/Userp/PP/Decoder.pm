@@ -22,22 +22,16 @@ sub decode {
 }
 
 sub decode_uintX {
-	my $self= shift;
+	my ($self, $signed)= @_;
+	# Use a regex to read the correct number of bytes and also advance the pos() of the buffer
+	# and also check for EOF.
 	if ($self->bigendian) {
 		${$self->block} =~ /\G(
 				[\0-\x7F] | [\x80-\xBF]. | [\xC0-\xDF].{3} | [\xE0-\xEF].{5}
 				| [\xF0-\xFE].{7} | \xFF (.)(.{8})
 			)/xgc or die $EOF;
-		return ord $1 if length $1 == 1;
-		return 0x3FFF & unpack('n', $1) if length $1 == 2;
-		return 0x1FFFFFFF & unpack('N', $1) if length $1 == 4;
-		return 0x0FFF_FFFFFFFF & unpack('Q>', "\0\0".$1) if length $1 == 6;
-		return 0x0FFFFFFF_FFFFFFFF & unpack('Q>', $1) if length $1 == 8;
-		my $bytes= ord $2;
-		$bytes == 0 or croak "BigInteger values not supported yet";
-		return unpack('Q>', $3);
-	}
-	else {
+	} else {
+		# Yeah this counts as regex-abuse
 		${$self->block} =~ /\G(
 				[\x00\x02\x04\x06\x08\x0A\x0C\x0E\x10\x12\x14\x16\x18\x1A\x1C\x1E]
 				| [\x20\x22\x24\x26\x28\x2A\x2C\x2E\x30\x32\x34\x36\x38\x3A\x3C\x3E]
@@ -57,15 +51,63 @@ sub decode_uintX {
 				| [\x0F\x1F\x2F\x3F\x4F\x5F\x6F\x7F\x8F\x9F\xAF\xBF\xCF\xDF\xEF].{7}
 				| \xFF (.)(.{8})
 			)/xgc or die $EOF;
-		return ord($1)>>1 if length $1 == 1;
-		return unpack('v', $1)>>2 if length $1 == 2;
-		return unpack('V', $1)>>3 if length $1 == 4;
-		return unpack('Q<', $1."\0\0")>>4 if length $1 == 6;
-		return unpack('Q<', $1)>>4 if length $1 == 8;
-		my $bytes= ord $2;
-		$bytes == 0 or croak "BigInteger values not supported yet";
-		return unpack('Q<', $3);
 	}
+	# Most numbers can be unpacked into a plain scalar
+	my ($bits, $low, $high)= length $1 == 1? ( 7, ord($1) )
+		: length $1 == 2? ( 14, unpack($self->bigendian? 'n':'v', $1) )
+		: length $1 == 4? ( 29, unpack($self->bigendian? 'N':'V', $1) )
+		: length $1 == 6? ( 44, unpack($self->bigendian? 'nN':'Vv', $1) )
+		: length $1 == 8? ( 60, unpack($self->bigendian? 'NN':'VV', $1) )
+		: (8 * ord($2) + 64, unpack($self->bigendian? 'NN':'VV', $3) );
+	my $scalarbits= (0x7FFFFFFF + 1 < 0)? 32 : 64;
+	if ($bits <= $scalarbits) {
+		($high, $low)= ($low, $high) if $self->bigendian && defined $high;
+		$low|= (($high||0)<<32);
+		$low >>= (length($1) * 8) - $bits if !$self->bigendian; # clip off flag bits for little-end
+		$low <<= ($scalarbits - $bits); # clip off flag bits for big end
+		# If signed, enable sign-extending before right shift
+		return $signed? do { use integer; $low >> ($scalarbits - $bits); } : ($low >> ($scalarbits - $bits));
+	}
+	# else need BigInt
+	use Math::BigInt;
+	my $buffer;
+	if ($bits <= 60) { $buffer= $1; }
+	else {
+		$buffer= $3;
+		# If bits > 60, it came from reading the 0xFF mode that reads additional bytes.
+		# Need to extract those first.
+		my $n= 8 + ord($2);
+		if ($n == 0xFF+8) {
+			$n += unpack($self->bigendian? 'n':'v', $buffer);
+			$buffer= substr($buffer,2);
+			if ($n == 0xFFFF+0xFF+8) {
+				croak "Library does not support 524296-bit integers or larger";
+			}
+		}
+		my $extra= $n - length($buffer);
+		die $EOF if length ${$self->block} - pos ${$self->block} < $extra;
+		$buffer .= substr(${$self->block}, pos ${$self->block}, $extra);
+		pos(${$self->block}) += $extra;
+	}
+	my $v= Math::BigInt->from_bytes($self->bigendian? $buffer : reverse $buffer);
+	if ($bits <= 60) { # need to clean up the flag bits
+		if ($self->bigendian) {
+			$v->band(Math::BigInt->bone->blsft($bits)->bdec);
+		} else {
+			$v->brsft((64-$bits)%16);
+		}
+	}
+	if ($signed) {
+		# Subtract 2**bits if the high bit is set
+		$v->bsub(Math::BigInt->bone->blsft($bits))
+			if $v->band(Math::BigInt->bone->blsft($bits-1));
+	}
+	return $v;
+}
+
+# same as above, but with sign extension
+sub decode_intX {
+	shift->decode_uintX(1);
 }
 
 1;
