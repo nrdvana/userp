@@ -1,6 +1,7 @@
 package Userp::PP::Decoder;
 use Moo;
 use Carp;
+use Math::BigInt;
 
 has scope      => ( is => 'ro', required => 1 );
 has buffer     => ( is => 'ro', required => 1 );
@@ -38,28 +39,62 @@ sub decode {
 	return $value;
 }
 
+sub decode_Integer {
+	my ($self, $type)= @_;
+	if (defined (my $bits= $type->const_bitlen)) {
+		return $type->min_val unless $bits;
+		return $self->decode_intN($bits) + $type->min_val;
+	}
+	return $self->decode_intX + $type->min_val if defined $type->min_val;
+	return $type->max_val - $self->decode_intX if defined $type->max_val;
+	return $self->decode_intX(1);
+}
+
+sub decode_Enum {
+	my ($self, $type)= @_;
+	if ($type->encode_literal) {
+		croak "Unimplemented";
+		my $val= $self->decode_Integer($type->members->[0][1]);
+	}
+	my $bits= $type->const_bitlen;
+	my $val= $self->decode_intN($bits);
+	croak "Enum out of bounds" if $val > $#{$type->members};
+	return $type->members->[$val][0];
+}
+
+sub decode_Union {
+	croak "Unimplemented";
+}
+
+sub decode_Sequence {
+	croak "Unimplemented";
+}
+
 sub decode_intX {
-	my ($self, $signed, $recursive)= @_;
+	my ($self, $signed)= @_;
 	pos ${$self->buffer} < length ${$self->buffer} or die $EOF;
-	my $switch= unpack('C', @{$self->buffer});
+	my $switch= unpack('C', ${$self->buffer});
 	if (!($switch & 1)) {
 		++ pos ${$self->buffer};
-		return ($signed && ($switch&0x80)? $switch - 0x100 : $switch) >> 1;
+		use integer;
+		return ($signed && ($switch & 0x80)? $switch - 0x100 : $switch) >> 1;
 	}
 	return !($switch & 2)? ($signed? do { use integer; $self->decode_intN(16, 1) >> 2 } : $self->decode_intN(16) >> 2)
-		: !($switch & 4)?  ($signed? do { use integer; $self->decode_intN(32, 1) >> 3 } : $self->decode_intN(32) >> 3)
-		: !($switch & 8)?  ($signed? do { use integer; $self->decode_intN(48, 1) >> 4 } : $self->decode_intN(48) >> 4)
-		: $switch != 0xFF? ($signed? do { use integer; $self->decode_intN(64, 1) >> 4 } : $self->decode_intN(64) >> 4)
+		:  !($switch & 4)? ($signed? do { use integer; $self->decode_intN(32, 1) >> 3 } : $self->decode_intN(32) >> 3)
+		: $switch != 0xFF? ($signed? do { use integer; $self->decode_intN(64, 1) >> 4 } : $self->decode_intN(64) >> 3)
 		: do {
-			croak "Refusing to decode ludicrously large integer value" if $recursive;
-			$self->decode_intN(8 * (8 + $self->decode_intX(0,1)), $signed);
+			++ pos ${$self->buffer};
+			my $n= $self->decode_intN(8);
+			$n= $self->decode_intN(16) if $n == 0xFF;
+			croak "Refusing to decode ludicrously large integer value" if $n == 0xFFFF;
+			$self->decode_intN(8 * (8 + $n), $signed);
 		};
 }
 
 sub Userp::PP::Decoder::BE::decode_intX {
-	my ($self, $signed, $recursive)= @_;
+	my ($self, $signed)= @_;
 	pos ${$self->buffer} < length ${$self->buffer} or die $EOF;
-	my $switch= unpack('C', @{$self->buffer});
+	my $switch= unpack('C', ${$self->buffer});
 	if ($switch < 0x80) {
 		++ pos ${$self->buffer};
 		return $signed && ($switch & 0x40)? $switch - 0x80 : $switch;
@@ -67,11 +102,13 @@ sub Userp::PP::Decoder::BE::decode_intX {
 	return $self->decode_intN(
 		$switch < 0xC0? 14
 		: $switch < 0xE0? 29
-		: $switch < 0xF0? 44
-		: $switch < 0xFF? 60
+		: $switch < 0xFF? 61
 		: do {
-			croak "Refusing to decode ludicrously large integer value" if $recursive;
-			8 * (8 + $self->decode_intX(0,1));
+			++ pos ${$self->buffer};
+			my $n= $self->decode_intN(8);
+			$n= $self->decode_intN(16) if $n == 0xFF;
+			croak "Refusing to decode ludicrously large integer value" if $n == 0xFFFF;
+			8 * (8 + $n)
 		},
 		$signed
 	);
@@ -83,7 +120,7 @@ sub decode_intN {
 	(pos(${$self->buffer}) + $bytes) <= length ${$self->buffer} or die $EOF;
 	my $buf= substr ${$self->buffer}, pos(${$self->buffer}), $bytes;
 	pos(${$self->buffer}) += $bytes;
-	return $signed? _sign_extend($self->_int_from_bytes($buf), $bits) : $self->_int_from_bytes($buf);
+	return _sign_extend($self->_int_from_bytes($buf), $signed? $bits : $bits+1);
 }
 
 my $have_pack_Q= eval { pack "Q>", 1 }? 1 : 0;
@@ -98,7 +135,7 @@ sub _int_from_bytes {
 	) : length $bytes <= 8 && $have_pack_Q? (
 		length $bytes == 8? unpack('Q<', $bytes)
 		: unpack('Q<', $bytes . "\0\0\0")
-	) : Math::BigInt->from_bytes(reverse $bytes);
+	) : Math::BigInt->from_bytes(scalar reverse $bytes);
 }
 
 sub Userp::PP::Decoder::BE::_int_from_bytes {
