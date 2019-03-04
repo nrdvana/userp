@@ -20,7 +20,7 @@ more like a record or map.  If false the sequence is more like an array.
 
 =head2 elem_spec
 
-Either a single Type for all elements, or an arrayref of Type or [Ident,Type] for each of the
+Either a single Type for all elements, or an arrayref of Type or [Type,Ident] for each of the
 first N elements.  If L</len> is not given or is longer than this list, additional elements
 will have their identifier and type encoded in the data as needed.
 
@@ -36,8 +36,35 @@ first element.)
 =cut
 
 has len         => ( is => 'ro', required => 1 );
+sub len_type  { $_[0]->len && ref($_[0]->len) && ref($_[0]->len)->can('const_bitlen')? $_[0]->len : undef }
+sub const_len { defined $_[0]->len && !ref $_[0]->len && ($_[0]->len =~ /^[0-9]+$/)? $_[0]->len : undef }
 has named_elems => ( is => 'ro', required => 1 );
 has elem_spec   => ( is => 'ro', required => 1 );
 has bitpack     => ( is => 'ro' );
+
+sub _build_const_bitlen {
+	my $self= shift;
+	my $len= $self->const_len;
+	return undef unless defined $len;
+	return 0 unless $len;
+	my $spec= $self->elem_spec;
+	my $total= 0;
+	if (ref $spec eq 'ARRAY') {
+		return undef unless @$spec >= $len;
+		for (0 .. $len-1) {
+			my $type= $spec->[$_][0];
+			defined (my $bits= $type->const_bitlen) or return undef;
+			$bits= ($bits+7)&~7 unless $self->bitpack;
+			$total += $bits;
+		}
+		return $total;
+	}
+	elsif (ref($spec)->can('const_bitlen')) {
+		my $bits= $spec->const_bitlen;
+		$bits= ($bits+7)&~7 unless $self->bitpack;
+		return $bits * $len;
+	}
+	return undef;
+}
 
 1;
