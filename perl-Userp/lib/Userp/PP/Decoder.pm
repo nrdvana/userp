@@ -2,6 +2,7 @@ package Userp::PP::Decoder;
 use Moo;
 use Carp;
 use Math::BigInt;
+my $have_pack_Q; BEGIN { $have_pack_Q= eval { pack "Q>", 1 }? 1 : 0; }
 
 has scope      => ( is => 'ro', required => 1 );
 has buffer     => ( is => 'ro', required => 1 );
@@ -45,9 +46,10 @@ sub decode_Integer {
 		return $type->min_val unless $bits;
 		return $self->decode_intN($bits) + $type->min_val;
 	}
-	return $self->decode_intX + $type->min_val if defined $type->min_val;
-	return $type->max_val - $self->decode_intX if defined $type->max_val;
-	return $self->decode_intX(1);
+	my $ofs= $self->decode_intX;
+	return $type->min_val + $ofs if defined $type->min_val;
+	return $type->max_val - $ofs if defined $type->max_val;
+	return (($ofs & 1)? (-$ofs-1) : $ofs) >> 1;
 }
 
 sub decode_Enum {
@@ -65,39 +67,40 @@ sub decode_Enum {
 sub decode_Union {
 	croak "Unimplemented";
 }
-
+=cut
 sub decode_Sequence {
 	croak "Unimplemented";
 }
-
+=cut
 sub decode_intX {
-	my ($self, $signed)= @_;
+	my $self= shift;
+	return delete $self->{remainder} if defined $self->{remainder};
 	pos ${$self->buffer} < length ${$self->buffer} or die $EOF;
 	my $switch= unpack('C', ${$self->buffer});
 	if (!($switch & 1)) {
 		++ pos ${$self->buffer};
-		use integer;
-		return ($signed && ($switch & 0x80)? $switch - 0x100 : $switch) >> 1;
+		return $switch >> 1;
 	}
-	return !($switch & 2)? ($signed? do { use integer; $self->decode_intN(16, 1) >> 2 } : $self->decode_intN(16) >> 2)
-		:  !($switch & 4)? ($signed? do { use integer; $self->decode_intN(32, 1) >> 3 } : $self->decode_intN(32) >> 3)
-		: $switch != 0xFF? ($signed? do { use integer; $self->decode_intN(64, 1) >> 4 } : $self->decode_intN(64) >> 3)
+	return !($switch & 2)? $self->decode_intN(16) >> 2
+		:  !($switch & 4)? $self->decode_intN(32) >> 3
+		: $switch != 0xFF? $self->decode_intN(64) >> 3
 		: do {
 			++ pos ${$self->buffer};
 			my $n= $self->decode_intN(8);
 			$n= $self->decode_intN(16) if $n == 0xFF;
 			croak "Refusing to decode ludicrously large integer value" if $n == 0xFFFF;
-			$self->decode_intN(8 * (8 + $n), $signed);
+			$self->decode_uintN(8 * (8 + $n));
 		};
 }
 
 sub Userp::PP::Decoder::BE::decode_intX {
-	my ($self, $signed)= @_;
+	my $self= shift;
+	return delete $self->{remainder} if defined $self->{remainder};
 	pos ${$self->buffer} < length ${$self->buffer} or die $EOF;
 	my $switch= unpack('C', ${$self->buffer});
 	if ($switch < 0x80) {
 		++ pos ${$self->buffer};
-		return $signed && ($switch & 0x40)? $switch - 0x80 : $switch;
+		return $switch;
 	}
 	return $self->decode_intN(
 		$switch < 0xC0? 14
@@ -109,21 +112,29 @@ sub Userp::PP::Decoder::BE::decode_intX {
 			$n= $self->decode_intN(16) if $n == 0xFF;
 			croak "Refusing to decode ludicrously large integer value" if $n == 0xFFFF;
 			8 * (8 + $n)
-		},
-		$signed
+		}
 	);
 }
 
 sub decode_intN {
-	my ($self, $bits, $signed)= @_;
+	my ($self, $bits)= @_;
 	my $bytes= ($bits+7) >> 3;
 	(pos(${$self->buffer}) + $bytes) <= length ${$self->buffer} or die $EOF;
 	my $buf= substr ${$self->buffer}, pos(${$self->buffer}), $bytes;
 	pos(${$self->buffer}) += $bytes;
-	return _sign_extend($self->_int_from_bytes($buf), $signed? $bits : $bits+1);
+	my $val= $self->_int_from_bytes($buf);
+	if ($bits & 7) {
+		# If not a whole number of bytes, clear some bits at the top
+		if ($bits > ($have_pack_Q? 64 : 32)) {
+			use bigint;
+			$val &= (1 << $bits)-1;
+		}
+		else {
+ 			$val &= (1 << $bits)-1;
+		}
+	}
+	return $val;
 }
-
-my $have_pack_Q= eval { pack "Q>", 1 }? 1 : 0;
 
 sub _int_from_bytes {
 	my ($self, $bytes)= @_;
@@ -149,21 +160,6 @@ sub Userp::PP::Decoder::BE::_int_from_bytes {
 		length $bytes == 8? unpack('Q>', $bytes)
 		: unpack('Q>', ("\0"x(8-length $bytes)).$bytes)
 	) : Math::BigInt->from_bytes($bytes);
-}
-
-sub _sign_extend {
-	my ($val, $bits)= @_;
-	# Mask out other bits, if needed
-	if ($bits > ($have_pack_Q? 64 : 32)) {
-		use bigint;
-		$val &= (1 << $bits)-1;
-		$val -= (1 << $bits) if $val & (1 << ($bits-1));
-	}
-	else {
-		$val &= (1 << $bits)-1;
-		$val -= (1 << $bits) if $val & (1 << ($bits-1));
-	}
-	$val;
 }
 
 1;
