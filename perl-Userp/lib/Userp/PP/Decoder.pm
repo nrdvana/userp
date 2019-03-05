@@ -69,6 +69,27 @@ sub decode_Union {
 }
 =cut
 sub decode_Sequence {
+	my ($self, $type)= @_;
+	my $len= $type->len_type? $self->decode_Integer($type->len_type) : $type->const_len;
+	my $elem_spec= $type->elem_spec;
+	my @result;
+	while (1) {
+		my ($elem_idx, $elem_type, $elem_ident);
+		if ($type->sparse) {
+			if ($type->named_elems) {
+				# Spare named elems which might refer to elem_spec:
+				# Read a signed var-int.  Values 0..#members refer to elem_spec, values above #members
+				# are an identifier ID, and negative values are an inline identifier. 
+				my $val= $self->decode_vqty;
+				if ($val < 0) {
+					$elem_ident= $self->decode_ident_suffix;
+					$elem_type= $self->decode_typeid;
+				} elsif (!$val < 
+		my $i= @result;
+		my $elem_type= ref $elem_spec ne 'ARRAY'? $elem_spec
+			: $i < @{$elem_spec}? ( ref $elem_spec->[$i] eq 'ARRAY'? $elem_spec->[$i][0] : $elem_spec->[$i] )
+			: undef;
+		my $
 	croak "Unimplemented";
 }
 =cut

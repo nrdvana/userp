@@ -13,6 +13,22 @@ the sequence will each be prefixed with the index or identifier where they belon
 If set to the special value 'nullterm', the array will be terminated by a type of zero or
 identifier of zero or value of zero, depending on other settings.
 
+=head2 len_const
+
+Holds the constant value of C<len> if C<len> is a constant.
+
+=head2 len_type
+
+Holds the type reference for C<len> if C<len> is a type.
+
+=head2 sparse
+
+True if C<len> is set to C<'sparse'>.
+
+=head2 nullterm
+
+True if C<len> is set to C<'nullterm'>.
+
 =head2 named_elems
 
 Specifies whether or not the elements have unique identifiers.  If true, the sequence behaves
@@ -36,8 +52,15 @@ first element.)
 =cut
 
 has len         => ( is => 'ro', required => 1 );
-sub len_type  { $_[0]->len && ref($_[0]->len) && ref($_[0]->len)->can('const_bitlen')? $_[0]->len : undef }
-sub const_len { defined $_[0]->len && !ref $_[0]->len && ($_[0]->len =~ /^[0-9]+$/)? $_[0]->len : undef }
+has len_const   => ( is => 'lazy' );
+has len_type    => ( is => 'lazy' );
+has sparse      => ( is => 'lazy' );
+has nullterm    => ( is => 'lazy' );
+sub _build_len_type  { $_[0]->len && ref($_[0]->len) && ref($_[0]->len)->can('const_bitlen')? $_[0]->len : undef }
+sub _build_len_const { defined $_[0]->len && !ref $_[0]->len && ($_[0]->len =~ /^[0-9]+$/)? $_[0]->len : undef }
+sub _build_sparse    { $_[0]->len eq 'sparse' }
+sub _build_nullterm  { $_[0]->len eq 'nullterm' }
+
 has named_elems => ( is => 'ro', required => 1 );
 has elem_spec   => ( is => 'ro', required => 1 );
 has bitpack     => ( is => 'ro' );
