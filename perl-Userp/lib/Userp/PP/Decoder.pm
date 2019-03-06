@@ -44,9 +44,9 @@ sub decode_Integer {
 	my ($self, $type)= @_;
 	if (defined (my $bits= $type->const_bitlen)) {
 		return $type->min_val unless $bits;
-		return $self->decode_intN($bits) + $type->min_val;
+		return $self->decode_qty($bits) + $type->min_val;
 	}
-	my $ofs= $self->decode_intX;
+	my $ofs= $self->decode_vqty;
 	return $type->min_val + $ofs if defined $type->min_val;
 	return $type->max_val - $ofs if defined $type->max_val;
 	return (($ofs & 1)? (-$ofs-1) : $ofs) >> 1;
@@ -59,7 +59,7 @@ sub decode_Enum {
 		my $val= $self->decode_Integer($type->members->[0][1]);
 	}
 	my $bits= $type->const_bitlen;
-	my $val= $self->decode_intN($bits);
+	my $val= $self->decode_qty($bits);
 	croak "Enum out of bounds" if $val > $#{$type->members};
 	return $type->members->[$val][0];
 }
@@ -67,6 +67,7 @@ sub decode_Enum {
 sub decode_Union {
 	croak "Unimplemented";
 }
+
 =cut
 sub decode_Sequence {
 	my ($self, $type)= @_;
@@ -93,7 +94,8 @@ sub decode_Sequence {
 	croak "Unimplemented";
 }
 =cut
-sub decode_intX {
+
+sub decode_vqty {
 	my $self= shift;
 	return delete $self->{remainder} if defined $self->{remainder};
 	pos ${$self->buffer} < length ${$self->buffer} or die $EOF;
@@ -102,19 +104,19 @@ sub decode_intX {
 		++ pos ${$self->buffer};
 		return $switch >> 1;
 	}
-	return !($switch & 2)? $self->decode_intN(16) >> 2
-		:  !($switch & 4)? $self->decode_intN(32) >> 3
-		: $switch != 0xFF? $self->decode_intN(64) >> 3
+	return !($switch & 2)? $self->decode_qty(16) >> 2
+		:  !($switch & 4)? $self->decode_qty(32) >> 3
+		: $switch != 0xFF? $self->decode_qty(64) >> 3
 		: do {
 			++ pos ${$self->buffer};
-			my $n= $self->decode_intN(8);
-			$n= $self->decode_intN(16) if $n == 0xFF;
+			my $n= $self->decode_qty(8);
+			$n= $self->decode_qty(16) if $n == 0xFF;
 			croak "Refusing to decode ludicrously large integer value" if $n == 0xFFFF;
-			$self->decode_uintN(8 * (8 + $n));
+			$self->decode_qty(8 * (8 + $n));
 		};
 }
 
-sub Userp::PP::Decoder::BE::decode_intX {
+sub Userp::PP::Decoder::BE::decode_vqty {
 	my $self= shift;
 	return delete $self->{remainder} if defined $self->{remainder};
 	pos ${$self->buffer} < length ${$self->buffer} or die $EOF;
@@ -123,27 +125,27 @@ sub Userp::PP::Decoder::BE::decode_intX {
 		++ pos ${$self->buffer};
 		return $switch;
 	}
-	return $self->decode_intN(
+	return $self->decode_qty(
 		$switch < 0xC0? 14
 		: $switch < 0xE0? 29
 		: $switch < 0xFF? 61
 		: do {
 			++ pos ${$self->buffer};
-			my $n= $self->decode_intN(8);
-			$n= $self->decode_intN(16) if $n == 0xFF;
+			my $n= $self->decode_qty(8);
+			$n= $self->decode_qty(16) if $n == 0xFF;
 			croak "Refusing to decode ludicrously large integer value" if $n == 0xFFFF;
 			8 * (8 + $n)
 		}
 	);
 }
 
-sub decode_intN {
+sub decode_qty {
 	my ($self, $bits)= @_;
 	my $bytes= ($bits+7) >> 3;
 	(pos(${$self->buffer}) + $bytes) <= length ${$self->buffer} or die $EOF;
 	my $buf= substr ${$self->buffer}, pos(${$self->buffer}), $bytes;
 	pos(${$self->buffer}) += $bytes;
-	my $val= $self->_int_from_bytes($buf);
+	my $val= $self->_qty_from_bytes($buf);
 	if ($bits & 7) {
 		# If not a whole number of bytes, clear some bits at the top
 		if ($bits > ($have_pack_Q? 64 : 32)) {
@@ -157,7 +159,7 @@ sub decode_intN {
 	return $val;
 }
 
-sub _int_from_bytes {
+sub _qty_from_bytes {
 	my ($self, $bytes)= @_;
 	length $bytes <= 4? (
 		length $bytes == 1? unpack('C', $bytes)
@@ -170,7 +172,7 @@ sub _int_from_bytes {
 	) : Math::BigInt->from_bytes(scalar reverse $bytes);
 }
 
-sub Userp::PP::Decoder::BE::_int_from_bytes {
+sub Userp::PP::Decoder::BE::_qty_from_bytes {
 	my ($self, $bytes)= @_;
 	length $bytes <= 4? (
 		length $bytes == 1? unpack('C', $bytes)

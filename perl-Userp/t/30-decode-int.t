@@ -29,9 +29,9 @@ for (@tests) {
 	my $decoder= Userp::PP::Decoder->new(bigendian => $be, scope => undef, buffer => \$encoding);
 	my $x;
 	if ($bits > 0) {
-		is( ''.$decoder->decode_intN($bits), $value, "bits=$bits be=$be value=$value" );
+		is( ''.$decoder->decode_qty($bits), $value, "bits=$bits be=$be value=$value" );
 	} else {
-		is( ''.$decoder->decode_intX, $value, "var-int be=$be value=$value" );
+		is( ''.$decoder->decode_vqty, $value, "var-int be=$be value=$value" );
 	}
 }
 
