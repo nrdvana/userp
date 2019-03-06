@@ -65,4 +65,32 @@ sub _bitlen {
 	return $i;
 }
 
+=head1 METHODS
+
+=head2 new
+
+Standard Moo constructor.
+
+=head2 new_from_spec
+
+This parses the TypeSpec notation to construct anew type.
+
+A quick review of TypeSpec:
+
+  MyIntType   I(#0,#FFFFFFFF)
+  MyEnumType  E(ValueType,EncodeLiteral,(Ident Val, Ident2 Val2, ...))
+  MyUnionType U(Merge,(MemberType1,MemberType2,...))
+  MySeqType   S(Len,NamedElems,BitPack,ElemSpec)
+  MyAnyType   A
+
+=cut
+
+sub new_from_spec {
+	
+}
+
+require Userp::PP::Type::Integer;
+require Userp::PP::Type::Enum;
+require Userp::PP::Type::Union;
+require Userp::PP::Type::Sequence;
 1;
