@@ -2,6 +2,96 @@ package Userp::PP::Decoder;
 use Moo;
 use Carp;
 use Math::BigInt;
+
+=head1 DESCRIPTION
+
+This class is the API for deserializing data from known Userp types into Perl data.
+
+When decoding, there is always a "current node" which has a type.  In the case of a Union
+and Enum, the type will have a "outer type" and "inner type", and possibly several types
+inbetween, forming a chain.  You can choose to iterate this chain, or ignore it.
+In the case of Enums, the value may have an Identifier.  You can read the identifier, or
+value, or both.  In the case of Sequences, you can choose to iterate the sequence or skip
+over it, or possibly read it into another data structure like a String as a single operation.
+
+The decoding API operates roughly like this:
+
+  $type= $dec->node_type;
+  $value= $dec->node_${PERLTYPE}_val;
+  $dec->next;
+
+There is also a shortcut for each perl-type called C<decode_${PERLTYPE}> which performs a pair
+of C<node_X_val> followed by C<next>.
+
+The patterns for each general Userp type are as follows:
+
+=over
+
+=item Integer
+
+  $dec->node_is_int;             # will be true
+  $int_val= $dec->node_int_val;
+  $int_val= $dec->decode_int;
+
+=item Enum
+
+  $dec->node_is_enum;            # will be true
+  $enum_type= $dec->node_type;   # outer type is enum
+  $type= $dec->node_type(1);     # $enum_type->member_type (i.e. thing actually being decoded)
+  $val= $dec->node_enum_index;   # index of enum member; always defined
+  $ident= $dec->node_ident_val;  # can be NULL if enum doesn't name all values
+  $val= $dec->decode_enum_index; # returns the enum member index; always defined
+  $val= $dec->decode_ident;      # returns the identifier; can be NULL
+  
+  # To retrieve literal enum value, use any normal decode methods appropriate to that type
+  $val= $dec->decode_int;
+  $val= $dec->decode_float;
+  $val= $dec->decode_array;
+  ... # etc
+
+=item Union
+
+  $union_type= $dec->node_type;      # returns the type of the union itself
+  $subtype   = $dec->node_type(1)    # selected type within union
+  # and there can be further sub-types, recursively through unions and enums
+  $leaf_type = $dec->node_type(-1)   # the leaf-type, i.e. thing actually being decoded
+  $union_depth= $dec->node_is_union  # returns the *count* of nested unions
+
+In the case of a union of enums, node_type(-1) refers to the enum's member type, and
+node_type(-2) refers to the enum type itself, but C<node_is_enum> will still return true.
+
+=item Sequence
+
+  if ($dec->node_is_seq) {
+    $dec->enter_seq;
+    while ($dec->node_type) {
+      my $ident= $dec->node_elem_ident; # not ident_val, because the value might also be an ident
+      # decode the node
+      ...
+      $dec->next;
+    }
+  }
+  
+  # or, if sequence is array-compatible:
+  my $arrayref= $dec->decode_array;
+
+  # or, if sequence is record-compatible:
+  my $hashref= $dec->decode_record;
+  
+  # or if sequence is string-compatible:
+  my $string= $dec->decode_string;
+
+=item Ident
+
+Identifiers are not expected to be used as values much, but can be.
+
+  $ident= $enc->node_ident_val;
+  $ident= $enc->decode_ident;
+
+=back
+
+=cut
+
 my $have_pack_Q; BEGIN { $have_pack_Q= eval { pack "Q>", 1 }? 1 : 0; }
 
 has scope      => ( is => 'ro', required => 1 );
