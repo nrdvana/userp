@@ -4,6 +4,11 @@ extends 'Userp::PP::Type';
 
 =head1 ATTRIBUTES
 
+=head2 value_type
+
+The type of the values of the enum.  This should be the plain UInt type to get automatic
+incrementing integers for each defined member.
+
 =head2 members
 
 An arrayref of [identifier,type,value]
@@ -25,6 +30,7 @@ set it will be the C<const_bitlen> of the member type (which may be undef).
 
 =cut
 
+has value_type     => ( is => 'ro', required => 1 );
 has members        => ( is => 'ro', required => 1 );
 has encode_literal => ( is => 'ro' );
 
