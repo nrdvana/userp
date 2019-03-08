@@ -27,7 +27,11 @@ A number which the address of the encoded value (within the block) must be align
 
 A number which the end-address of the encoded value must be aligned to, by adding padding bytes.
 
-=head2 const_bitlen
+=head2 sizeof
+
+Number of octets used to encode this type, or C<undef> if the encoding has a variable length.
+
+=head2 bitsizeof
 
 A number of bits used to encode this type, or C<undef> if the encoding has a variable length.
 
@@ -44,10 +48,11 @@ has spec       => ( is => 'ro', required => 1 );
 has align      => ( is => 'rwp' );
 has tail_align => ( is => 'rwp' );
 
-has const_bitlen       => ( is => 'lazy' );
+has bitsizeof          => ( is => 'lazy' );
+sub sizeof                { (shift->bitsizeof+7) >> 3 }
 has discrete_val_count => ( is => 'lazy' );
 
-sub _build_const_bitlen {
+sub _build_bitsizeof {
 	my $n= shift->discrete_val_count;
 	return defined $n? _bitlen($n-1) : undef;
 }

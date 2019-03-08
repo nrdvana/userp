@@ -56,7 +56,7 @@ has len_const   => ( is => 'lazy' );
 has len_type    => ( is => 'lazy' );
 has sparse      => ( is => 'lazy' );
 has nullterm    => ( is => 'lazy' );
-sub _build_len_type  { $_[0]->len && ref($_[0]->len) && ref($_[0]->len)->can('const_bitlen')? $_[0]->len : undef }
+sub _build_len_type  { $_[0]->len && ref($_[0]->len) && ref($_[0]->len)->can('bitsizeof')? $_[0]->len : undef }
 sub _build_len_const { defined $_[0]->len && !ref $_[0]->len && ($_[0]->len =~ /^[0-9]+$/)? $_[0]->len : undef }
 sub _build_sparse    { $_[0]->len eq 'sparse' }
 sub _build_nullterm  { $_[0]->len eq 'nullterm' }
@@ -65,7 +65,7 @@ has named_elems => ( is => 'ro', required => 1 );
 has elem_spec   => ( is => 'ro', required => 1 );
 has bitpack     => ( is => 'ro' );
 
-sub _build_const_bitlen {
+sub _build_bitsizeof {
 	my $self= shift;
 	my $len= $self->const_len;
 	return undef unless defined $len;
@@ -76,14 +76,14 @@ sub _build_const_bitlen {
 		return undef unless @$spec >= $len;
 		for (0 .. $len-1) {
 			my $type= $spec->[$_][0];
-			defined (my $bits= $type->const_bitlen) or return undef;
+			defined (my $bits= $type->bitsizeof) or return undef;
 			$bits= ($bits+7)&~7 unless $self->bitpack;
 			$total += $bits;
 		}
 		return $total;
 	}
-	elsif (ref($spec)->can('const_bitlen')) {
-		my $bits= $spec->const_bitlen;
+	elsif (ref($spec)->can('bitsizeof')) {
+		my $bits= $spec->bitsizeof;
 		$bits= ($bits+7)&~7 unless $self->bitpack;
 		return $bits * $len;
 	}

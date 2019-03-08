@@ -7,11 +7,11 @@ extends 'Userp::PP::Type';
 =head2 value_type
 
 The type of the values of the enum.  This should be the plain UInt type to get automatic
-incrementing integers for each defined member.
+incrementing integers for each defined member.  You can also set it to any other type.
 
 =head2 members
 
-An arrayref of [identifier,type,value]
+An arrayref of [identifier,subtype,value]
 
 =head2 encode_literal
 
@@ -22,11 +22,11 @@ identifiers, but the full range of the type can still be encoded. At decode time
 will see that the current element is an Enum, but the identifier will be NULL and they will
 have to decode it as an integer.
 
-=head2 const_bitlen
+=head2 bitsizeof
 
 Derived attribute - returns the number of bits needed to encode a value of this type.
 This will either be the number of bits of the maximum member index, or if C<encode_literal> is
-set it will be the C<const_bitlen> of the member type (which may be undef).
+set it will be the C<bitsizeof> of the member type (which may be undef).
 
 =cut
 
@@ -34,15 +34,15 @@ has value_type     => ( is => 'ro', required => 1 );
 has members        => ( is => 'ro', required => 1 );
 has encode_literal => ( is => 'ro' );
 
-sub _build_const_bitlen {
+sub _build_bitsizeof {
 	my $self= shift;
-	return $self->encode_literal? $self->members->[0]{type}->const_bitlen
+	return $self->encode_literal? $self->members->value_type->bitsizeof
 		: Userp::PP::Type::_bitlen($#{$self->members});
 }
 
 sub _build_discrete_val_count {
 	my $self= shift;
-	return $self->encode_literal? $self->members->[0]{type}->discrete_val_count
+	return $self->encode_literal? $self->members->value_type->discrete_val_count
 		: scalar @{$self->members};
 }
 

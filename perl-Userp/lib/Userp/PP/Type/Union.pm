@@ -21,10 +21,10 @@ This can save a little space at the cost of encoding/decoding speed.
 has members => ( is => 'ro', required => 1 );
 has merge   => ( is => 'ro' );
 
-sub _build_const_bitlen {
+sub _build_bitsizeof {
 	my $self= shift;
-	# there is only a const_bitlen if every member merges into a finite integer range,
-	# or if they aren't merged and all have the same const_bitlen
+	# there is only a bitsizeof if every member merges into a finite integer range,
+	# or if they aren't merged and all have the same bitsizeof
 	if ($self->merge) {
 		my $dv= $self->discrete_val_count;
 		return defined $dv? Userp::PP::Type::_bitlen($dv-1) : undef;
@@ -32,7 +32,7 @@ sub _build_const_bitlen {
 	else {
 		my $prev;
 		for (@{ $self->members }) {
-			my $bitlen= $_->const_bitlen;
+			my $bitlen= $_->bitsizeof;
 			return undef unless defined $bitlen && (!defined $prev || $prev == $bitlen);
 			$prev= $bitlen;
 		}

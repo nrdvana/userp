@@ -132,7 +132,7 @@ sub decode {
 
 sub decode_Integer {
 	my ($self, $type)= @_;
-	if (defined (my $bits= $type->const_bitlen)) {
+	if (defined (my $bits= $type->bitsizeof)) {
 		return $type->min_val unless $bits;
 		return $self->decode_qty($bits) + $type->min_val;
 	}
@@ -148,7 +148,7 @@ sub decode_Enum {
 		croak "Unimplemented";
 		my $val= $self->decode_Integer($type->members->[0][1]);
 	}
-	my $bits= $type->const_bitlen;
+	my $bits= $type->bitsizeof;
 	my $val= $self->decode_qty($bits);
 	croak "Enum out of bounds" if $val > $#{$type->members};
 	return $type->members->[$val][0];
