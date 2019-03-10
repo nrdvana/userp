@@ -3,17 +3,13 @@ use Moo;
 
 =head1 ATTRIBUTES
 
+=head2 name
+
+The name of this type.  Must be a valid identifier defined in the current Scope.
+
 =head2 id
 
 The numeric index of this type within the scope that defines it.
-
-=head2 ident_id
-
-The IdentID of the name of this type within the scope that defines this type.
-
-=head2 ident
-
-The name of this type.
 
 =head2 spec
 
@@ -42,8 +38,8 @@ is not a finite number.
 
 =cut
 
-has ident      => ( is => 'ro', required => 1 );
-has ident_id   => ( is => 'ro', required => 1 );
+has name       => ( is => 'ro', required => 1 );
+has id         => ( is => 'ro', required => 1 );
 has spec       => ( is => 'ro', required => 1 );
 has align      => ( is => 'rwp' );
 has tail_align => ( is => 'rwp' );
@@ -93,6 +89,16 @@ A quick review of TypeSpec:
 sub new_from_spec {
 	
 }
+
+=head2 has_member_type
+
+  $bool= $type->has_member_type($other_type);
+
+This only returns true on Union types when the C<$other_type> is a member or sub-member.
+
+=cut
+
+sub has_member_type { 0 }
 
 require Userp::PP::Type::Integer;
 require Userp::PP::Type::Enum;

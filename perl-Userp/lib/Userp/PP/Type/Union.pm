@@ -101,6 +101,21 @@ sub _build_union_member_table {
 	}
 }
 
+has member_by_type_id => ( is => 'lazy' );
+sub _build_member_by_type_id {
+	my $self= shift;
+	my %by_type;
+	for my $tbl_entry (@{ $self->union_member_table }) {
+		my $type= $tbl_entry->[2];
+		$by_type{$_->id}= $tbl_entry for ref $type eq 'ARRAY'? @$type : ($type);
+	}
+}
+
+sub has_member_type {
+	my ($self, $type)= @_;
+	return defined $self->member_by_type_id->{$type->id};
+}
+
 sub _build_discrete_val_count {
 	my $self= shift;
 	my $table= $self->union_member_table;
