@@ -71,7 +71,7 @@ has scope        => ( is => 'ro', required => 1 );
 has bigendian    => ( is => 'ro', required => 1 );
 
 has current_type => ( is => 'rwp' );
-has _type_sel    => ( is => 'rw', default => sub { [] } );
+has _choice_path => ( is => 'rw', default => sub { [] } );
 
 =head1 METHODS
 
@@ -85,16 +85,49 @@ unions, though doing so is not always required if the union-member can be inferr
 
 =cut
 
-sub type {
+*type= *select_subtype;
+sub select_subtype {
 	my ($self, $type)= @_;
-	$self->current_type->has_member_type($type)
-		or croak "Type ".$type->ident." is not a member of ".$self->current_type->ident;
-	$self->encode_union_selector($self->current_type, $type);
+	$self->current_type->can('options')
+		or croak "Cannot select sub-type of ".$self->current_type->name;
+	$self->current_type->has_option_of_type($type)
+		or croak "Type ".$type->name." is not a valid option for ".$self->current_type->name;
+	push @{ $self->_choice_path }, $self->current_type;
 	$self->_set_current_type($type);
 	$self;
 }
 
-=head2 int
+sub _encode_scalar_component {
+	my ($self, $scalar_value)= @_;
+	my @to_encode;
+	my $type= $self->current_type;
+	my $val= $scalar_value;
+	my $choice_path= $self->_choice_path;
+	if (@$choice_path) {
+		for (reverse @$choice_path) {
+			defined (my $opt= $_->_option_for($type, $val))
+				or croak "No option of ".$_->name." allows value of (".$type->name." : ".$val.")";
+			$val= defined $opt->[1]? $val + $opt->[1]  # merged option, with adder
+				: defined $opt->[2]? (($val << $opt->[2]) | $opt->[3])  # merged option, with shift/flags
+				: do { # non-merged option, as single int.
+					# Needs to be followed by encoding of $subtype, unless a single value was selected
+					# from subtype.
+					unshift @to_encode, [ $type, $val ] if $opt->[4] > 1;
+					$opt->[0];
+				};
+			$type= $_;
+		}
+	}
+	my $max= $type->scalar_component_max;
+	$self->_encode_qty($val, defined $max? _bitlen($max) : undef);
+	for (@to_encode) {
+		$max= $_->[0]->scalar_component_max;
+		$self->_encode_qty($_->[1], defined $max? _bitlen($max) : undef);
+	}
+	return $self;
+}
+
+=head2 encode_int
 
   $enc->int($int_value)->...
 

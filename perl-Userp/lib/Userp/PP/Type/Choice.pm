@@ -48,10 +48,9 @@ has options => ( is => 'ro', required => 1 );
 has _option_table => ( is => 'lazy' );
 sub _build__option_table {
 	my $self= shift;
-	my @todo= $self->options;
-	my $offset;
-	my @table;
-	my @inf_opts;
+	my @todo= @{$self->options};
+	my $offset= 0;
+	my (@table, @inf_opts);
 	while (my $opt= shift @todo) {
 		# Is it inlined?
 		if (defined $opt->{merge_ofs}) {
