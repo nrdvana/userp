@@ -1,5 +1,6 @@
 package Userp::PP::Type::Choice;
 use Moo;
+with 'Userp::PP::Type';
 
 =head1 DESCRIPTION
 
@@ -27,7 +28,7 @@ was defined to have one and it isn't a constant.
 
 This is an arrayref of the Choice's options.  Each element is of the form:
 
-  [ $type, $int_min, $int_count, $value ]
+  { type => $type, merge_ofs => $int_min, merge_count => $int_count, value => $value }
 
 Type refers to some other Type in the current scope.
 
@@ -40,18 +41,44 @@ C<$value> is an optional value of that other type which should be represented by
 During encoding, that value will be encoded as just the selector value of this option.
 During decoding, the reader will return the value as if it had just been decoded.
 
-=head2 min_val
-
-Read-only.  This is always 0, and only serves to provide compatibility with the Integer type.
-
-=head2 max_val
-
-Read-only.  This is the highest value of the selector, or C<undef> if the selector is infinite.
-
 =cut
 
 has options => ( is => 'ro', required => 1 );
-sub min_value { 0 }
-has max_val => ( is => 'lazy' );
+
+has _option_table => ( is => 'lazy' );
+sub _build__option_table {
+	my $self= shift;
+	my @todo= $self->options;
+	my $offset;
+	my @table;
+	my @inf_opts;
+	while (my $opt= shift @todo) {
+		# Is it inlined?
+		if (defined $opt->{merge_ofs}) {
+			# Is it finite?
+			my $merge_count= $opt->{merge_count} || $opt->{type}->scalar_component_max;
+			if ($merge_count) {
+				$offset += $opt->{merge_count};
+				push @table, [ $offset, $opt ];
+				next;
+			}
+			# else infinite waits til the end
+			elsif (!defined $merge_count) {
+				push @inf_opts, $opt;
+				next;
+			}
+		}
+		# else it gets a single point on the selector
+		push @table, [ ++$offset, $opt ];
+	}
+	if (@inf_opts) {
+		push @table, [ undef, \@inf_opts ];
+	}
+	return \@table;
+}
+
+sub has_scalar_component { 1 }
+has scalar_component_max => ( is => 'lazy' );
+sub _build_scalar_component_max { shift->option_table->[-1][0] }
 
 1;

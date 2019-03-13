@@ -1,5 +1,5 @@
 package Userp::PP::Type;
-use Moo;
+use Moo::Role;
 
 =head1 ATTRIBUTES
 
@@ -23,6 +23,15 @@ A number which the address of the encoded value (within the block) must be align
 
 A number which the end-address of the encoded value must be aligned to, by adding padding bytes.
 
+=head2 has_scalar_component
+
+True of the encoding of the type begins with an unsigned integer value.
+
+=head2 scalar_component_max
+
+The maximum value of a type having a leading unsigned integer component, or undef if the
+component has no upper bound.  (also undef if has_scalar_component is false)
+
 =head2 sizeof
 
 Number of octets used to encode this type, or C<undef> if the encoding has a variable length.
@@ -30,11 +39,6 @@ Number of octets used to encode this type, or C<undef> if the encoding has a var
 =head2 bitsizeof
 
 A number of bits used to encode this type, or C<undef> if the encoding has a variable length.
-
-=head2 discrete_val_count
-
-An integer of the number of possible values that this type can represent, or C<undef> if there
-is not a finite number.
 
 =cut
 
@@ -44,17 +48,10 @@ has spec       => ( is => 'ro', required => 1 );
 has align      => ( is => 'rwp' );
 has tail_align => ( is => 'rwp' );
 
-has bitsizeof          => ( is => 'lazy' );
-sub sizeof                { (shift->bitsizeof+7) >> 3 }
-has discrete_val_count => ( is => 'lazy' );
-
-sub _build_bitsizeof {
-	my $n= shift->discrete_val_count;
-	return defined $n? _bitlen($n-1) : undef;
-}
-sub _build_discrete_val_count {
-	undef;
-}
+requires 'bitsizeof';
+requires 'sizeof';
+requires 'has_scalar_component';
+requires 'scalar_component_max';
 
 sub _bitlen {
 	my $x= shift;
@@ -67,10 +64,6 @@ sub _bitlen {
 }
 
 =head1 METHODS
-
-=head2 new
-
-Standard Moo constructor.
 
 =head2 new_from_spec
 
