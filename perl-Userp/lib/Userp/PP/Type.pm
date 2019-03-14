@@ -52,6 +52,10 @@ requires 'bitsizeof';
 requires 'sizeof';
 requires 'has_scalar_component';
 requires 'scalar_component_max';
+sub isa_int { 0 }
+sub isa_ident { 0 }
+sub isa_choice { 0 }
+sub isa_seq { 0 }
 
 sub _bitlen {
 	my $x= shift;
@@ -94,7 +98,7 @@ This only returns true on Union types when the C<$other_type> is a member or sub
 sub has_member_type { 0 }
 
 require Userp::PP::Type::Integer;
-require Userp::PP::Type::Enum;
-require Userp::PP::Type::Union;
+require Userp::PP::Type::Identifier;
+require Userp::PP::Type::Choice;
 require Userp::PP::Type::Sequence;
 1;

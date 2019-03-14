@@ -1,6 +1,6 @@
 package Userp::PP::Type::Sequence;
 use Moo;
-extends 'Userp::PP::Type';
+with 'Userp::PP::Type';
 
 =head1 ATTRIBUTES
 
@@ -64,6 +64,8 @@ sub _build_nullterm  { $_[0]->len eq 'nullterm' }
 has named_elems => ( is => 'ro', required => 1 );
 has elem_spec   => ( is => 'ro', required => 1 );
 has bitpack     => ( is => 'ro' );
+
+sub isa_seq { 1 }
 
 sub _build_bitsizeof {
 	my $self= shift;

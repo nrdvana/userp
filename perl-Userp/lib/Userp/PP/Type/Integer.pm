@@ -1,9 +1,11 @@
 package Userp::PP::Type::Integer;
 use Moo;
-extends 'Userp::PP::Type';
+with 'Userp::PP::Type';
 
 has min_val => ( is => 'ro' );
 has max_val => ( is => 'ro' );
+
+sub isa_int { 1 }
 
 sub _build_discrete_val_count {
 	my $self= shift;

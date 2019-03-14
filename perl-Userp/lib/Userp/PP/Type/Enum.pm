@@ -9,7 +9,7 @@ about type-theory and more about practical utility than it's name might suggest.
 
 The first main use case for an enum is the obvious one: to enumerate a list of possible
 meanings and encode each of them as a small number within the protocol.  In this case, the
-values are "Ident" and the integer is hidden form the user.
+values are "Ident" and the integer is hidden from the user.
 
 The second use case for enums is as a sort of data compression.  The values enumerated might
 be large strings or data structures, and by including them once within the type definition
