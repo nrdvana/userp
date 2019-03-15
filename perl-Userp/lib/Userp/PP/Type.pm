@@ -15,14 +15,6 @@ The numeric index of this type within the scope that defines it.
 
 The text specification for this type.
 
-=head2 align
-
-A number which the address of the encoded value (within the block) must be aligned to.
-
-=head2 tail_align
-
-A number which the end-address of the encoded value must be aligned to, by adding padding bytes.
-
 =head2 has_scalar_component
 
 True of the encoding of the type begins with an unsigned integer value.
@@ -45,8 +37,6 @@ A number of bits used to encode this type, or C<undef> if the encoding has a var
 has name       => ( is => 'ro', required => 1 );
 has id         => ( is => 'ro', required => 1 );
 has spec       => ( is => 'ro', required => 1 );
-has align      => ( is => 'rwp' );
-has tail_align => ( is => 'rwp' );
 
 requires 'bitsizeof';
 requires 'sizeof';
