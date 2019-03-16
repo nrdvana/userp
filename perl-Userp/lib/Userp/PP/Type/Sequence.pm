@@ -58,45 +58,29 @@ True if C<len> is set to C<'nullterm'>.
 =head2 named_elems
 
 Specifies whether or not the elements have unique identifiers.  If true, the sequence behaves
-more like a record or map.  If false the sequence is more like an array.
+more like a record or map, and eny place where an element type is specified an element
+identifier will also be given.  If false the sequence is more like an array.
 
 =head2 elem_spec
 
-Either a single C<< { type => $type, align => $alignment, ident => $identifier } >> for all
-elements, or an arrayref of them for each of the first N elements.  If L</len> is not given or
-is longer than this list, additional elements will have their type and/or identifer encoded in
-the data as needed.
-
-=head3 Alignment
-
-The fields of a sequence can be aligned to "bit" or power-of-two byte boundary.  If "bit"
-alignent is selected, every time an element which can be encoded in fewer than its normal
-multiple-of-8 bits is followed by another such element, the second element will have several of
-its low-end bits moved to the high-end of the byte before it. (the encoder/decoder do not
-pretend to have any concept of "bit order" of the hardware, but simply move least significant
-bits from the second element to the most significant bits of the first element.)
-
-If the alignment is a power of two, then the offset from the start of the block will be rounded
-up to an even multiple of that number before encoding the element.
-
-If you need to add alignment after the final element (say, to allow for SSE reads on the buffer
-or something) just add one more element of type "reserved" and length 0, and give it the desired
-starting alignment.
+A single type (for all array elems), or arrayref of Type (and identifier if named_elems).
+If the array is longer than the list of types, additional elements will have their type (and
+identifier, if named_elems) specified inline.
 
 =cut
 
 has len         => ( is => 'ro', required => 1 );
+has named_elems => ( is => 'ro', required => 1 );
+has elem_spec   => ( is => 'ro', required => 1 );
+
 has len_const   => ( is => 'lazy' );
 has len_type    => ( is => 'lazy' );
 has sparse      => ( is => 'lazy' );
 has nullterm    => ( is => 'lazy' );
-sub _build_len_type  { $_[0]->len && ref($_[0]->len) && ref($_[0]->len)->can('bitsizeof')? $_[0]->len : undef }
+sub _build_len_type  { $_[0]->len && ref($_[0]->len) && ref($_[0]->len)->can('isa_int')? $_[0]->len : undef }
 sub _build_len_const { defined $_[0]->len && !ref $_[0]->len && ($_[0]->len =~ /^[0-9]+$/)? $_[0]->len : undef }
 sub _build_sparse    { $_[0]->len eq 'sparse' }
 sub _build_nullterm  { $_[0]->len eq 'nullterm' }
-
-has named_elems => ( is => 'ro', required => 1 );
-has elem_spec   => ( is => 'ro', required => 1 );
 
 sub isa_seq { 1 }
 
