@@ -1,12 +1,16 @@
 Universal Serialization Protocol
 ================================
 
-Userp is primarily designed to be a "wire protocol" of bytes to transmit Data and Metadata,
-though it is defined in more general terms that could but used in many different ways, such
-as storing protocol fragments in a database or writing protocol fragments that depend on
-pre-negotiated metadata shared between writer and reader.
+Userp is a "wire protocol" for efficiently exchanging data.  It serves a similar purpose to
+ASN.1 or Google Protocol Buffers, though the design is meant to be more usable for ad-hoc
+purposes like JSON or YAML without needing a full type specification pre-processed by a compiler.
 
-Userp contains many optimizations to make it suitable for any of the following:
+The primary design is for streaming data with no pre-defined schema, though the protocol is
+built in such a way that it could be used in many different ways, such as storing protocol
+fragments in a database or exchanging protocol fragments that depend on pre-negotiated metadata
+shared between writer and reader.
+
+Userp contains many design considerations to make it suitable for any of the following:
 
   * Storage of large data packed tightly
   * Storage of data aligned for fast access
@@ -17,32 +21,33 @@ Userp contains many optimizations to make it suitable for any of the following:
   * Types that can translate to and from other popular formats like JSON
 
 In other words, Userp is equally usable for microcontroller bus messages, audio/video container
-formats, or giant trees of structured application data.
+formats, database row storage, or giant trees of structured application data.
 
-Obviously many of these are at odds with eachother, and so tailoring a stream of Userp data to
-one of these purposes requires thoughtful definitions of data types.  Planning of the types
+Obviously many of these are at odds with eachother, and so applying Userp to one of these
+purposes requires thoughtful definition of the data types.  Planning of the types
 should also include consideration for the capabilities of the target; the natural limits of
 the Userp protocol are far higher than the limits of any given userp implementation, so for
 example, it is a bad idea to use 65-bit integers if you expect an application without BigInt
 support to be able to read them.  For embedded applications, if you know that the decoder only
-has 64K of RAM to work with then it obviously can't handle 64K of identifier names from your
-data structures unless they are identical to the ones stored on ROM.
+has 4K of RAM to work with then it obviously can't handle 10K of symbol-table from your
+Record and Enum definitions unless they are identical to the ones stored on ROM.
 
 Structure
 ---------
 
-Userp consists of Data and Metadata.  The Data is consumed directly by the application.
-The Metadata is primarily for the decoder implementation, though it may also carry along
-metadata needed by the application.
+Userp consists of Data and Metadata.  The Metadata sets up the types, symbol table, and other
+decoding details, and then those types are used to decode the Data.  The Metadata may also
+carry application-specific tags attached to data types.
 
-All Data and Metadata are divided into Blocks.  A Block of data is encoded according to the
+All Data and Metadata are divided into Blocks.  A Data Block is encoded according to the
 current state of the protocol that was described by the Metadata.  In a streaming arrangement,
-this means that a decoder must process every block of Metadata, though it can skip over Data
-blocks.  In a database arrangement, it means that the storage of Data blocks must reference
-which Metadata blocks were used.  In more restrictive or custom applications, the encoder and
-decoder might be initialized to a state as if they had each processed a Metadata block and then
-just exchange data blocks exclusively.  (but I recommend against that design when possible
-because it defeats part of the purpose of the protocol)
+this means that a decoder must process every Metadata Block, though it can skip over Data
+Blocks.  In a random-access (i.e. database) arrangement, it means that something must keep
+track of which Metadata Block is acting as the scope for each Data Block.  In more restrictive
+or custom applications, the encoder and decoder might be initialized to a common Metadata state
+(as if they had each processed the same Metadata Block) and then just exchange Data Blocks
+exclusively.  (but I recommend against that design when possible because it defeats the ad-hoc
+aspect of the protocol)
 
 Data Blocks may contain references to other data blocks.  This provides a basic ability for the
 data to form graphs or other non-tree data structures, though not at a very specific level of
@@ -60,7 +65,7 @@ length is known and the payload begins the message.  In a database arrangement t
 type, and length are all known, and only the data payload is present.
 
 Within a block, the data is arranged into a tree of elements.  The Metadata may have declared
-that all blocks are a certain type, in which case the entire data is an encoding of that type,
+that all blocks are a certain type, in which case the entire payload is an encoding of that type,
 else the block begins with a declaration of the type of the data followed by the data.
 
 Type System
@@ -95,10 +100,11 @@ you override them as needed.
 
 ### Standard Attributes
 
-Every type supports the attribute
+Every type supports these attributes:
 
   * align - power-of-2 bits to which the value will be aligned, measured from start of block.
     Zero causes bit-packing.  3 causes byte-alignment.  5 causes 4-byte alignment, and so on.
+  * pad   - number of 0x00 bytes to follow the encoded value (useful for nul-terminated strings)
 
 ### Integer
 
@@ -107,14 +113,15 @@ direction.  A subclass of integer can be limited by the following attributes:
 
   * min - the minimum value allowed
   * max - the maximum value allowed
-  * bits - forces encoding of the type to N-bit 2's complement
-  * names - a dictionary of names/value pairs
+  * bits - forces encoding of the type to N-bit signed 2's complement
+  * names - a dictionary of symbol/value pairs
 
 Any infinite integer type will be encoded as a variable-length quantity, which is specific to
 the Userp protocol.  Any integer type with "bits" defined will get an automatic min and max
 according to the 2's complement limits for that number of bits.  An integer type with min and
 max and without bits will be encoded as an unsigned value of the bits necessary to hold the
-value of (max - min).
+value of (max - min).  Fixed-bit-width values can be encode little-endian or big-endian based
+on a flag in the metadata block.
 
 When names are given, the integer can be encoded with the API encode_int *or* encode_symbol.
 Specifying a symbol that does not exist in names is an error.
@@ -131,7 +138,11 @@ as string literals.
 
 The Symbol type can be subclassed by giving it a list of values.  Any time this Symbol type is
 selected, only those values will be allowed.  The values are of course encoded as integers, but
-the integer value is never seen by the application.  This is a "cleaner" way to implement Enums.
+the integer value is never seen by the application.  This is a "cleaner" way to implement Enums,
+though you might still choose an Integer with 'names' in order to be compatible with low-level
+code.
+
+Symbols can only be encoded/decoded with encode_symbol/decode_symbol.
 
 ### Choice
 
@@ -150,9 +161,10 @@ do not need to be declared in the Metadata block, and can be given ad-hoc for an
 an array of some number of dimensions)
 
   * elem_type - the type for each element of the array.  This may be a Choice type.
-  * dim - an array of dimension values, which are integers.  Dimensions of '0' mean that the
+  * dim - an array of dimension values, which are integers.  Dimensions of 'Null' mean that the
      dimension value will be given within the data right before the values of the sequence.
   * dim_type - the Integer data type to be used when encoding dimensions in the data.
+     (default is to use a variable-length integer)
      This allows you to use somehting like Int16s and then have that match a C struct like
 	 ```struct { uint16_t len; char bytes[]; }```
 
