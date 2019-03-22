@@ -184,7 +184,30 @@ are enabled if either adhoc_name_type or adhoc_value_type is set.
   * adhoc_name_type - optional type of Symbol whose names can be used for ad-hoc fields
   * adhoc_value_type - optional type of value for the ad-hoc fields
 
-Data Notation
+Data Language
 -------------
 
+Userp data can be described using a lisp-like text notation.  This notation was chosen for ease
+of parsing rather than to be human-friendly.  It is used primarily for defining metadata, to
+avoid the need to make a bunch of API calls in initialization code.  It can also be encoded to
+Userp during the compilation of an application to make statically-defined Metadata Blocks
+available as constant data.
 
+The data language corresponds to the function calls of the Userp library.  Tokens are parsed
+and converted to the following API calls:
+
+Regex                        | API Call
+-----------------------------|----------------------------------------------------------------
+([-+]?[0-9]+)                | encode_int($1)
+#([-+]?[0-9A-F]+)            | encode_int(parse_hex($1))
+:?$CLEAN_SYMBOL(=?)          | $2? field($1) : encode_symbol($1)
+:"([^\0-\x20"]+)"(=?)        | $2? field(parse_ident($1)) : encode_symbol(parse_ident($1))
+!$CLEAN_SYMBOL($?)           | $2? encode_type($1) : select_type($1)
+!"([^\0-\x20"]+)"($?)        | $2? encode_type(parse_string($1)) : select_type(parse_string($1))
+\(                           | begin
+\)                           | end
+
+The CLEAN_SYMBOL regex fragment above is the set of ASCII "word" characters, period, minus,
+slash, colon, and ANY upper non-ascii codepoint which begins with a letter or high unicode.
+
+    CLEAN_SYMBOL = /[A-Za-z\x80-\x{3FFFF}][-.:/0-9A-Za-z\x80-\x{3FFFF}]+/
