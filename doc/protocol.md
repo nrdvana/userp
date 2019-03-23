@@ -193,21 +193,57 @@ avoid the need to make a bunch of API calls in initialization code.  It can also
 Userp during the compilation of an application to make statically-defined Metadata Blocks
 available as constant data.
 
+### Specificaton
+
 The data language corresponds to the function calls of the Userp library.  Tokens are parsed
 and converted to the following API calls:
 
-Regex                        | API Call
------------------------------|----------------------------------------------------------------
-([-+]?[0-9]+)                | encode_int($1)
-#([-+]?[0-9A-F]+)            | encode_int(parse_hex($1))
-:?$CLEAN_SYMBOL(=?)          | $2? field($1) : encode_symbol($1)
-:"([^\0-\x20"]+)"(=?)        | $2? field(parse_ident($1)) : encode_symbol(parse_ident($1))
-!$CLEAN_SYMBOL($?)           | $2? encode_type($1) : select_type($1)
-!"([^\0-\x20"]+)"($?)        | $2? encode_type(parse_string($1)) : select_type(parse_string($1))
-\(                           | begin
-\)                           | end
+Regex                         | API Call
+------------------------------|----------------------------------------------------------------
+([-+]?[0-9]+)                 | encode_int($1)
+#([-+]?[0-9A-F]+)             | encode_int(parse_hex($1))
+:?$CLEAN_SYMBOL(=?)           | $2? field($1) : encode_symbol($1)
+:"([^\0-\x20"\(\)]+)"(=?)     | $2? field(parse_ident($1)) : encode_symbol(parse_ident($1))
+!$CLEAN_SYMBOL($?)(\*([0-9]+) | $2? encode_type($1) : select_type($1)
+!"([^\0-\x20"\(\)]+)"($?)     | $2? encode_type(parse_string($1)) : select_type(parse_string($1))
+\(                            | begin
+\)                            | end
+'([^\0-\20'\(\)]+)'           | begin(); for (chars of parse_string($1)) encode_int(char[i]); end()
 
 The CLEAN_SYMBOL regex fragment above is the set of ASCII "word" characters, period, minus,
 slash, colon, and ANY upper non-ascii codepoint which begins with a letter or high unicode.
 
-    CLEAN_SYMBOL = /[A-Za-z\x80-\x{3FFFF}][-.:/0-9A-Za-z\x80-\x{3FFFF}]+/
+    CLEAN_SYMBOL = /[_A-Za-z\x80-\x{3FFFF}][-_.:/0-9A-Za-z\x80-\x{3FFFF}]+/
+
+### Examples
+
+Description         | Notation                   | API Equivalent
+--------------------|----------------------------|-------------------------------
+Integer             | 1                          | .int(1)
+Negative            | -2                         | .int(-2)
+Hex                 | #7F                        | .int(0x7F)
+Negative hex        | #-7F                       | .int(-0x7F)
+Symbol              | abc                        | .sym("abc")
+Symbol              | a.b                        | .sym("a.b")
+Symbol              | com.example.Foo            | .sym("com.example.Foo")
+Awkward symbol      | :"abc%20%22xyz%28%29"      | .sym("abc \"xyz()")
+Typed integer       | !Int32+55                  | .sel(Int32).int(55)
+Typed hex           | !Int32#55                  | .sel(Int32).int(0x55)
+Typed symbol        | !Errno:FileNotFound        | .sel(Errno).sym("FileNotFound")
+Array of Integer    | !Int32*( 1 2 3 )           | .sel(arrayType(Int32,null)).begin(3).int(1).int(2).int(3).end()
+Fixed-len Array     | !Int32*3( 1 2 3 )          | .sel(arrayType(Int32,3)).begin().int(1).int(2).int(3).end()
+Array of Any        | ( !Int32-22 !Symbol:abc )  | .sel(Array).begin(2).sel(getType("Int32")).int(-22).sel(getType("Symbol")).sym("abc").end()
+Record              | !Rect( 1 1 10 10 )         | .sel(Rect).begin().int(1).int(1).int(10).int(10).end()
+Record by name      | !Rect( x=1 y=1 w=10 h=10 ) | .sel(Rect).begin().field("x").int(1).field("y").int(1)...
+Subtype-of-type     | !Employee!EmployeeId+45    | .sel(Employee).sel(EmployeeId).int(45)
+
+Special support for derived types:
+
+Derived Type | Notation                   | API Equivalent
+-------------|----------------------------|--------------------------------
+String       | !Char*'ABC'                | .sel(arrayType(Char,null)).str("ABC")
+(equivalent) | !Char*(65 66 67)           | .sel(arrayType(Char,null)).begin(3).int(65).int(66).int(67).end()
+IEEE float   | !Float32+2.5e17            | .sel(Float32).float32(2.5e17);
+             | !Float64+2.5e17            | .sel(Float64).float64(2.5e17);
+(equivalent) | !Float32( sign=0 exp=17 sig=#200000 ) | .sel(Float32).begin().int(0).int(17).int(0x200000).end()
+
