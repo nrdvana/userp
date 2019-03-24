@@ -17,16 +17,16 @@ type.
 
 To specify an integer type as TypeSpec text, use either min/max notation:
 
-  (I min -8000 max #7FFF)
+  (min=#-8000 max=#7FFF)
 
 or 2's complement bits notation:
 
-  (I bits 32)
+  (bits=32)
 
 To specify enumeration names for integer values, specify a list where the first element is the
 starting numeric value, and then a list of identifiers which will receive increasing values.
 
-  (I bits 32 names ((0 Null Primary Secondary)(-1 Other)))
+  (bits=32 names=(Null Primary Secondary (Other -1)))
 
 =head1 ATTRIBUTES
 
@@ -46,7 +46,10 @@ cannot be inlined into a Choice.
 
 =head2 names
 
-A hashref of C<< { int => Identifier } >>, optional.
+An arrayref of Symbol, or [Symbol, Value].  If value is omitted it is assumed to be the next
+higher value after the previous, with the default starting from zero.  There may be more than
+name for a value.  This may be useful for encoding, but the decoder will only provide the first
+matching name.
 
 =cut
 

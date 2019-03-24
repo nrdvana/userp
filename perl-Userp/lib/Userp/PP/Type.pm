@@ -25,6 +25,12 @@ component, and when the previous data value was also bit-aligned.  It causes the
 high-bits of the first bit-aligned value to be carried over as the low-bits of the following
 bit-aligned value.
 
+=head2 metadata
+
+Every type can have generic key/value metadata associated with it.  The metadata has no effect
+on the encoding of the data, but applications might use it to change how they interpret the
+data.
+
 =head2 has_scalar_component
 
 True of the encoding of the type begins with an unsigned integer value.
@@ -46,7 +52,9 @@ A number of bits used to encode this type, or C<undef> if the encoding has a var
 
 has name       => ( is => 'ro', required => 1 );
 has id         => ( is => 'ro', required => 1 );
-has spec       => ( is => 'ro', required => 1 );
+has spec       => ( is => 'lazy' );
+has align      => ( is => 'ro' );
+has metadata   => ( is => 'ro' );
 
 requires 'bitsizeof';
 requires 'sizeof';
@@ -56,6 +64,7 @@ sub isa_int { 0 }
 sub isa_ident { 0 }
 sub isa_choice { 0 }
 sub isa_seq { 0 }
+sub isa_rec { 0 }
 
 sub _bitlen {
 	my $x= shift;
@@ -71,15 +80,13 @@ sub _bitlen {
 
 =head2 new_from_spec
 
-This parses the TypeSpec notation to construct anew type.
+This parses Userp Data Notation that describes a type.  A specification for a type consists of
+a type name (a Symbol) Type being extended (a Type) Attributes to override (a Record) and
+optional Metadata (a Record).
 
-A quick review of TypeSpec:
+Example:
 
-  MyIntType   I(#0,#FFFFFFFF)
-  MyEnumType  E(ValueType,EncodeLiteral,(Ident Val, Ident2 Val2, ...))
-  MyUnionType U(Merge,(MemberType1,MemberType2,...))
-  MySeqType   S(Len,NamedElems,BitPack,ElemSpec)
-  MyAnyType   A
+  MyRecord R (align=8 fields=((x !Float32) (y !Float32) (z !Float32))) ()
 
 =cut
 

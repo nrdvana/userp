@@ -217,25 +217,25 @@ slash, colon, and ANY upper non-ascii codepoint which begins with a letter or hi
 
 ### Examples
 
-Description         | Notation                   | API Equivalent
---------------------|----------------------------|-------------------------------
-Integer             | 1                          | .int(1)
-Negative            | -2                         | .int(-2)
-Hex                 | #7F                        | .int(0x7F)
-Negative hex        | #-7F                       | .int(-0x7F)
-Symbol              | abc                        | .sym("abc")
-Symbol              | a.b                        | .sym("a.b")
-Symbol              | com.example.Foo            | .sym("com.example.Foo")
-Awkward symbol      | :"abc%20%22xyz%28%29"      | .sym("abc \"xyz()")
-Typed integer       | !Int32+55                  | .sel(Int32).int(55)
-Typed hex           | !Int32#55                  | .sel(Int32).int(0x55)
-Typed symbol        | !Errno:FileNotFound        | .sel(Errno).sym("FileNotFound")
-Array of Integer    | !Int32*( 1 2 3 )           | .sel(arrayType(Int32,null)).begin(3).int(1).int(2).int(3).end()
-Fixed-len Array     | !Int32*3( 1 2 3 )          | .sel(arrayType(Int32,3)).begin().int(1).int(2).int(3).end()
-Array of Any        | ( !Int32-22 !Symbol:abc )  | .sel(Array).begin(2).sel(getType("Int32")).int(-22).sel(getType("Symbol")).sym("abc").end()
-Record              | !Rect( 1 1 10 10 )         | .sel(Rect).begin().int(1).int(1).int(10).int(10).end()
-Record by name      | !Rect( x=1 y=1 w=10 h=10 ) | .sel(Rect).begin().field("x").int(1).field("y").int(1)...
-Subtype-of-type     | !Employee!EmployeeId+45    | .sel(Employee).sel(EmployeeId).int(45)
+Description      | Notation                 | API Equivalent
+-----------------|--------------------------|-------------------------------
+Integer          | 1                        | .int(1)
+Negative         | -2                       | .int(-2)
+Hex              | #7F                      | .int(0x7F)
+Negative hex     | #-7F                     | .int(-0x7F)
+Symbol           | abc                      | .sym("abc")
+Symbol           | a.b                      | .sym("a.b")
+Symbol           | com.example.Foo          | .sym("com.example.Foo")
+Awkward symbol   | :"abc%20%22xyz%28%29"    | .sym("abc \"xyz()")
+Typed integer    | !Int32+55                | .sel(Int32).int(55)
+Typed hex        | !Int32#55                | .sel(Int32).int(0x55)
+Typed symbol     | !Errno:FileNotFound      | .sel(Errno).sym("FileNotFound")
+Array of Integer | !Int32*(1 2 3)           | .sel(arrayType(Int32,null)).begin(3).int(1).int(2).int(3).end()
+Fixed-len Array  | !Int32*3(1 2 3)          | .sel(arrayType(Int32,3)).begin().int(1).int(2).int(3).end()
+Array of Any     | (!Int32-22 !Symbol:abc)  | .sel(Array).begin(2).sel(getType("Int32")).int(-22).sel(getType("Symbol")).sym("abc").end()
+Record           | !Rect(1 1 10 10)         | .sel(Rect).begin().int(1).int(1).int(10).int(10).end()
+Record by name   | !Rect(x=1 y=1 w=10 h=10) | .sel(Rect).begin().field("x").int(1).field("y").int(1)...
+Subtype-of-type  | !Employee!EmployeeId+45  | .sel(Employee).sel(EmployeeId).int(45)
 
 Special support for derived types:
 

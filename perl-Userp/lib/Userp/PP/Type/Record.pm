@@ -21,7 +21,7 @@ a dictionary within the applicaion)
 
 =head2 fields
 
-An arrayref of C<< [Identifier, Type] >>.  Identifier may be C<undef> in which case the field
+An arrayref of C<< [Symbol, Type] >>.  Identifier may be C<undef> in which case the field
 is understood to be "filler" or "reserved".  Values will be automatically encoded as zero, and
 skipped over during decoding.
 
@@ -32,15 +32,15 @@ The order of this list matters for the encoding of the first N C<static_fields>.
 A count of how many elements of the C<fields> array will be written into every record.
 Any field above this number will be available as a dynamic field.
 
-=head2 other_fields
+=head2 other_fieldtype
 
 The type to use for other ad-hoc fields.  Set to C<undef> to disallow ad-hoc fields.
 
 =cut
 
-has fields        => ( is => 'ro', required => 1 );
-has static_fields => ( is => 'ro' );
-has other_fields  => ( is => 'ro' );
+has fields          => ( is => 'ro', required => 1 );
+has static_fields   => ( is => 'ro' );
+has other_fieldtype => ( is => 'ro' );
 
 sub isa_rec { 1 }
 
