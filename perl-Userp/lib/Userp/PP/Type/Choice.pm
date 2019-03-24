@@ -11,35 +11,48 @@ value from another type, or indicates a type whose value will follow the selecto
 The options of a choice can be:
 
   * A single value (of any type), occupying a single value of the selector.
-  * A finite range of values from the integer portion of another type, occupying a range of
-     values in the selector.
+  * A finite range of values from the initial integer portion of another type, occupying a
+     range of values in the selector.
   * One or more half-infinite ranges from the integer portion of another type, which occupy
      interleaved positions in the selector and cause it to also have a half-infinite domain.
   * An entire type, occupying a single value in the selector and followed by an encoding of
      a value of that type.
 
 The "integer portion" of an Integer is obviously the integer.  The integer portion of a Choice
-is the selector.  The integer portion of a sequence is the element count, assuming the sequence
-was defined to have one and it isn't a constant.
+is the selector.  The integer portion of an array is the element count, unless it has a
+constant length in which case it doesn't have one.  The integer portion of a record is either
+the integer portion of the first static element, or the count of dynamic elements if there are
+no static elements.
+
+=head1 SPECIFICATION
+
+The options of a Choice are given as a list.  Each element is either a type, an option record
+(type name "O") which can contain range-merge details, or a typed value.
+
+  (options=(!Type1 !Type2 !O(!Type3 0 20) !Type4:Value4 !Type5))
 
 =head1 ATTRIBUTES
 
 =head2 options
 
-This is an arrayref of the Choice's options.  Each element is of the form:
+This is an arrayref of the Choice's options.  Each element is a record of the form:
 
   { type => $type, merge_ofs => $int_min, merge_count => $int_count, value => $value }
 
-Type refers to some other Type in the current scope.
+C<$type> refers to some other Type in the current scope.
 
-C<int_min> is optional, and refers to the starting offset for the other type's integer encoding.
-C<int_count> is likewise the number of values taken from the other type's integer encoding.
-If neither are given, the option occupies a single value of the selector.  If C<int_min>
+C<$int_min> is optional, and refers to the starting offset for the other type's integer encoding.
+C<$int_count> is likewise the number of values taken from the other type's integer encoding.
+If neither are given, the option occupies a single value of the selector.  If C<$int_min>
 is given but count is not, the entire domain of that type will be included in the selector.
 
 C<$value> is an optional value of that other type which should be represented by this option.
 During encoding, that value will be encoded as just the selector value of this option.
 During decoding, the reader will return the value as if it had just been decoded.
+
+=head2 align
+
+See L<Userp::PP::Type>
 
 =cut
 

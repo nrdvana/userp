@@ -21,20 +21,31 @@ a dictionary within the applicaion)
 
 =head2 fields
 
-An arrayref of C<< [Symbol, Type] >>.  Identifier may be C<undef> in which case the field
-is understood to be "filler" or "reserved".  Values will be automatically encoded as zero, and
+An arrayref of C<< [Symbol, Type] >>.  Symbol may be C<undef> in which case the field is
+understood to be "filler" or "reserved".  Values will be automatically encoded as zero, and
 skipped over during decoding.
 
-The order of this list matters for the encoding of the first N C<static_fields>.
+The order of this list matters for the encoding of the first N C<static_count>.
 
-=head2 static_fields
+=head2 static_count
 
 A count of how many elements of the C<fields> array will be written into every record.
-Any field above this number will be available as a dynamic field.
+Any field beyond this will be available as a dynamic field.
 
-=head2 other_fieldtype
+=head2 adhoc_name_type
 
-The type to use for other ad-hoc fields.  Set to C<undef> to disallow ad-hoc fields.
+The type to use for the names of ad-hoc fields.  Setting this to an enumerated Symbol type can
+limit the overall number of fields without needing to declare the complete list as part of the
+record.  Ad-hoc fields are not enabled unless this attribute or C<adhoc_value_type> are set.
+
+=head2 adhoc_value_type
+
+The type to use for values of ad-hoc fields.
+Ad-hoc fields are not enabled unless this attribute or C<adhoc_name_type> are set.
+
+=head2 align
+
+See L<Userp::PP::Type>
 
 =cut
 

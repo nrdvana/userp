@@ -30,6 +30,10 @@ An ArrayRef which defines the dimensions of the array.  If this attribute itself
 then the array has one dimension which will be encoded along with the data.  If the arrayref is
 defined, each undefined element represents a dimension that will be encoded along with the data.
 
+=head2 align
+
+See L<Userp::PP::Type>
+
 =cut
 
 has elem_type => ( is => 'ro', required => 1 );
