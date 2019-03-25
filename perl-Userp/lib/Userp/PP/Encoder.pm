@@ -75,6 +75,7 @@ sub-types with method L</type>.
 
 has scope        => ( is => 'ro', required => 1 );
 has bigendian    => ( is => 'ro', required => 1 );
+has buffer       => ( is => 'rw' );
 
 has current_type => ( is => 'rwp' );
 has _choice_path => ( is => 'rw', default => sub { [] } );
@@ -96,10 +97,7 @@ sub sel {
 	my ($self, $type)= @_;
 	$self->current_type->isa_choice
 		or croak "Cannot select sub-type of ".$self->current_type->name;
-	$self->current_type->options_per_type->{$type}
-		or croak "Type ".$type->name." is not a valid option for ".$self->current_type->name;
-	push @{ $self->_choice_path }, $self->current_type;
-	$self->_set_current_type($type);
+	$self->_encode_option_for_type($type)
 	$self;
 }
 
@@ -116,18 +114,34 @@ stream.  Returns the encoder for convenient chaining.
 sub int {
 	my ($self, $val)= @_;
 	my $type= $self->current_type;
-	# TODO: if Type is a Choice, search for a relevant integer type
+	# If $type is a choice, search for an option compatible with this integer value
+	if ($type->isa_choice || $self->_choice_options) {
+		# If returns true, then the option contained the value and is fully encoded.
+		return $self if $self->_encode_option_for_int($val);
+		# Else need to encode an integer using the option's type
+		$type= $self->current_type;
+	}
 	# Type should be integer, here.
 	$type->isa_int
 		or croak "Type ".$type->name." cannot encode integers";
 	# validate min/max
 	my $min= $int_type->min;
 	my $max= $int_type->max;
-	defined $min || defined $max or croak "Invalid Integer type";
 	defined $min and $val < $min and croak "Integer out of bounds for type ".$type->name.": $val < $min";
 	defined $max and $val > $max and croak "Integer out of bounds for type ".$type->name.": $val > $max";
-
-	$self->_encode_initial_scalar(defined $min? $val - $min : $max - $val);
+	# If defined as "bits" (2's complement) then encode as a fixed number of bits, signed if min is negative.
+	if ($int_type->bits) {
+		$self->_encode_qty($val, $int_type->bits, $min < 0);
+	}
+	# Else encode as a variable unsigned displacement from either $min or $max, or if neither of those
+	# are given, encode as the unsigned quantity shifted left to use bit 0 as sign bit.
+	else {
+		$self->_encode_qty(
+			defined $min? $val - $min
+			: defined $max? $max - $val
+			: ($val < 0)? -($val<<1)-1 : ($val<<1)
+		);
+	}
 	$self;
 }
 
@@ -135,13 +149,16 @@ sub int {
 
   $enc->sym($symbol)->... # Symbol object or plain string
 
-
+Encode a symbol.  The current type must be Any, a Symbol type, an Integer type with named
+values, or a Choice that includes one or more of those.
 
 =cut
 
 sub sym {
 	my ($self, $val)= @_;
 	my $type= $self->current_type;
+	# If $type is a choice, search for an option containing this symbol
+	
 	my $ident= $self->scope->find_ident($val);
 	if ($type == $self->scope->type_Ident) {
 		if (@{ $self->_choice_path }) {
@@ -211,6 +228,43 @@ sub end {
 sub str {
 	my ($self, $str)= @_;
 	$self;
+}
+
+sub _encode_qty {
+	my ($self, $value, $bits, $signed)= @_;
+	if (defined $bits) {
+		# TODO: honor bit-packing setting
+		$self->{buffer} .= pack(
+			$bits <= 8? ($signed? 'c':'C')
+			($bits <= 16? ($signed? 's':'S')
+			 $bits <= 32? ($signed? 'l':'L')
+			 $bits <= 64? ($signed? 'q':'Q')
+			).($self->bigendian? '>':'<'),
+			$value
+		);
+	}
+	else {
+		$value >= 0 or croak "BUG: _encode_qty($value)";
+		$self->{buffer} .= $value < 0x80? pack('C',$value<<1)
+			: $value < 0x4000? pack('S<',($value<<2)+1)
+			: $value < 0x20000000? pack('L<',($value<<3)+3)
+			: $value < 0x1FFFFFFF_FFFFFFFF? pack('Q<',($value<<3)+7)
+			: do {
+				my $bytes= ref($value)? reverse($value->as_bytes) : pack('Q<',$value);
+				$self->{buffer} .= "\xFF";
+				$self->_encode_qty(length $bytes);
+				$bytes
+			};
+	}
+}
+
+sub _encode_option_for_type {
+}
+sub _encode_option_for_int {
+}
+sub _encode_option_for_sym {
+}
+sub _encode_option_for_typeref {
 }
 
 sub _encode_initial_scalar {
