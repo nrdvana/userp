@@ -61,32 +61,69 @@ has options => ( is => 'ro', required => 1 );
 has _option_table => ( is => 'lazy' );
 sub _build__option_table {
 	my $self= shift;
-	my @todo= @{$self->options};
 	my $offset= 0;
 	my (@table, @inf_opts);
-	while (my $opt= shift @todo) {
+	for (@{ $self->{options} }) {
 		# Is it inlined?
 		if (defined $opt->{merge_ofs}) {
 			# Is it finite?
-			my $merge_count= $opt->{merge_count} || $opt->{type}->scalar_component_max;
-			if ($merge_count) {
-				$offset += $opt->{merge_count};
-				push @table, [ $offset, $opt ];
-				next;
+			if ($opt->{merge_count} || defined $opt->{type}->scalar_component_max) {
+				my $merge_count= $opt->{merge_count} || $opt->{type}->scalar_component_max+1;
+				push @table, { %$opt, sel_ofs => $offset, sel_max => $offset+$merge_count-1 };
+				$offset += $merge_count;
 			}
 			# else infinite waits til the end
-			elsif (!defined $merge_count) {
+			else {
 				push @inf_opts, $opt;
-				next;
 			}
 		}
-		# else it gets a single point on the selector
-		push @table, [ ++$offset, $opt ];
+		else {
+			# else it gets a single point on the selector
+			push @table, { %$opt, sel_ofs => $offset, sel_max => $offset };
+			++$offset;
+		}
 	}
+	# Infinite options come last, selected by low bits
 	if (@inf_opts) {
-		push @table, [ undef, \@inf_opts ];
+		my $sel_bits= _bitlen($#inf_opts);
+		my $i= 0;
+		push @table, map +{ %$_, sel_ofs => $offset, sel_shift => $sel_bits, sel_flag => $i++ }, @inf_opts;
 	}
 	return \@table;
+}
+
+has _option_tree => ( is => 'lazy' );
+sub _build__option_tree {
+	my $self= shift;
+	my $root= {};
+	for (@{ $self->_option_table }) {
+		my $type= $_->{type};
+		# If user asks for $type, this is one of the options.
+		my $by_type= ($root->{$type->id} ||= {});
+		my $generic= $type->isa_int? 'int'
+			: $type->isa_sym? 'sym'
+			: $type->isa_typeref? 'typ'
+			: $type->isa_array || $type->isa_record? 'seq'
+			: undef;
+		my $by_generic= $generic? ($root->{$generic} ||= {}) : undef;
+		# If this is a value, add to list of values
+		if (defined $_->{value}) {
+			$by_type->{values}{$_->{value}} ||= $_;
+			$by_generic->{values}{$_->{value}} ||= $_ if defined $by_generic;
+		}
+		# If it is a sub-range of the type, add it to ranges
+		elsif (defined $_->{merge_count}) {
+			push @{$by_type->{ranges}}, $_;
+			push @{$by_generic->{ranges}}, $_ if defined $by_generic;
+		}
+		# If it is the first reference to the whole type, store as '.'
+		else {
+			$by_type->{'.'} ||= $_;
+			$by_generic->{'.'} ||= $_ if defined $by_generic;
+		}
+	}
+	# TODO: for each option which is a Choice type, merge all those options into this node.
+	$root;
 }
 
 sub isa_choice { 1 }
