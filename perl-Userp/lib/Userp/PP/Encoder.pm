@@ -78,7 +78,7 @@ has bigendian    => ( is => 'ro', required => 1 );
 has buffer       => ( is => 'rw' );
 
 has current_type => ( is => 'rwp' );
-has _choice_path => ( is => 'rw', default => sub { [] } );
+has _sel_paths   => ( is => 'rw', default => sub { [] } );
 
 =head1 METHODS
 
@@ -94,10 +94,23 @@ Returns the encoder for convenient chaining.
 =cut
 
 sub sel {
-	my ($self, $type)= @_;
-	$self->current_type->isa_choice
-		or croak "Cannot select sub-type of ".$self->current_type->name;
-	$self->_encode_option_for_type($type)
+	my ($self, $subtype)= @_;
+	my $type= $self->current_type;
+	$type->isa_choice
+		or croak "Cannot select sub-type of ".$type->name;
+	# Later, can dig through sub-options for a match, but to start, only allow immediate child options.
+	my $opt_node= $type->_option_tree->{$subtype->id}
+		or croak "Type ".$subtype->name." is not a direct sub-option of ".$type->name;
+	if ($opt_node->{values} || $opt_node->{ranges} || ($opt_node->{'.'} && defined $opt_node->{'.'}{mege_ofs})) {
+		# Need to delay the encoding until the value is known
+		push @{ $self->_sel_paths }, { type => $type, opt_node => $opt_node };
+	}
+	elsif ($opt_node->{'.'}) {
+		# selection of whole type; can encode selector and forget past details
+		$self->_encode_selector($opt_node->{'.'}{sel_ofs});
+	}
+	else { croak "BUG" }
+	$self->_set_current_type($subtype);
 	$self;
 }
 

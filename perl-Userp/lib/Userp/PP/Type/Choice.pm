@@ -131,6 +131,6 @@ sub isa_choice { 1 }
 sub has_scalar_component { 1 }
 
 has scalar_component_max => ( is => 'lazy' );
-sub _build_scalar_component_max { shift->option_table->[-1][0] }
+sub _build_scalar_component_max { shift->option_table->[-1]{sel_max} }
 
 1;
