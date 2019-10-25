@@ -1,9 +1,10 @@
 use Test2::V0;
 use Data::Printer;
 use Userp::PP::Decoder;
+use Userp::PP::Encoder;
 
 my @tests= (
-	# bits, signed, bigendian, value, encoding
+	# bits, bigendian, value, encoding
 	[   1, 0,          0,                     "\0" ],
 	[   2, 0,          0,                     "\0" ],
 	[   7, 0,          0,                     "\0" ],
@@ -27,12 +28,12 @@ my @tests= (
 for (@tests) {
 	my ($bits, $be, $value, $encoding)= @$_;
 	my $decoder= Userp::PP::Decoder->new(bigendian => $be, scope => undef, buffer => \$encoding);
-	my $x;
-	if ($bits > 0) {
-		is( ''.$decoder->decode_qty($bits), $value, "bits=$bits be=$be value=$value" );
-	} else {
-		is( ''.$decoder->decode_vqty, $value, "var-int be=$be value=$value" );
-	}
+	my $decoded= $bits? $decoder->decode_qty($bits) : $decoder->decode_vqty;
+	is( $decoded, $value, "decode bits=$bits be=$be value=$value" );
+	
+	my $encoder= Userp::PP::Encoder->new(bigendian => $be, scope => undef, buffer => \my $buf);
+	$bits? $encoder->_encode_qty($bits, $value) : $encoder->_encode_vqty($value);
+	is( $buf, $encoding, "encode bits=$bits be=$be value=$value");
 }
 
 done_testing;
