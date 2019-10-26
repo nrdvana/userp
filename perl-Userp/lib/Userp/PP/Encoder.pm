@@ -2,6 +2,7 @@ package Userp::PP::Encoder;
 use Moo;
 use Carp;
 use Math::BigInt;
+use Userp::Bits;
 
 =head1 DESCRIPTION
 
@@ -79,7 +80,7 @@ sub-types with method L</type>.
 has scope        => ( is => 'ro', required => 1 );
 has bigendian    => ( is => 'ro', required => 1 );
 
-has _cur_align   => ( is => 'rw', default => 0 );
+has _cur_align   => ( is => 'rw', default => 3 );
 has _bitpos      => ( is => 'rw' );
 has buffer       => ( is => 'rw' );
 
@@ -262,55 +263,23 @@ sub str {
 	$self;
 }
 
-sub _encode_vqty {
-	my ($self, $value)= @_;
-	$value >= 0 or croak "BUG: value must be positive in encode_vqty($value)";
-	# always align to byte or higher
-	$self->{_bitpos}= 0;
-	if ($self->{_cur_align} > 3) {
-		my $n_bytes= 2**($self->{_cur_align} - 3);
-		my $remainder= length(${$self->{buffer}}) & ($n_bytes-1);
-		${$self->{buffer}} .= "\0"x($n_bytes - $remainder) if $remainder;
-	}
-	${$self->{buffer}} .= $value < 0x80? pack('C',$value<<1)
-		: $value < 0x4000? pack('S<',($value<<2)+1)
-		: $value < 0x20000000? pack('L<',($value<<3)+3)
-		: $value < 0x1FFFFFFF_FFFFFFFF? pack('Q<',($value<<3)+7)
-		: do {
-			my $bytes= ref($value)? reverse($value->as_bytes) : pack('Q<',$value);
-			my $bcnt= length $bytes;
-			$bcnt >= 8 or croak "BUG: bigint wasn't 8 bytes long";
-			$bcnt -= 8;
-			$bcnt < 0xFFFF or croak "Refusing to encode ludicrously large integer value";
-			($bcnt < 0xFF? "\xFF".pack('C', $bcnt) : "\xFF\xFF".pack('S<', $bcnt)).$bytes
-		};
-}
-
 sub _encode_qty {
 	my ($self, $bits, $value)= @_;
 	$bits > 0 or croak "BUG: bits must be positive in encode_qty($bits, $value)";
 	$value >= 0 or croak "BUG: value must be positive in encode_qty($bits, $value)";
-	# align > 3 means add padding bytes
-	if ($self->{_cur_align} > 3) {
-		my $n_bytes= 2**($self->{_cur_align} - 3);
-		my $remainder= length(${$self->{buffer}}) & ($n_bytes-1);
-		${$self->{buffer}} .= "\0"x($n_bytes - $remainder) if $remainder;
-	}
-	# align < 3 means bit-pack
-	elsif ($self->{_cur_align} < 3 && $self->{_bitpos}) {
-		$self->{_bitpos}= ($self->{_bitpos} + 1) & 6 if $self->{_cur_align} == 1;
-		$self->{_bitpos}= ($self->{_bitpos} + 3) & 4 if $self->{_cur_align} == 2;
-		$bits += $self->{_bitpos};
-		$value= Math::BigInt->new($value) if $bits > 64 && !ref $value;
-		$value <<= $self->{_bitpos};
-		$value |= ord substr(${$self->{buffer}}, -1);
-		substr(${$self->{buffer}}, -1)= ''
-	}
-	my $encoded= ref $value? reverse($value->as_bytes) : pack('Q<', $value);
-	my $n= ($bits+7) >> 3;
-	$encoded .= "\0"x( $n - length($encoded) ) if length($encoded) < $n;
-	${$self->{buffer}} .= substr($encoded, 0, $n);
-	$self->{_bitpos}= $bits & 7;
+	Userp::Bits::pad_buffer_to_alignment(${$self->{buffer}}, $self->{_bitpos}, $self->{_cur_align});
+	$self->bigendian
+		? Userp::Bits::concat_bits_be(${$self->{buffer}}, $self->{_bitpos}, $bits, $value)
+		: Userp::Bits::concat_bits_le(${$self->{buffer}}, $self->{_bitpos}, $bits, $value);
+}
+
+sub _encode_vqty {
+	my ($self, $value)= @_;
+	$value >= 0 or croak "BUG: value must be positive in encode_vqty($value)";
+	Userp::Bits::pad_buffer_to_alignment(${$self->{buffer}}, $self->{_bitpos}, $self->{_cur_align} < 3? 3 : $self->{_cur_align});
+	$self->bigendian
+		? Userp::Bits::concat_vqty_be(${$self->{buffer}}, $self->{_bitpos}, $value)
+		: Userp::Bits::concat_vqty_le(${$self->{buffer}}, $self->{_bitpos}, $value);
 }
 
 #sub _encode_option_for_type {
