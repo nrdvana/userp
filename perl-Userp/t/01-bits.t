@@ -9,8 +9,8 @@ my @tests= (
 	[ 0, [[1,1],[1,3],[1,4]], "\x13", "\x91" ],
 );
 for (@tests) {
-	my ($align, $patterns, $encoding_le, $encoding_be)= @$_;
-	subtest 'align='.$align.' '.join(',', map { '['.join(',',@$_).']' } @$_) => sub {
+	my ($align, $pattern, $encoding_le, $encoding_be)= @$_;
+	subtest 'align='.$align.' '.join(',', map { '['.join(',',@$_).']' } @$pattern) => sub {
 		my %buffers= ( le32 => ['',0], be32 => ['',0], le64 => ['',0], be64 => ['',0] );
 		for my $item (@$pattern) {
 			Userp::PP::Bits64::pad_buffer_to_alignment(@$_, $align) for values %buffers;
@@ -25,11 +25,11 @@ for (@tests) {
 
 		# If test has known encodings, verify them
 		if (defined $encoding_le) {
-			is( $_->[0], $encoding_le, "$_ encoding" )
+			is( $buffers{$_}[0], $encoding_le, "$_ encoding" )
 				for grep length($buffers{$_}[0]), 'le32','le64';
 		}
 		if (defined $encoding_be) {
-			is( $_->[0], $encoding_be, "$_ encoding" )
+			is( $buffers{$_}[0], $encoding_be, "$_ encoding" )
 				for grep length($buffers{$_}[0]), 'be32','be64';
 		}
 	
