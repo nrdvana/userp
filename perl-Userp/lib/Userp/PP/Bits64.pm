@@ -121,7 +121,6 @@ sub seek_buffer_to_alignment {
 
 sub read_bits_le {
 	# (buffer, bitpos, bits)
-	print STDERR "# length(_[0])=${\length $_[0]} bitpos=$_[1] bits=$_[2]\nn";
 	return undef unless (($_[1]+$_[2]+7)>>3) <= length $_[0];
 	my $bit_remainder= $_[1] & 7;
 	my $bit_read= $bit_remainder + $_[2];
