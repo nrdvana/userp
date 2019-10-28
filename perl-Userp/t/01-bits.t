@@ -9,19 +9,29 @@ my @tests= (
 	# align, [patterns], known_encoding_le, known_encoding_be
 	[ 0, [[1,1]], "\x01", "\x80" ],
 	[ 0, [[1,1],[1,3],[1,4]], "\x13", "\x91" ],
+	[ 1, [[1,1],[1,3],[1,4],[5,3],[0xFFF,16],[9,4]]],
+	[ 2, [[1,1],[1,3],[1,4],[5,3],[0xFFF,16],[9,4]]],
+	[ 3, [[1,1],[1,3],[1,4],[5,3],[0xFFF,16],[9,4]]],
+	[ 4, [[1,1],[1,3],[1,4],[5,3],[0xFFF,16],[9,4]]],
+	[ 5, [[1,1],[1,3],[1,4],[5,3],[0xFFF,16],[9,4]]],
+	[ 3, [[1]], "\x02", "\x01" ],
+	[ 2, [[1],[1,3],[1,7],[5],[0xFFF,16],[9,4]]],
+	[ 3, [[1],[1,3],[1,7],[5],[0xFFF,16],[9,4]]],
+	[ 4, [[1],[1,3],[1,7],[5],[0xFFF,16],[9,4]]],
 );
 for (@tests) {
 	my ($align, $pattern, $encoding_le, $encoding_be)= @$_;
 	subtest 'align='.$align.' '.join(',', map { '['.join(',',@$_).']' } @$pattern) => sub {
 		my %buffers= ( le32 => ['',0], be32 => ['',0], le64 => ['',0], be64 => ['',0] );
 		for my $item (@$pattern) {
-			Userp::PP::Bits64::pad_buffer_to_alignment(@$_, $align) for values %buffers;
 			if (@$item > 1) {
+				Userp::PP::Bits64::pad_buffer_to_alignment(@$_, $align) for values %buffers;
 				Userp::PP::Bits64::concat_bits_le($buffers{le64}[0], $buffers{le64}[1], @{$item}[1,0]);
 				Userp::PP::Bits64::concat_bits_be($buffers{be64}[0], $buffers{be64}[1], @{$item}[1,0]);
 			} else {
-				Userp::PP::Bits64::concat_vqty_le($buffers{le64}[0], $buffers{le64}[1], $item->[0]);
-				Userp::PP::Bits64::concat_vqty_be($buffers{be64}[0], $buffers{be64}[1], $item->[0]);
+				Userp::PP::Bits64::pad_buffer_to_alignment(@$_, $align > 3? $align : 3) for values %buffers;
+				Userp::PP::Bits64::concat_vqty_le($buffers{le64}[0], $item->[0]);
+				Userp::PP::Bits64::concat_vqty_be($buffers{be64}[0], $item->[0]);
 			}
 		}
 
