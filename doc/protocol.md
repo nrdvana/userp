@@ -124,17 +124,18 @@ value of (max - min).  Fixed-bit-width values can be encode little-endian or big
 on a flag in the metadata block.
 
 When names are given, the integer can be encoded with the API encode_int *or* encode_symbol.
-Specifying a symbol that does not exist in names is an error.
+Specifying a symbol that does not exist in ```names``` is an error.
 
 ### Symbol
 
 Symbols in Userp are Unicode strings with some character restrictions which act much like the
-symbols in Ruby or the Stirng.intern() of Java.  These are meant to represent concepts with no
+symbols in Ruby or the String.intern() of Java.  These are meant to represent concepts with no
 particular integer value.  When encoded, the symbols can make use of a string table in the
 metadata block to remove common prefixes.  Thus, they get encoded as small integers rather than
 as string literals.
 
   * values - an array of symbols which compose this type
+  * prefix - a string prefix that assists with declaring the symbols or using them at runtime
 
 The Symbol type can be subclassed by giving it a list of values.  Any time this Symbol type is
 selected, only those values will be allowed.  The values are of course encoded as integers, but
@@ -157,15 +158,15 @@ common values.
 
 An array is a sequence of values defined by an element type and a list of dimensions.  Arrays
 do not need to be declared in the Metadata block, and can be given ad-hoc for any defined type.
-(this is much like the way that any type in C can have one or more "*" appended to it to become
+(this is much like the way that any type in C can have one or more "[]" appended to it to become
 an array of some number of dimensions)
 
   * elem_type - the type for each element of the array.  This may be a Choice type.
-  * dim - an array of dimension values, which are integers.  Dimensions of 'Null' mean that the
-     dimension value will be given within the data right before the values of the sequence.
+  * dim - an array of dimension values, which are integers.  Dimensions of 'Dynamic' mean that
+     the dimension value will be given within the data right before the values.
   * dim_type - the Integer data type to be used when encoding dimensions in the data.
      (default is to use a variable-length integer)
-     This allows you to use somehting like Int16s and then have that match a C struct like
+     This allows you to use somehting like Int16u and then have that match a C struct like
 	 ```struct { uint16_t len; char bytes[]; }```
 
 ### Record
@@ -210,8 +211,9 @@ Regex                         | API Call
 \)                            | end
 '([^\0-\20'\(\)]+)'           | begin(); for (chars of parse_string($1)) encode_int(char[i]); end()
 
-The CLEAN_SYMBOL regex fragment above is the set of ASCII "word" characters, period, minus,
-slash, colon, and ANY upper non-ascii codepoint which begins with a letter or high unicode.
+The $CLEAN_SYMBOL regex fragment above is an ASCII alpha character or non-ascii codepoint,
+followed by any number of ASCII word characters or period, minus, slash, colon, or any
+non-ascii codepoint.
 
     CLEAN_SYMBOL = /[_A-Za-z\x80-\x{3FFFF}][-_.:/0-9A-Za-z\x80-\x{3FFFF}]+/
 
@@ -246,4 +248,41 @@ String       | !Char*'ABC'                | .sel(arrayType(Char,null)).str("ABC"
 IEEE float   | !Float32+2.5e17            | .sel(Float32).float32(2.5e17);
              | !Float64+2.5e17            | .sel(Float64).float64(2.5e17);
 (equivalent) | !Float32( sign=0 exp=17 sig=#200000 ) | .sel(Float32).begin().int(0).int(17).int(0x200000).end()
+
+User Stream Protocol
+--------------------
+
+Userp can be used in various contexts, one of which is "Stream" mode.  Stream mode begins with
+a short header indicating the version and endian-ness of the rest of the stream, and the name
+and version of the library that generated the stream.  It is followed by one or more Blocks.
+A block is preceeded by several metadata items, with a default of Scope ID, Block ID, and Length.
+The data of the block follows, encoded per the root-type of the Scope.  The data is considered
+the start of the block, with the metadata fields just preparing the reader to process the block.
+This allows compatibility with non-stream designs where the metadata is held in one location and
+the blocks in another.  A Scope may change which metadata fields are present on each block.
+
+Component       |  Encoding
+----------------|--------------------------------------------------------------
+Stream          | Header Block [Block...]
+Header          | "Userp S1 LE" 0x00 MinorVersion WriterSignature
+MinorVersion    | Int16
+WriterSignature | 18 bytes containing UTF-8 name and version of writer library
+Block           | ScopeID BlockID Length Data
+ScopeID         | Integer (variable length)
+BlockID         | Integer (variable length)
+Length          | Integer (variable length, or can be fixed if changed by Scope)
+Data            | Encoded per the block-root-type defined by the Scope.
+
+The pre-defined Scope 0 defined the block-root-type as "Any", and contains a special type
+called MetadataBlock.  Selecting the sub-type of MetadataBlock causes a block to create a
+scope, with a symbol table and type definitions, which other blocks can then reference.
+
+Block Encoding
+--------------
+
+A block can be either big-endian or little-encidan.  In a streaming arrangement, there is a
+"magic number" that comes before the first block which declares the version and endian-ness
+of the rest of the stream.  In other contexts, those bits of information will be known ahead
+of time.
+
 
