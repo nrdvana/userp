@@ -104,7 +104,7 @@ Every type supports these attributes:
 
   * align - power-of-2 bits to which the value will be aligned, measured from start of block.
     Zero causes bit-packing.  3 causes byte-alignment.  5 causes 4-byte alignment, and so on.
-  * pad   - number of 0x00 bytes to follow the encoded value (useful for nul-terminated strings)
+  * pad   - number of NUL bytes to follow the encoded value (useful for nul-terminated strings)
 
 ### Integer
 
@@ -121,29 +121,36 @@ the Userp protocol.  Any integer type with "bits" defined will get an automatic 
 according to the 2's complement limits for that number of bits.  An integer type with min and
 max and without bits will be encoded as an unsigned value of the bits necessary to hold the
 value of (max - min).  Fixed-bit-width values can be encode little-endian or big-endian based
-on a flag in the metadata block.
+on a flag in the stream header.
 
 When names are given, the integer can be encoded with the API encode_int *or* encode_symbol.
-Specifying a symbol that does not exist in ```names``` is an error.
+Specifying a symbol that does not exist in `names` is an error.
 
 ### Symbol
 
 Symbols in Userp are Unicode strings with some character restrictions which act much like the
-symbols in Ruby or the String.intern() of Java.  These are meant to represent concepts with no
-particular integer value.  When encoded, the symbols can make use of a string table in the
-metadata block to remove common prefixes.  Thus, they get encoded as small integers rather than
-as string literals.
+symbols in Ruby or the `String.intern()` of Java.  These are meant to represent concepts
+with no particular integer value.  When encoded, the symbols can make use of a string table in
+the metadata block to remove common prefixes.  Thus, they get encoded as small integers rather
+than as string literals.
 
-  * values - an array of symbols which compose this type
-  * prefix - a string prefix that assists with declaring the symbols or using them at runtime
+  * values - (optional) an array of symbols which compose this type
+  * prefix - a string prefix that assists with declaring the symbols or using them at runtime.
+             This merely acts as a hint to help build an efficient symbol table in the metadata
+             block.
 
 The Symbol type can be subclassed by giving it a list of values.  Any time this Symbol type is
 selected, only those values will be allowed.  The values are of course encoded as integers, but
 the integer value is never seen by the application.  This is a "cleaner" way to implement Enums,
-though you might still choose an Integer with 'names' in order to be compatible with low-level
-code.
+though you might still choose to implement an Enum as an Integer with 'names' in order to be
+compatible with low-level code.
 
-Symbols can only be encoded/decoded with encode_symbol/decode_symbol.
+Symbols can only be encoded/decoded with `encode_symbol` / `decode_symbol`.  For symbol
+types with finite `values`, only the selector gets written.  For infinite symbol types
+with `prefix`, only a length and UTF-8 bytes are written.  For infinite symbol types without
+`prefix`, there is a selector for whether or not a prefix exists combined with the length
+of the UTF-8 string; so, still likely one byte, then a prefix (or not), then the bytes of the
+suffix.
 
 ### Choice
 
@@ -158,7 +165,7 @@ common values.
 
 An array is a sequence of values defined by an element type and a list of dimensions.  Arrays
 do not need to be declared in the Metadata block, and can be given ad-hoc for any defined type.
-(this is much like the way that any type in C can have one or more "[]" appended to it to become
+(this is much like the way that any type in C can have one or more `[]` appended to it to become
 an array of some number of dimensions)
 
   * elem_type - the type for each element of the array.  This may be a Choice type.
@@ -167,7 +174,7 @@ an array of some number of dimensions)
   * dim_type - the Integer data type to be used when encoding dimensions in the data.
      (default is to use a variable-length integer)
      This allows you to use somehting like Int16u and then have that match a C struct like
-	 ```struct { uint16_t len; char bytes[]; }```
+     `struct { uint16_t len; char bytes[]; }`
 
 ### Record
 
@@ -180,7 +187,7 @@ course the name is encoded as a simple integer indicating which field)  A record
 followed by "ad-hoc" fields, where the name/value are arbitrary, like in JSON.  Ad-hoc fields
 are enabled if either adhoc_name_type or adhoc_value_type is set.
 
-  * fields - a list of field definitions, each composed of ``(Symbol, Type)``.
+  * fields - a list of field definitions, each composed of `(Symbol, Type)`.
   * static_fields - a count of fields which are encoded statically.
   * adhoc_name_type - optional type of Symbol whose names can be used for ad-hoc fields
   * adhoc_value_type - optional type of value for the ad-hoc fields
@@ -199,23 +206,25 @@ available as constant data.
 The data language corresponds to the function calls of the Userp library.  Tokens are parsed
 and converted to the following API calls:
 
-Regex                         | API Call
-------------------------------|----------------------------------------------------------------
-([-+]?[0-9]+)                 | encode_int($1)
-#([-+]?[0-9A-F]+)             | encode_int(parse_hex($1))
-:?$CLEAN_SYMBOL(=?)           | $2? field($1) : encode_symbol($1)
-:"([^\0-\x20"\(\)]+)"(=?)     | $2? field(parse_ident($1)) : encode_symbol(parse_ident($1))
-!$CLEAN_SYMBOL($?)(\*([0-9]+) | $2? encode_type($1) : select_type($1)
-!"([^\0-\x20"\(\)]+)"($?)     | $2? encode_type(parse_string($1)) : select_type(parse_string($1))
-\(                            | begin
-\)                            | end
-'([^\0-\20'\(\)]+)'           | begin(); for (chars of parse_string($1)) encode_int(char[i]); end()
+Regex                           | API Call
+--------------------------------|----------------------------------------------------------------
+`([-+]?[0-9]+)`                 | encode_int($1)
+`#([-+]?[0-9A-F]+)`             | encode_int(parse_hex($1))
+`:?$CLEAN_SYMBOL(=?)`           | $2? field($1) : encode_symbol($1)
+`:"([^\0-\x20"\(\)]+)"(=?)`     | $2? field(parse_ident($1)) : encode_symbol(parse_ident($1))
+`!$CLEAN_SYMBOL($?)(\*([0-9]+)` | $2? encode_type($1) : select_type($1)
+`!"([^\0-\x20"\(\)]+)"($?)`     | $2? encode_type(parse_string($1)) : select_type(parse_string($1))
+`\(`                            | begin
+`\)`                            | end
+`'([^\0-\20'\(\)]+)'`           | begin(); for (chars of parse_string($1)) encode_int(char[i]); end()
 
-The $CLEAN_SYMBOL regex fragment above is an ASCII alpha character or non-ascii codepoint,
+The `$CLEAN_SYMBOL` regex fragment above is an ASCII alpha character or non-ascii codepoint,
 followed by any number of ASCII word characters or period, minus, slash, colon, or any
 non-ascii codepoint.
 
-    CLEAN_SYMBOL = /[_A-Za-z\x80-\x{3FFFF}][-_.:/0-9A-Za-z\x80-\x{3FFFF}]+/
+```
+CLEAN_SYMBOL = /[_A-Za-z\x80-\x{3FFFF}][-_.:/0-9A-Za-z\x80-\x{3FFFF}]+/
+```
 
 ### Examples
 
@@ -249,22 +258,16 @@ IEEE float   | !Float32+2.5e17            | .sel(Float32).float32(2.5e17);
              | !Float64+2.5e17            | .sel(Float64).float64(2.5e17);
 (equivalent) | !Float32( sign=0 exp=17 sig=#200000 ) | .sel(Float32).begin().int(0).int(17).int(0x200000).end()
 
-User Stream Protocol
---------------------
+User Stream Protocol 1
+----------------------
 
-Userp can be used in various contexts, one of which is "Stream" mode.  Stream mode begins with
-a short header indicating the version and endian-ness of the rest of the stream, and the name
-and version of the library that generated the stream.  It is followed by one or more Blocks.
-A block is preceeded by several metadata items, with a default of Scope ID, Block ID, and Length.
-The data of the block follows, encoded per the root-type of the Scope.  The data is considered
-the start of the block, with the metadata fields just preparing the reader to process the block.
-This allows compatibility with non-stream designs where the metadata is held in one location and
-the blocks in another.  A Scope may change which metadata fields are present on each block.
+Userp can be used in various contexts, one of which is a stream of blocks.  This describes the
+"version 1" streaming protocol.
 
 Component       |  Encoding
 ----------------|--------------------------------------------------------------
 Stream          | Header Block [Block...]
-Header          | "Userp S1 LE" 0x00 MinorVersion WriterSignature
+Header          | "Userp S1 LE" (or "Userp S1 BE") 0x00 MinorVersion WriterSignature
 MinorVersion    | Int16
 WriterSignature | 18 bytes containing UTF-8 name and version of writer library
 Block           | ScopeID BlockID Length Data
@@ -273,16 +276,95 @@ BlockID         | Integer (variable length)
 Length          | Integer (variable length, or can be fixed if changed by Scope)
 Data            | Encoded per the block-root-type defined by the Scope.
 
-The pre-defined Scope 0 defined the block-root-type as "Any", and contains a special type
-called MetadataBlock.  Selecting the sub-type of MetadataBlock causes a block to create a
-scope, with a symbol table and type definitions, which other blocks can then reference.
+### Header
 
-Block Encoding
---------------
+Stream mode begins with a magic number identifying the protocol version and endian-ness.
+The major version is tied to any change that would break an older implementation's ability to
+read the stream.  Less important changes related to metadata or optional features (those which
+don't cause undefined behavior for older versions) can be indicated with the MinorVersion which
+follows.
 
-A block can be either big-endian or little-encidan.  In a streaming arrangement, there is a
-"magic number" that comes before the first block which declares the version and endian-ness
-of the rest of the stream.  In other contexts, those bits of information will be known ahead
-of time.
+A stream can be big-endian (Integers written most significant bit first) or litle-endian
+(Integers written least significant byte first).  This is meant to facilitate C-struct
+compatibility without placing extra burden on writers.  The flag is part of the header and
+applies to the entire stream.
 
+To help identify bugs that might have come from a particular implementation, there is
+a string of UTF-8 that follows, where a library can write identifying information about itself.
+The string is not required to be NUL-terminated, but must be padded out to 18 characters using
+NULs. (bringing the total size of the header to 32 bytes)
+There is no standard for the format of this string.
+
+### Per-Block Metadata
+
+The encoding of a block depends on what attributes have been declared to be in effect for the
+stream.  The main feature of a block's encoding is a Length (count of bytes) followed by some
+value encoded within those bytes.  In the initial Scope, blocks have dynamic Scope and dynamic,
+Block ID, so the encoding is ScopeID followed by Block ID followed by Length followed by value
+of type Any.
+
+A decoder must check the type of the block to see if it is one of the special types that defines
+changes to the encoding of the stream.  If the block is just plain data, it may skip over the
+block using the Length to indicate how many bytes to skip.
+
+### Metadata Blocks
+
+The first (and only?) special type of block is the Metadata Block.  A metadata block is defined
+as a record of ( Identifiers, Types, BlockRootType, BlockHasID, BlockImpliedScope, BlockIndex ) 
+It also allows dynamic fields for other data which does not affect the encoding.
+
+#### Identifiers
+
+This is an array of type 'Ident'.  Each identifier is written as an optional prefix identifier
+followed by an array of bytes (which should be valid UTF-8, but isn't enforced).
+Every identifier is given the next available ID in the identifier table.  The Identifier table
+inherits from a parent Scope to its child.
+
+#### Types
+
+Each type is encoded as the identifier name of the type (optional) followed by a type which it
+inherits followed by the type-definition's attributes it wants to override.
+
+Every type gets added to the Choice type named "Any".  If the type has an identifier, it also
+gets added to the Choice type named "AnyPublic".
+
+#### TypeMetadata
+
+Each type may have additional metadata attached to it.  However, encoding the values for that
+metadata might require the type to be defined, so the array of metadata is encoded after the
+array of types.  Metadata element N applies metadata to the Nth type of the types array.
+The arrays do not need to be the same length, though.
+
+#### BlockRootType
+
+This specifies the type of every block in this scope.  If the type is a choice like 'Any' or
+'AnyPublic', then essentially every block defines its own type.  If the type has a known
+constant length, then every block is a constant size and no Length will be written between
+blocks.
+
+#### BlockHasID
+
+This is a boolean.  If true, every block referencing this scope will also by prefixed by a
+Block ID.  If false, all Block IDs are assumed to be 0 and does not need encoded.
+
+#### BlockImpliedScope
+
+This is a boolean.  If true, then all blocks following this metadata block will automatically
+belong to this scope, and do not need their ScopeID encoded.  This will continue infinitely
+to the end of the stream unless BlockIndex is also given, which limits the number of blocks.
+
+#### BlockIndex
+
+This is an array of N block metadata entries for Blocks that follow this one.  The array is of
+type 'BlockMeta', whose fields are affected by the various flags defined previously, but this
+also implies BlockImpliedScope=true, meaning every block in this index belongs to this Scope.
+
+If every block would have BlockID and Length, then this is an array of { BlockID, Length }.
+At the opposite extreme, if Length is known and BlockHasID is false, the record has no
+attributes at all and so the array is nothing but a count of the number of blocks.
+
+This allows a metadata block to contain an index of many following records so that
+a reader could skip to the Nth block, if it wanted, or just quickly look up the location of a
+block with a specific ID.  The block values are then packed end to end, which could be useful
+if all the values needed to be 4K aligned or something.
 
