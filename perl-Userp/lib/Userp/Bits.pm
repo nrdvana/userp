@@ -9,12 +9,18 @@ our @api= qw(
 	seek_buffer_to_alignment
 	concat_bits_le
 	concat_bits_be
+	concat_int_le
+	concat_int_be
 	concat_vqty_le
 	concat_vqty_be
 	read_bits_le
 	read_bits_be
+	read_int_le
+	read_int_be
 	read_vqty_le
 	read_vqty_be
+	read_symbol_le
+	read_symbol_be
 );
 
 our $mechanism; # can be set before loading package to request specific source
@@ -29,7 +35,8 @@ if ($mechanism eq 'xs') {
 elsif ($mechanism eq '64') {
 	require Userp::PP::Bits64;
 	*$_ = *{"Userp::PP::Bits64::$_"} for @api;
-} else {
+}
+else {
 	require Userp::PP::Bits32;
 	*$_ = *{"Userp::PP::Bits32::$_"} for @api;
 }

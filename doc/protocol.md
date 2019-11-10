@@ -134,23 +134,14 @@ with no particular integer value.  When encoded, the symbols can make use of a s
 the metadata block to remove common prefixes.  Thus, they get encoded as small integers rather
 than as string literals.
 
-  * values - (optional) an array of symbols which compose this type
-  * prefix - a string prefix that assists with declaring the symbols or using them at runtime.
-             This merely acts as a hint to help build an efficient symbol table in the metadata
-             block.
+  * `prefix` - a symbol value which must appear at the start of every value of this type
 
-The Symbol type can be subclassed by giving it a list of values.  Any time this Symbol type is
-selected, only those values will be allowed.  The values are of course encoded as integers, but
-the integer value is never seen by the application.  This is a "cleaner" way to implement Enums,
-though you might still choose to implement an Enum as an Integer with 'names' in order to be
-compatible with low-level code.
+Symbols get encoded as an existing symbol ID and optional suffix (byte array).  If a suffix was
+given, it gets added to the temporary Scope of the current Block, enlarging the symbol table.
 
-Symbols can only be encoded/decoded with `encode_symbol` / `decode_symbol`.  For symbol
-types with finite `values`, only the selector gets written.  For infinite symbol types
-with `prefix`, only a length and UTF-8 bytes are written.  For infinite symbol types without
-`prefix`, there is a selector for whether or not a prefix exists combined with the length
-of the UTF-8 string; so, still likely one byte, then a prefix (or not), then the bytes of the
-suffix.
+The combined bytes (prefix with suffix) must be valid UTF-8 codepoints, but the userp
+implementation does not apply any transformation to the codepoints and is generally unaware of
+any Unicode rules other than what constitutes a valid UTF-8 sequence.
 
 ### Choice
 
@@ -159,22 +150,55 @@ When encoded, a Choice type is written as an integer selector that indicates wha
 
 The main purpose of a choice type is to reduce the size of the type-selector, but it can also
 help constrain data for application purposes, or provide data compression by pre-defining
-common values.
+common values.  It can also be used to declare non-integer symbolic enums or subsets of enums.
+
+  * `options` - an array of the Choice's options
+
+Each option is defined by a Choice of:
+
+  * `subtype` - record of `(type, merge_ofs, merge_count)`
+  * `value` - encoding of one specific value of any type
+
+The record specifying another type is defined as:
+
+  * `type`        - type reference
+  * `merge_ofs`   - starting value within type's initial integer
+  * `merge_count` - number of sequential values taken from type's initial integer
+
+To explain the "merge" attributes, imagine that the first option is an integer enum with 7
+values, and a second option of Symbol (i.e. any Symbol value).  Without specifying a 'merge',
+the value of this Choice would get encoded as one bit (most likely occupying an entire byte)
+to select between the two options, and then an encoding of the respective type following that.
+But, if you specify `merge_ofs=0` for the first option, then the selector will be the numbers
+`0..7` where `0..6` choose one of the 7 values of the integer enum, and `7` selects the second
+option to be followed by a Symbol value.  Then, if you set `merge_ofs=0` on the second option
+as well, the initial integer component of the Symbol (its length and prefix-present flag) will
+merge and the selector is then `0..Inf` where `0..6` are the values of the enum, and `7..Inf`
+minus 7 becomes the initial integer component of the Symbol.
 
 ### Array
 
-An array is a sequence of values defined by an element type and a list of dimensions.  Arrays
-do not need to be declared in the Metadata block, and can be given ad-hoc for any defined type.
-(this is much like the way that any type in C can have one or more `[]` appended to it to become
-an array of some number of dimensions)
+An array is a sequence of values defined by an element type and a list of dimensions.
 
-  * elem_type - the type for each element of the array.  This may be a Choice type.
-  * dim - an array of dimension values, which are integers.  Dimensions of 'Dynamic' mean that
-     the dimension value will be given within the data right before the values.
-  * dim_type - the Integer data type to be used when encoding dimensions in the data.
-     (default is to use a variable-length integer)
-     This allows you to use somehting like Int16u and then have that match a C struct like
-     `struct { uint16_t len; char bytes[]; }`
+  * `elem_type` - Choice of Null or a type code
+  * `dim` - an array of dimension values, which are Null or positive integer
+  * `dim_type` - (optional) the Integer data type to be used to encode Null dimensions
+
+If `elem_type` is Null, it means the element type will be specified in the data at the start
+of each value of this type.  If a dimention is Null it likewise means that the element-count
+of that dimension will be encoded within the value of this type.  If the length of the `dim`
+array is itself 0, that means the number of dimensions will be encoded per-value.
+
+Specifying `dim_type` allows you to control the width of the integers that specify the Null
+dimensions.  This allows you to use somehting like Int16u and then have that match a C struct:
+```
+struct { uint16_t len; char bytes[]; }
+```
+
+Because the initial Scope gives you a type for Array with all fields Null, this means you can
+write arrays of any other type with arbitrary dimensions without needing to declare
+array-of-my-type as a distinct type, in much the same way that C lets you declare an array of
+any type by adding one or more `[]` siffixes.
 
 ### Record
 

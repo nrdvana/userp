@@ -79,6 +79,28 @@ sub concat_bits_be {
 	}
 }
 
+sub concat_int_le {
+	# ($buffer, $bits, $value)
+	my $n= ($_[1]+7)>>3;
+	$_[0] .= $n == 1? pack 'C', $_[2]
+		: $n == 2? pack 'S<', $_[2]
+		: $n == 4? pack 'L<', $_[2]
+		: $n == 8? pack 'Q<', $_[2]
+		: $n < 8? substr(pack('Q<', $_[2]), 0, $n)
+		: reverse substr(Math::BigInt->new($_[2])->as_bytes, -$n);
+}
+
+sub concat_int_be {
+	# ($buffer, $bits, $value)
+	my $n= ($_[1]+7)>>3;
+	$_[0] .= $n == 1? pack 'C', $_[2]
+		: $n == 2? pack 'S>', $_[2]
+		: $n == 4? pack 'L>', $_[2]
+		: $n == 8? pack 'Q>', $_[2]
+		: $n < 8? substr(pack('Q>', $_[2]), -$n)
+		: substr(Math::BigInt->new($_[2])->as_bytes, -$n);
+}
+
 sub concat_vqty_le {
 	#my ($buffer, $value)= @_;
 	my $value= $_[1];
@@ -120,7 +142,7 @@ sub seek_buffer_to_alignment {
 }
 
 sub read_bits_le {
-	# (buffer, bitpos, bits)
+	# (buffer, bitpos, int_bits)
 	return undef unless (($_[1]+$_[2]+7)>>3) <= length $_[0];
 	my $bit_remainder= $_[1] & 7;
 	my $bit_read= $bit_remainder + $_[2];
@@ -142,7 +164,7 @@ sub read_bits_le {
 }
 
 sub read_bits_be {
-	# (buffer, bitpos, bits)
+	# (buffer, bitpos, int_bits)
 	return undef unless (($_[1]+$_[2]+7)>>3) <= length $_[0];
 	my $bit_remainder= $_[1] & 7;
 	my $bit_read= $bit_remainder + $_[2];
@@ -163,79 +185,139 @@ sub read_bits_be {
 	return $v;
 }
 
+sub read_int_le {
+	# (buffer, int_bits)
+	my $n= ($_[1]+7)>>3;
+	pos($_[0])+$n <= length($_[0])
+		or die Userp::Error::EOF->for_buf($_[0], $n, 'int-'.$n);
+	my $buf= substr($_[0], (pos($_[0])+=1)-1, $n);
+	return ord $buf if $n == 1;
+	return unpack 'S<', $buf if $n == 2;
+	return unpack 'L<', $buf if $n == 4;
+	return unpack 'Q<', $buf if $n == 8;
+	return unpack('L<', $buf."\0")&0xFFFFFF if $n == 3;
+	return unpack('Q<', $buf."\0\0\0")&((1 << $_[1]) - 1) if $n < 8;
+	return Math::BigInt->from_bytes(reverse $buf);
+}
+
+sub read_int_be {
+	# (buffer, int_bits)
+	my $n= ($_[1]+7)>>3;
+	pos($_[0])+$n <= length($_[0])
+		or die Userp::Error::EOF->for_buf($_[0], $n, 'int-'.$n);
+	my $buf= substr($_[0], (pos($_[0])+=1)-1, $n);
+	return ord $buf if $n == 1;
+	return unpack 'S>', $buf if $n == 2;
+	return unpack 'L>', $buf if $n == 4;
+	return unpack 'Q>', $buf if $n == 8;
+	return unpack('L>', "\0".$buf)&0xFFFFFF if $n == 3;
+	return unpack('Q>', "\0\0\0".$buf)&((1 << $_[1]) - 1) if $n < 8;
+	return Math::BigInt->from_bytes($buf);
+}
+
 sub read_vqty_le {
-	#my ($buffer, $bitpos)= @_;
-	my $pos= ($_[1]+7) >> 3;
-	return undef unless length($_[0]) > $pos;
-	my $switch= ord substr($_[0], $pos, 1);
-	my $v;
+	#my ($buffer)= @_;
+	pos($_[0]) < length($_[0])
+		or die Userp::Error::EOF->for_buf($_[0], 1, 'vqty');
+	my $switch= ord substr($_[0], pos($_[0]), 1);
 	if (!($switch & 1)) {
-		$v= $switch >> 1;
-		++$pos;
+		++pos($_[0]);
+		return $switch >> 1;
 	}
 	elsif (!($switch & 2)) {
-		return undef unless length($_[0]) >= $pos+2;
-		$v= unpack('S<', substr($_[0], $pos, 2)) >> 2;
-		$pos+= 2;
+		pos($_[0])+2 <= length($_[0])
+			or die Userp::Error::EOF->for_buf($_[0], 2, 'vqty-2');
+		return unpack('S<', substr($_[0], (pos($_[0])+=2)-2, 2)) >> 2;
 	}
 	elsif (!($switch & 4)) {
-		return undef unless length($_[0]) >= $pos+4;
-		$v= unpack('L<', substr($_[0], $pos, 4)) >> 3;
-		$pos+= 4;
+		pos($_[0])+4 <= length($_[0])
+			or die Userp::Error::EOF->for_buf($_[0], 4, 'vqty-4');
+		return unpack('L<', substr($_[0], (pos($_[0])+=4)-4, 4)) >> 3;
 	}
 	elsif ($switch != 0xFF) {
-		return undef unless length($_[0]) >= $pos+8;
-		$v= unpack('Q<', substr($_[0], $pos, 8)) >> 3;
-		$pos+= 8;
+		pos($_[0])+8 <= length($_[0])
+			or die Userp::Error::EOF->for_buf($_[0], 8, 'vqty-8');
+		return unpack('Q<', substr($_[0], (pos($_[0])+=8)-8, 8)) >> 3;
 	} else {
-		return undef unless length($_[0]) >= $pos+10;
-		my $n= ord substr($_[0], ($pos+=2)-1, 1);
-		$n= unpack('S<', substr($_[0], ($pos+=2)-2, 2)) if $n == 0xFF;
-		croak "Refusing to decode ludicrously large integer value" if $n == 0xFFFF;
-		return undef unless length($_[0]) >= $pos + 8 + $n;
-		$v= Math::BigInt->from_bytes(reverse substr($_[0], $pos, 8 + $n));
-		$pos += 8 + $n;
+		pos($_[0])+10 <= length($_[0])
+			or die Userp::Error::EOF->for_buf($_[0], 10, 'vqty-N');
+		my $n= ord substr($_[0], (pos($_[0])+=2)-1, 1);
+		$n= unpack('S<', substr($_[0], (pos($_[0])+=2)-2, 2)) if $n == 0xFF;
+		$n < 0xFFFF or die Userp::Error::ImplLimit->new(message => "Refusing to decode ludicrously large integer value");
+		$n += 8;
+		pos($_[0]) + $n <= length($_[0])
+			or die Userp::Error::EOF->for_buf($_[0], $n, 'vqty-'.$n);
+		return Math::BigInt->from_bytes(reverse substr($_[0], (pos($_[0])+=$n)-$n, $n));
 	}
-	$_[1]= $pos << 3;
-	return $v;
 }
 
 sub read_vqty_be {
-	#my ($buffer, $bitpos)= @_;
-	my $pos= ($_[1]+7) >> 3;
-	return undef unless length($_[0]) > $pos;
-	my $switch= ord substr($_[0], $pos, 1);
-	my $v;
+	#my ($buffer)= @_;
+	pos($_[0]) < length($_[0])
+		or die Userp::Error::EOF->for_buf($_[0], 1, 'vqty');
+	my $switch= ord substr($_[0], pos($_[0]), 1);
 	if ($switch < 0x80) {
-		$v= $switch;
-		++$pos;
+		++pos($_[0]);
+		return $switch;
 	}
 	elsif ($switch < 0xC0) {
-		return undef unless length($_[0]) >= $pos+2;
-		$v= unpack('S>', substr($_[0], $pos, 2)) & 0x3FFF;
-		$pos += 2;
+		pos($_[0])+2 <= length($_[0])
+			or die Userp::Error::EOF->for_buf($_[0], 2, 'vqty-2');
+		return unpack('S>', substr($_[0], (pos($_[0])+=2)-2, 2)) & 0x3FFF;
 	}
 	elsif ($switch < 0xE0) {
-		return undef unless length($_[0]) >= $pos+4;
-		$v= unpack('L>', substr($_[0], $pos, 4)) & 0x1FFF_FFFF;
-		$pos += 4;
+		pos($_[0])+4 <= length($_[0])
+			or die Userp::Error::EOF->for_buf($_[0], 4, 'vqty-4');
+		return unpack('L>', substr($_[0], (pos($_[0])+=4)-4, 4)) & 0x1FFF_FFFF;
 	}
 	elsif ($switch < 0xFF) {
-		return undef unless length($_[0]) >= $pos+8;
-		$v= unpack('Q>', substr($_[0], $pos, 8)) & 0x0FFF_FFFF_FFFF_FFFF;
-		$pos += 8;
+		pos($_[0])+8 <= length($_[0])
+			or die Userp::Error::EOF->for_buf($_[0], 8, 'vqty-8');
+		return unpack('Q>', substr($_[0], (pos($_[0])+=8)-8, 8)) & 0x0FFF_FFFF_FFFF_FFFF;
 	}
 	else {
-		return undef unless length($_[0]) >= $pos+10;
-		my $n= ord substr($_[0], ($pos+=2)-1, 1);
-		$n= unpack('S>', substr($_[0], ($pos+=2)-2, 2)) if $n == 0xFF;
-		croak "Refusing to decode ludicrously large integer value" if $n == 0xFFFF;
-		return undef unless length($_[0]) >= $pos + 8 + $n;
-		$v= Math::BigInt->from_bytes(substr($_[0], $pos, 8 + $n));
-		$pos += 8 + $n;
+		pos($_[0])+10 <= length($_[0])
+			or die Userp::Error::EOF->for_buf($_[0], 10, 'vqty-N');
+		my $n= ord substr($_[0], (pos($_[0])+=2)-1, 1);
+		$n= unpack('S>', substr($_[0], (pos($_[0])+=2)-2, 2)) if $n == 0xFF;
+		$n < 0xFFFF or die Userp::Error::ImplLimit->new(message => "Refusing to decode ludicrously large integer value");
+		$n += 8;
+		pos($_[0]) + $n <= length($_[0])
+			or die Userp::Error::EOF->for_buf($_[0], $n, 'vqty-'.$n);
+		return Math::BigInt->from_bytes(substr($_[0], (pos($_[0])+=$n)-$n, $n));
 	}
-	$_[1]= $pos << 3;
-	return $v;
+}
+
+sub read_symbol_le {
+	#my ($buffer)= @_;
+	my $symbol_id= &read_vqty_le;
+	my $suffix;
+	if ($symbol_id & 1) {
+		my $len= &read_vqty_le;
+		$len > 0
+			or Userp::Error::Domain->throw({ value => $len, min => 1 });
+		length($_[0]) - pos($_[0]) >= $len
+			or Userp::Error::EOF->throw({ pos => pos($_[0]), buffer => $_[0], len => $len });
+		$suffix= substr($_[0], pos($_[0]), $len);
+		pos($_[0]) += $len;
+	}
+	return ($symbol_id>>1, $suffix);
+}
+
+sub read_symbol_be {
+	#my ($buffer)= @_;
+	my $symbol_id= &read_vqty_be;
+	my $suffix;
+	if ($symbol_id & 1) {
+		my $len= &read_vqty_be;
+		$len > 0
+			or die Userp::Error::Domain->new({ value => $len, min => 1 });
+		length($_[0]) - pos($_[0]) >= $len
+			or die Userp::Error::EOF->for_buf($_[0], $len, 'symbol suffix');
+		$suffix= substr($_[0], pos($_[0]), $len);
+		pos($_[0]) += $len;
+	}
+	return ($symbol_id>>1, $suffix);
 }
 
 1;
