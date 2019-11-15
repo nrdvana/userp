@@ -5,78 +5,60 @@ use Carp;
 # This package contains implementation details for Userp::Scope that are
 # only needed if the XS version is not available.
 
-# Each identifier maps to a record of
+# Each symbol maps to a record of
 # [
-#   $id,        # index within the identifier table
-#   $name,      # the identifier string
-#   $prefix_id, # identifier id of a prefix, used to encode smaller
+#   $id,        # index within the symbol table
+#   $name,      # the symbol string
+#   $prefix_id, # symbol id of a prefix, used to encode smaller
 #   $type,      # a type, if one exists with this name
 # ]
-has _ident_by_id   => ( is => 'rw' );
-has _ident_by_val  => ( is => 'rw' );
+# The symbol table needs deep-cloned from parent, so lazy-build each
+# entry of the table on demand.
+has _symbol_table  => ( is => 'rw', default => sub { [ (undef) x ($_[0]->parent? 1+$_[0]->parent->max_symbol_id : 1 ] } );
+has _symbol_id_map => ( is => 'rw', default => sub { +{} } );
 
 # simple array of Userp::Type objects
-has _type_table    => ( is => 'rw' );
+has _type_table      => ( is => 'rw', default => sub { [ (undef) x ($_[0]->parent? 1+$_[0]->parent->max_type_id : 1 ] } );
+has _type_id_by_name => ( is => 'rw' );
 
-after BUILD => sub {
-	my $self= shift;
-	my $id= $self->first_ident_id;
-	# The Ident table could be quite large, and it needs deep-cloned, so only initialize these
-	# and then import the rest from parent lazily.
-	my (%by_id, %by_val);
-	for (@{ $self->idents }) {
-		$by_val{$_}= $by_id{$id}= [ $id, $_, undef, undef ];
-		++$id;
-	}
-	$self->_ident_by_id(\%by_id);
-	$self->_ident_by_val(\%by_val);
-	
-	# The type table is probably smaller, and doesn't need deep-cloned, so just copy it from parent.
-	$self->_type_table([
-		($self->parent? @{ $self->parent->_type_table } : (undef)), # list is 1-based.
-		@{ $self->types }
-	]);
-	for my $type (@{ $self->types }) {
-		my $ident= $type->ident;
-		# A record for this identifier should exist, unless it already existed in parent.
-		my $rec= $self->_ident_info(undef, $ident)
-			or croak "Identifier for type '$ident' does not exist in current scope";
-		$rec->[3]= $type;
-	}
-
-};
-
-sub _ident_info {
-	# ($self, $id, $value)= @_
-	my $rec= defined $_[1]? $_[0]{_ident_by_id}{$_[1]} : $_[0]{_ident_by_val}{$_[2]};
-	if (!$rec && $_[0]->parent && ($rec= $_[0]->parent->_ident_info($_[1], $_[2]))) {
-		$rec= [ @$rec ];
-		$_[0]->_ident_by_id->{$rec->[0]}= $rec;
-		$_[0]->_ident_by_val->{$rec->[1]}= $rec;
-	}
-	return $rec;
+sub max_symbol_id {
+	return $#{ $_[0]->_symbol_table };
 }
 
-sub ident_id {
-	my $rec= $_[0]->_ident_info(undef, $_[1]);
-	return $rec? $rec->[0] : undef;
+sub max_type_id {
+	return $#{ $_[0]->_type_table };
 }
 
-sub ident_by_id {
-	my $rec= $_[0]->_ident_info($_[1]);
-	return $rec->[0] if defined $rec;
-	croak "IdentID out of range: $_[1]";
+has _type_any           => ( is => 'rwp' );
+has _type_any_public    => ( is => 'rwp' );
+
+sub symbol_by_id {
+	my ($self, $id)= @_;
+	Userp::Error::Domain->assert_minmax($id, 1, $self->max_symbol_id, 'Symbol ID');
+	my $sym= $self->_symbol_table->[$id];
+	return defined $sym? $sym : $self->parent? $self->parent->symbol_by_id($id) : undef;
+}
+
+sub symbol_id {
+	my ($self, $sym, $create)= @_;
+	my $id= $self->_symbol_id_map->{$sym};
+	$id= $self->parent->symbol_id($sym) if !$id && $self->parent;
+	if (!$id && $create) {
+		push @{ $self->_symbol_table }, $sym;
+		$self->_symbol_id_map->{$sym}= $#{ $self->_symbol_table };
+	}
 }
 
 sub type_by_id {
-	my $t= $_[1] > 0? $_[0]{_type_table}{$_[1]} : undef;
-	return $t if defined $t;
-	croak "TypeID out of range: $_[1]";
+	my ($self, $id)= @_;
+	Userp::Error::Domain->assert_minmax($id, 1, $self->max_type_id, 'Type ID');
+	return $self->_type_table->[$id] || ($self->parent? $self->parent->type_by_id($id) : undef);
 }
 
-sub type_by_ident {
-	my $rec= $_[0]->_ident_info($_[1]);
-	return $rec? $rec->[3] : undef;
+sub type_by_name {
+	my ($self, $name)= @_;
+	my $id= $self->_type_id_by_name->{$name};
+	return $id? $self->_type_table->[$id] : $self->parent? $self->parent->type_by_name($name) : undef;
 }
 
 1;
