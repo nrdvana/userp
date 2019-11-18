@@ -1,6 +1,6 @@
-package Userp::PP::Type::Record;
+package Userp::Type::Record;
 use Moo;
-with 'Userp::PP::Type';
+extends 'Userp::Type';
 
 =head1 DESCRIPTION
 
@@ -45,13 +45,14 @@ Ad-hoc fields are not enabled unless this attribute or C<adhoc_name_type> are se
 
 =head2 align
 
-See L<Userp::PP::Type>
+See L<Userp::Type>
 
 =cut
 
-has fields          => ( is => 'ro', required => 1 );
-has static_fields   => ( is => 'ro' );
-has other_fieldtype => ( is => 'ro' );
+has fields           => ( is => 'ro', required => 1 );
+has static_count     => ( is => 'ro' );
+has adhoc_name_type  => ( is => 'ro' );
+has adhoc_value_type => ( is => 'ro' );
 
 sub isa_rec { 1 }
 

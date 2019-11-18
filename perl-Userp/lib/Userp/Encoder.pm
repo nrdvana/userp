@@ -1,12 +1,24 @@
-package Userp::PP::Encoder;
+package Userp::Encoder;
 use Moo;
 use Carp;
-use Math::BigInt;
 use Userp::Bits;
+
+=head1 SYNOPSIS
+
+  # Direct use of an Encoder object
+  my $scope= Userp::Scope->new();
+  my $enc= Userp::Encoder->new(scope => $scope);
+  $enc->sel($scope->type_Integer)->int(5);  # select Integer type, encode value '5'
+  syswrite($fh, $enc->buffer);
+  
+  # but more typically:
+  my $enc= $scope->new_data_block;  # returns an Encoder, possibly a subclass
 
 =head1 DESCRIPTION
 
-This class is the API for serializing data into the types defined in the current scope.
+This class is the API for serializing data.  The behavior of the encoder is highly dependent
+on the L</scope>, which defines the available defined types and symbol table and other encoding
+details like the endian-ness of the stream.
 
 The sequence of API calls depends on type of the value being encoded.  Here is a brief
 overview:
@@ -16,23 +28,23 @@ overview:
 =item Integer
 
   $enc->int($int_value);
-  $enc->sym($symbol);   # for integer types with named values
+  $enc->sym($symbolic_name);   # for integer types with named values
 
 =item Symbol
 
-  $enc->sym($symbol);   # symbol name or symbol object
+  $enc->sym($symbolic_name);
 
 =item Choice
 
-  $enc->sel($some_type)->...  # select a member (or sub-member) type
+  $enc->sel($type)->...  # select a member (or sub-member) type
 
 Depending on which types are available in the Choice, you might need to specify which sub-type
-you are about to encode.  If the types are obvious, you can skip straight to the 'int' or 'sym'
-or 'type' or 'begin' method.
+you are about to encode.  If the types are obvious, you can skip straight to the C<int> or
+C<sym> or C<type> or C<begin> method.
 
 =item Array
 
-  $enc->begin($length); # length may or may not be required
+  $enc->begin($length, ...); # length and further array dimensions may or may not be required
   for(...) {
     $enc->...(...); # call once for each element
   }
@@ -63,29 +75,62 @@ a string:
 
 =head2 scope
 
-The current L<Userp::PP::Scope> which defines what types and identifiers are available.
+The current L<Userp::Scope> which defines what types and identifiers are available.
 
 =head2 bigendian
 
-True for ecoding with most significant byte first, false for encoding with least significant
-byte first.
+If true, all fixed-length integer values will be written most significant byte first.
+The default on this object is false, but encoders created by L<Userp::Stream> might get a
+platform-dependent default.
+
+=head2 buffer_ref
+
+Reference to the scalar that the userp Block data is written into.  It is a ref for efficiency
+when operating on large blocks.
+
+=head2 buffer
+
+For convenience, this returns the value referenced by L</buffer_ref>.
 
 =head2 current_type
 
-The type expected for the current node.  If this is a Choice (including type Any) you can select
-sub-types with method L</type>.
+The type about to be written next.  This should be initialized to the root type of the Block.
+After that, it will track the state changes caused by L</sel>, L</begin> and L</end>.
 
 =cut
 
 has scope        => ( is => 'ro', required => 1 );
-has bigendian    => ( is => 'ro', required => 1 );
+has bigendian    => ( is => 'ro' );
+has buffer_ref   => ( is => 'rw', lazy => 1, default => sub { \(my $x="") } );
+sub buffer          { ${ shift->buffer_ref } }
+has current_type => ( is => 'rwp', required => 1 );
 
 has _cur_align   => ( is => 'rw', default => 3 );
 has _bitpos      => ( is => 'rw' );
-has buffer       => ( is => 'rw' );
-
-has current_type => ( is => 'rwp' );
+has _enc_stack   => ( is => 'rw' );
 has _sel_paths   => ( is => 'rw', default => sub { [] } );
+
+sub _align {
+	my ($self, $new_align)= @_;
+	if ($new_align < 3) {
+		# bit-packing.  If starting, _bitpos needs initialized.
+		if ($self->_cur_align >= 3) {
+			$self->{_bitpos}= 0;
+		}
+		# Else it is already initialized and needs aligned if > 0
+		elsif ($new_align > 0) {
+			my $mask= (1 << $new_align) - 1;
+			$self->{_bitpos}= ($self->{_bitpos} + $mask) & ~$mask;
+		}
+	}
+	elsif ($new_align > 3) {
+		my $mul= 1 << ($new_align-3);
+		my $remainder= length(${$self->buffer_ref}) & ($mul-1);
+		${$self->buffer_ref} .= "\0" x ($mul-$remainder) if $remainder;
+	}
+	$self->_cur_align($new_align);
+	$self;
+}
 
 =head1 METHODS
 
@@ -126,14 +171,16 @@ sub sel {
   $enc->int($int_value)->... # plain scalar or BigInt object
 
 The C<$int_value> must be an integer within the domain of the L</current_type>.
-Method dies if arguments are invalid or if a different type is required at this point of the
+Method dies if arguments are invalid or if a non-integer value is required at this point of the
 stream.  Returns the encoder for convenient chaining.
 
 =cut
 
-#sub int {
-#	my ($self, $val)= @_;
-#	my $type= $self->current_type;
+sub int {
+	my ($self, $val)= @_;
+	my $type= $self->current_type;
+	if (!$type->isa_int) {
+		croak "Unimplemented";
 #	# If $type is a choice, search for an option compatible with this integer value
 #	if ($type->isa_choice) {
 #		my $opt_node= $type->_option_tree->{int}
@@ -151,32 +198,38 @@ stream.  Returns the encoder for convenient chaining.
 #		}
 #		else { croak "BUG" }
 #	}
-#	# Type should be integer, here.
 #	$type->isa_int
 #		or croak "Type ".$type->name." cannot encode integers";
-#	# validate min/max
-#	my $min= $int_type->min;
-#	my $max= $int_type->max;
-#	defined $min and $val < $min and croak "Integer out of bounds for type ".$type->name.": $val < $min";
-#	defined $max and $val > $max and croak "Integer out of bounds for type ".$type->name.": $val > $max";
-#	if (
-#	# If defined as "bits" (2's complement) then encode as a fixed number of bits, signed if min is negative.
-#	if ($int_type->bits) {
-#		@{ $self->_sel_paaths }
-#		
-#		$self->_encode_qty($val, $int_type->bits, $min < 0);
-#	}
-#	# Else encode as a variable unsigned displacement from either $min or $max, or if neither of those
-#	# are given, encode as the unsigned quantity shifted left to use bit 0 as sign bit.
-#	else {
-#		$self->_encode_qty(
-#			defined $min? $val - $min
-#			: defined $max? $max - $val
-#			: ($val < 0)? -($val<<1)-1 : ($val<<1)
-#		);
-#	}
-#	$self;
-#}
+	}
+	# Type should be integer, here.
+
+	# validate min/max
+	my $min= $type->min;
+	my $max= $type->max;
+	Userp::Error::Domain->assert_minmax($val, $min, $max, 'Type "'.$type->name.'" value');
+
+	# Pad to correct alignment
+	$self->_align($type->align);
+	# If defined as 2's complement then encode as a fixed number of bits, signed if min is negative.
+	if ($type->twosc) {
+		$self->_encode_qty($type->twosc, $val);
+	}
+	# If min and max are both defined, encode as a quantity counting from $min
+	elsif (defined $min && defined $max) {
+		$self->_encode_qty($type->bitlen, $val - $min);
+	}
+	# Else encode as a variable unsigned displacement from either $min or $max, or if neither of those
+	# are given, encode as the unsigned quantity shifted left to use bit 0 as sign bit.
+	else {
+		$self->_encode_vqty(
+			defined $min? $val - $min
+			: defined $max? $max - $val
+			: $val < 0? (-$val<<1) | 1
+			: $val<<1
+		);
+	}
+	$self;
+}
 
 =head2 sym
 
@@ -267,19 +320,24 @@ sub _encode_qty {
 	my ($self, $bits, $value)= @_;
 	$bits > 0 or croak "BUG: bits must be positive in encode_qty($bits, $value)";
 	$value >= 0 or croak "BUG: value must be positive in encode_qty($bits, $value)";
-	Userp::Bits::pad_buffer_to_alignment(${$self->{buffer}}, $self->{_bitpos}, $self->{_cur_align});
-	$self->bigendian
-		? Userp::Bits::concat_bits_be(${$self->{buffer}}, $self->{_bitpos}, $bits, $value)
-		: Userp::Bits::concat_bits_le(${$self->{buffer}}, $self->{_bitpos}, $bits, $value);
+	$self->_cur_align < 3? (
+		$self->bigendian
+			? Userp::Bits::concat_bits_be(${$self->{buffer_ref}}, $self->{_bitpos}, $bits, $value)
+			: Userp::Bits::concat_bits_le(${$self->{buffer_ref}}, $self->{_bitpos}, $bits, $value)
+	) : (
+		$self->bigendian
+			? Userp::Bits::concat_int_be(${$self->{buffer_ref}}, $bits, $value)
+			: Userp::Bits::concat_int_le(${$self->{buffer_ref}}, $bits, $value)
+	)
 }
 
 sub _encode_vqty {
 	my ($self, $value)= @_;
 	$value >= 0 or croak "BUG: value must be positive in encode_vqty($value)";
-	Userp::Bits::pad_buffer_to_alignment(${$self->{buffer}}, $self->{_bitpos}, $self->{_cur_align} < 3? 3 : $self->{_cur_align});
+	$self->{_bitpos}= 0;
 	$self->bigendian
-		? Userp::Bits::concat_vqty_be(${$self->{buffer}}, $self->{_bitpos}, $value)
-		: Userp::Bits::concat_vqty_le(${$self->{buffer}}, $self->{_bitpos}, $value);
+		? Userp::Bits::concat_vqty_be(${$self->{buffer_ref}}, $value)
+		: Userp::Bits::concat_vqty_le(${$self->{buffer_ref}}, $value)
 }
 
 #sub _encode_option_for_type {

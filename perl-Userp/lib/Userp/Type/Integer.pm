@@ -22,12 +22,12 @@ To specify an integer type as TypeSpec text, use either min/max notation:
 
 or 2's complement bits notation:
 
-  (bits=32)
+  (twosc=32)
 
 To specify enumeration names for integer values, specify a list where the first element is the
 starting numeric value, and then a list of identifiers which will receive increasing values.
 
-  (bits=32 names=(Null Primary Secondary (Other -1)))
+  (twosc=32 names=(Null Primary Secondary (Other -1)))
 
 =head1 ATTRIBUTES
 
@@ -63,7 +63,7 @@ sub isa_int { 1 }
 
 sub _merge_self_into_attrs {
 	my ($self, $attrs)= @_;
-	$self->mext::method($attrs);
+	$self->next::method($attrs);
 	if (defined $attrs->{twosc}) {
 		# preserve min/max if they are within the range of the two's complement encoding
 		# else they will get set to the defaults in the constructor.

@@ -1,6 +1,6 @@
-package Userp::PP::Type::Array;
+package Userp::Type::Array;
 use Moo;
-with 'Userp::PP::Type';
+extends 'Userp::Type';
 
 =head1 DESCRIPTION
 
@@ -14,7 +14,7 @@ decoded from the data of each instance.
 
 =head2 elem_type
 
-The type of all elements.  May be a Choice, including C<< scope->type_All >>.
+The type of all elements.  May be a Choice, including C<< $scope->type_Any >>.
 
 =head2 dim_type
 
@@ -32,13 +32,13 @@ defined, each undefined element represents a dimension that will be encoded alon
 
 =head2 align
 
-See L<Userp::PP::Type>
+See L<Userp::Type>
 
 =cut
 
 has elem_type => ( is => 'ro', required => 1 );
-has dim_type  => ( is => 'ro', required => 1 );
-has dim       => ( is => 'ro', required => 1 );
+has dim_type  => ( is => 'ro' );
+has dim       => ( is => 'ro' );
 
 sub isa_seq { 1 }
 

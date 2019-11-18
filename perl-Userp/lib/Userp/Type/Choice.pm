@@ -1,6 +1,6 @@
-package Userp::PP::Type::Choice;
+package Userp::Type::Choice;
 use Moo;
-with 'Userp::PP::Type';
+extends 'Userp::Type';
 
 =head1 DESCRIPTION
 
@@ -63,7 +63,7 @@ sub _build__option_table {
 	my $self= shift;
 	my $offset= 0;
 	my (@table, @inf_opts);
-	for (@{ $self->{options} }) {
+	for my $opt (@{ $self->{options} }) {
 		# Is it inlined?
 		if (defined $opt->{merge_ofs}) {
 			# Is it finite?
@@ -126,7 +126,7 @@ sub _build__option_tree {
 	$root;
 }
 
-sub isa_choice { 1 }
+sub isa_chc { 1 }
 
 sub has_scalar_component { 1 }
 
