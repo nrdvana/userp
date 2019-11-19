@@ -7,12 +7,9 @@ use Userp::Bits;
 
   # Direct use of an Encoder object
   my $scope= Userp::Scope->new();
-  my $enc= Userp::Encoder->new(scope => $scope);
+  my $enc= Userp::Encoder->new(scope => $scope, current_type => $scope->type_Any);
   $enc->sel($scope->type_Integer)->int(5);  # select Integer type, encode value '5'
   syswrite($fh, $enc->buffer);
-  
-  # but more typically:
-  my $enc= $scope->new_data_block;  # returns an Encoder, possibly a subclass
 
 =head1 DESCRIPTION
 
@@ -179,7 +176,7 @@ stream.  Returns the encoder for convenient chaining.
 sub int {
 	my ($self, $val)= @_;
 	my $type= $self->current_type;
-	if (!$type->isa_int) {
+	if (!$type || !$type->isa_int) {
 		croak "Unimplemented";
 #	# If $type is a choice, search for an option compatible with this integer value
 #	if ($type->isa_choice) {
@@ -212,7 +209,7 @@ sub int {
 	$self->_align($type->align);
 	# If defined as 2's complement then encode as a fixed number of bits, signed if min is negative.
 	if ($type->twosc) {
-		$self->_encode_qty($type->twosc, $val);
+		$self->_encode_qty($type->twosc, $val & ((1 << $type->twosc)-1));
 	}
 	# If min and max are both defined, encode as a quantity counting from $min
 	elsif (defined $min && defined $max) {

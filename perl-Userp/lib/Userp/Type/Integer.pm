@@ -1,5 +1,6 @@
 package Userp::Type::Integer;
 use Carp;
+use Userp::Error;
 use Moo;
 extends 'Userp::Type';
 
