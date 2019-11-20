@@ -1,6 +1,7 @@
 package Userp::Type::Integer;
 use Carp;
 use Userp::Error;
+use Userp::Bits;
 use Moo;
 extends 'Userp::Type';
 
@@ -23,12 +24,12 @@ To specify an integer type as TypeSpec text, use either min/max notation:
 
 or 2's complement bits notation:
 
-  (twosc=32)
+  (bits=32)
 
 To specify enumeration names for integer values, specify a list where the first element is the
 starting numeric value, and then a list of identifiers which will receive increasing values.
 
-  (twosc=32 names=(Null Primary Secondary (Other -1)))
+  (bits=32 names=(Null Primary Secondary (Other -1)))
 
 =head1 ATTRIBUTES
 
@@ -40,11 +41,14 @@ The lower end of the integer range, or undef to extend infinitely in the negativ
 
 The upper end of the integer range, or undef to extend infinitely in the positive direction.
 
-=head2 twosc
+=head2 bits
 
-If nonzero, this is the number of bits in which the integer will be encoded as 2's complement.
-When this is true, the value is no longer considered to have an "initial scalar component", and
-cannot be inlined into a Choice.
+If nonzero, this is the number of bits in which the integer will be encoded.  If C<min> is set
+to a value less than zero the bits will be encoded as 2's complement, and sign-extended when
+decoded.
+
+When this attribute is set, the value is no longer considered to have an "initial scalar
+component", and cannot be inlined into a Choice.
 
 =head2 names
 
@@ -57,31 +61,52 @@ first matching name.
 
 has min   => ( is => 'ro' );
 has max   => ( is => 'ro' );
-has twosc => ( is => 'ro' );
+has bits  => ( is => 'ro' );
 has names => ( is => 'ro' );
 
 sub isa_int { 1 }
 
+sub _check_min_max_bits {
+	my ($min, $max, $bits)= @_;
+	return 1 unless (defined $min? 1 : 0) + (defined $max? 1 : 0) + (defined $bits? 1 : 0) > 1;
+	if (defined $bits) {
+		if (($min||0) < 0 || ($max||0) < 0) {
+			my ($min2s, $max2s)= Userp::Bits::twos_minmax($bits);
+			return 0 if defined $min && ($min < $min2s || $min > $max2s);
+			return 0 if defined $max && ($max < $min2s || $max > $max2s);
+			return ($min||$max) <= ($max||$min);
+		}
+		else {
+			my $unsigned_max= Userp::Bits::unsigned_max($bits);
+			return 0 if defined $max && $max > $unsigned_max;
+			return 0 if defined $min && $min > $unsigned_max;
+			return ($min||$max||0) <= ($max||$min||0);
+		}
+	}
+	else {
+		return $min <= $max;
+	}
+}
+
 sub _merge_self_into_attrs {
 	my ($self, $attrs)= @_;
 	$self->next::method($attrs);
-	if (defined $attrs->{twosc}) {
-		# preserve min/max if they are within the range of the two's complement encoding
-		# else they will get set to the defaults in the constructor.
-		my $max= (1 << ($attrs->{twosc} - 1)) - 1;
-		my $min= -$max - 1;
-		$attrs->{max}= $self->max if !defined $attrs->{max} && defined $self->max && $self->max <= $max && $self->max >= $min;
-		$attrs->{min}= $self->min if !defined $attrs->{min} && defined $self->min && $self->min >= $min && $self->min <= $max;
+	# If bits are given, it takes priority.  Min and max only preserved if they make sense.
+	if ($attrs->{bits}) {
+		$attrs->{min}= $self->min
+			if !defined $attrs->{min} && defined $self->min
+			&& _check_min_max_bits($self->min, undef, $attrs->{bits});
+		$attrs->{max}= $self->max
+			if !defined $attrs->{max} && defined $self->max
+			&& _check_min_max_bits($attrs->{min}, $self->max, $attrs->{bits});
 	}
+	# Else use min and max, and only preserve bits if it still fits.
 	else {
-		$attrs->{max}= $self->max unless defined $attrs->{max};
 		$attrs->{min}= $self->min unless defined $attrs->{min};
-		if ($self->twosc) {
-			# If new min/max do not fit within two's complement, un-set the two's complement
-			my $max= (1 << ($self->twosc - 1)) - 1;
-			my $min= -$max - 1;
-			$attrs->{twosc}= $self->twosc unless $attrs->{max} > $max || $attrs->{min} < $min;
-		}
+		$attrs->{max}= $self->max unless defined $attrs->{max};
+		$attrs->{bits}= $self->bits
+			if !defined $attrs->{bits} && defined $self->bits
+		   && _check_min_max_bits($attrs->{min}, $attrs->{max}, $self->bits);
 	}
 	if (defined $attrs->{names} && defined $self->names) {
 		$attrs->{names}= [ @{$self->names}, @{$attrs->{names}} ];
@@ -93,21 +118,24 @@ sub _merge_self_into_attrs {
 
 sub BUILD {
 	my $self= shift;
-	croak "min > max (".$self->min." > ".$self->max.")"
-		if defined $self->min && defined $self->max && $self->min > $self->max;
-	if ($self->twosc) {
-		my $max= (1 << ($self->twosc - 1)) - 1;
-		my $min= -$max - 1;
-		if (defined $self->max) {
-			Userp::Error::Domain->assert_minmax($self->max, $min, $max, 'Integer max')
-		} else {
-			$self->{max}= $max;
+	if ($self->bits) {
+		if (($self->min||0) < 0 || ($self->max||0) < 0) {
+			my ($min2s, $max2s)= Userp::Bits::twos_minmax($self->bits);
+			$self->{min}= $min2s unless defined $self->min;
+			$self->{max}= $max2s unless defined $self->max;
+			Userp::Error::Domain->assert_minmax($self->min, $min2s, $self->max, 'Integer min');
+			Userp::Error::Domain->assert_minmax($self->max, $self->min, $max2s, 'Integer max');
 		}
-		if (defined $self->min) {
-			Userp::Error::Domain->assert_minmax($self->min, $min, $max, 'Integer min');
-		} else {
-			$self->{min}= $min;
+		else {
+			my $max= Userp::Bits::unsigned_max($self->bits);
+			$self->{min}= 0 unless defined $self->{min};
+			$self->{max}= $max unless defined $self->{max};
+			Userp::Error::Domain->assert_minmax($self->min, 0, $self->max, 'Integer min');
+			Userp::Error::Domain->assert_minmax($self->max, $self->min, $max, 'Integer max');
 		}
+	}
+	else {
+		Userp::Error::Domain->assert_minmax($self->max, $self->min, undef, 'Integer max');
 	}
 }
 
