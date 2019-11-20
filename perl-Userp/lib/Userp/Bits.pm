@@ -3,6 +3,8 @@ package Userp::Bits;
 our @api= qw(
 	scalar_bit_size
 	pack_bit_size
+	twos_minmax
+	unsigned_max
 	pack_bits_le
 	pack_bits_be
 	pad_buffer_to_alignment

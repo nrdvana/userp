@@ -12,6 +12,16 @@ use constant {
 	pack_bit_size => 64,
 };
 
+sub twos_minmax {
+	my $bits= shift;
+	my $max= $bits <= 1? 0 : $bits <= 64? (1<<($bits-1))-1 : Math::BigInt->bone->blsft($bits-1)->bdec;
+	return (-1-$max, $max);
+}
+sub unsigned_max {
+	my $bits= shift;
+	$bits <= 1? 0 : $bits < 64? (1<<$bits)-1 : $bits == 64? ~0 : Math::BigInt->bone->blsft($bits)->bdec;
+}
+
 sub pack_bits_le {
 	# (bits, value)
 	my $enc= ref($_[1])? reverse($_[1]->as_bytes) : pack('Q<',$_[1]);
