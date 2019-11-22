@@ -23,6 +23,10 @@ my $signed8pos= $int8u->subtype( name => '', id => 0, bits => 7 );
 is( $signed8pos->min, 0, 'min=0' );
 is( $signed8pos->max, 127, 'max=127' );
 
+my $int8= $int->subtype( name => '', id => 0, bits => 8 );
+is( $int8->min,-128, 'min=-128' );
+is( $int8->max, 127, 'max=127' );
+
 my $max1000= $signed8pos->subtype( name => '', id => 0, max => 1000 );
 is( $max1000->min, 0, 'min=0' );
 is( $max1000->max, 1000, 'max=1000' );

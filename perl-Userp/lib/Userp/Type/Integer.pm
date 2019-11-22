@@ -119,7 +119,7 @@ sub _merge_self_into_attrs {
 sub BUILD {
 	my $self= shift;
 	if ($self->bits) {
-		if (($self->min||0) < 0 || ($self->max||0) < 0) {
+		if (!defined $self->min || $self->min < 0) {
 			my ($min2s, $max2s)= Userp::Bits::twos_minmax($self->bits);
 			$self->{min}= $min2s unless defined $self->min;
 			$self->{max}= $max2s unless defined $self->max;
