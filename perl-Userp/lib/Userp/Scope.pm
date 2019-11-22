@@ -13,7 +13,7 @@ use Userp::Type::Record;
 
   my $scope= Userp::Scope->new();
   $scope->add_symbol($_) for @symbols;
-  my $Int16= $scope->add_type("Int16", "Integer", { twosc => 16 });
+  my $Int16= $scope->add_type("Int16", "Integer", { bits => 16 });
   my $Int16u= $scope->add_type("Int16u", "Integer", { min => 0, max => 0xFFFF });
 
 =head1 DESCRIPTION
@@ -260,7 +260,6 @@ sub BUILD {
 			Userp::Type::Array->new(
 				id => 5,
 				name => 'Array',
-				elem_type => $tAny,
 			),
 			Userp::Type::Record->new(
 				id => 6,

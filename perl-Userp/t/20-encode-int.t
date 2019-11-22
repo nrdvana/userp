@@ -9,6 +9,13 @@ sub _dump_hex { join ' ', map sprintf("%02X", $_), unpack 'C*', $_[0] }
 my $scope= Userp::Scope->new();
 isa_ok( $scope, 'Userp::Scope' );
 for (
+	[ 'Integer',  {}, [
+		[        0, "\x00",             "\x00" ],
+		[        1, "\x04",             "\x02" ],
+		[       -1, "\x06",             "\x03" ],
+		[        2, "\x08",             "\x04" ],
+		[       -2, "\x0A",             "\x05" ],
+	]],
 	[ 'Positive', { min => 0 }, [
 		[        0, "\x00",             "\x00" ],
 		[        1, "\x02",             "\x01" ],

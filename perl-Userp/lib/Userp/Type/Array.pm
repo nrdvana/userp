@@ -14,7 +14,8 @@ decoded from the data of each instance.
 
 =head2 elem_type
 
-The type of all elements.  May be a Choice, including C<< $scope->type_Any >>.
+The type of all elements.  May be a Choice, including C<< $scope->type_Any >>.  If it is
+C<undef>, the C<elem_type> will be encoded at the start of each array of this type.
 
 =head2 dim_type
 
@@ -36,10 +37,18 @@ See L<Userp::Type>
 
 =cut
 
-has elem_type => ( is => 'ro', required => 1 );
+has elem_type => ( is => 'ro' );
 has dim_type  => ( is => 'ro' );
 has dim       => ( is => 'ro' );
 
-sub isa_seq { 1 }
+sub isa_ary { 1 }
+
+sub _merge_self_into_attrs {
+	my ($self, $attrs)= @_;
+	$self->next::method($attrs);
+	$attrs->{elem_type}= $self->elem_type unless exists $attrs->{elem_type};
+	$attrs->{dim_type}= $self->dim_type unless exists $attrs->{dim_type};
+	$attrs->{dim}= $self->dim unless exists $attrs->{dim};
+}
 
 1;

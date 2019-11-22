@@ -349,8 +349,7 @@ inherits from a parent Scope to its child.
 Each type is encoded as the identifier name of the type (optional) followed by a type which it
 inherits followed by the type-definition's attributes it wants to override.
 
-Every type gets added to the Choice type named "Any".  If the type has an identifier, it also
-gets added to the Choice type named "AnyPublic".
+Every type gets added to the Choice type named "Any".
 
 #### TypeMetadata
 

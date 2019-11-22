@@ -104,7 +104,7 @@ has current_type => ( is => 'rwp', required => 1 );
 
 has _cur_align   => ( is => 'rw', default => 3 );
 has _bitpos      => ( is => 'rw' );
-has _enc_stack   => ( is => 'rw' );
+has _enc_stack   => ( is => 'rw', default => sub { [] } );
 has _sel_paths   => ( is => 'rw', default => sub { [] } );
 
 sub _align {
@@ -208,8 +208,8 @@ sub int {
 	# Pad to correct alignment
 	$self->_align($type->align);
 	# If defined as 2's complement then encode as a fixed number of bits, signed if min is negative.
-	if ($type->twosc) {
-		$self->_encode_qty($type->twosc, $val & ((1 << $type->twosc)-1));
+	if ($type->bits) {
+		$self->_encode_qty($type->bits, $val & ((1 << $type->bits)-1));
 	}
 	# If min and max are both defined, encode as a quantity counting from $min
 	elsif (defined $min && defined $max) {
@@ -225,7 +225,7 @@ sub int {
 			: $val<<1
 		);
 	}
-	$self;
+	$self->_next;
 }
 
 =head2 sym
@@ -270,7 +270,7 @@ sub sym {
 	else {
 		croak "Can't encode identifier as type ".$type->name;
 	}
-	$self;
+	$self->_next;
 }
 
 =head2 typeref
@@ -281,7 +281,7 @@ sub sym {
 
 sub typeref {
 	my ($self, $type)= @_;
-	$self;
+	$self->_next;
 }
 
 =head2 begin
@@ -295,13 +295,95 @@ Finish encoding the elements of a sequence, returning to the parent type, if any
 =cut
 
 sub begin {
-	my ($self, $len)= @_;
-	$self;
+	my $self= shift;
+	if ($self->current_type->isa_ary) {
+		my $array= $self->current_type;
+		my $elem_type= $array->elem_type;
+		if (!$elem_type) {
+			$elem_type= shift;
+			ref($elem_type) && ref($elem_type)->isa('Userp::Type')
+				or croak "First argument to begin must be elem_type, when encoding ".$array->name;
+		}
+		my $dim_type= $array->dim_type || $self->scope->type_Integer;
+		my @dim= @_;
+		@dim && !(grep /\D/, @dim)
+			or croak 'Must specify one or more integer dimensions to ->begin when encoding '.$array->name;
+		my @typedim= $array->dim? @{$array->dim} : ();
+		# If the type specifies some dimensions, make sure they agree with supplied dimensions
+		if (@typedim) {
+			my @typedim= @{ $array->dim };
+			croak "Supplied ".@dim." dimensions for type ".$array->name." which defines ".@typedim." dimensions"
+				unless @dim == @typedim;
+			# The dimensions given must match or fill-in spots in the type-declared dimensions
+			for (my $i= 0; $i < @typedim; $i++) {
+				$dim[$i]= $typedim[$i] unless defined $dim[$i];
+				croak "Require dimension $i for type ".$array->name
+					unless defined $dim[$i];
+				croak "Dimension $i of array disagrees with type ".$array->name
+					if defined $typedim[$i] && $dim[$i] != $typedim[$i];
+			}
+		}
+		
+		push @{ $self->_enc_stack }, { type => $array, dim => \@dim, elem_type => $elem_type, i => 0, n => scalar @dim };
+		
+		# Encode the elem_type unless part of the array type
+		$self->_encode_typeref($elem_type) unless $array->elem_type;
+		# Encode the number of dimensions unless part of the array type
+		$self->_encode_vqty(scalar @dim) unless @typedim;
+		# Encode the list of dimensions, for each that wasn't part of the array type
+		my $n= 1;
+		for (0..$#dim) {
+			$n *= $dim[$_]; # TODO: check overflow
+			next if $typedim[$_];
+			if ($dim_type == $self->scope->type_Integer) {
+				$self->_encode_vqty($dim[$_]);
+			}
+			else {
+				local $self->{current_type}= $dim_type;
+				$self->int($dim[$_]);
+			}
+		}
+		
+		$self->_enc_stack->[-1]{n}= $n; # now store actual number of array elements pending
+		
+		$self->_set_current_type($n? $elem_type : undef);
+	}
+	elsif ($self->current_type->isa_rec) {
+		
+	}
+	else {
+		croak "begin() is not relevant for type ".$self->current_type->name;
+	}
+}
+
+sub _next {
+	my $self= shift;
+	my $context= $self->_enc_stack->[-1];
+	if (!$context) {
+		$self->_set_current_type(undef);
+	}
+	elsif (defined $context->{n}) {
+		if (++$context->{i} < $context->{n}) {
+			$self->_set_current_type($context->{elem_type});
+		} else {
+			$self->_set_current_type(undef);
+		}
+	}
+	return $self;
 }
 
 sub end {
 	my $self= shift;
-	$self;
+	my $context= $self->_enc_stack->[-1];
+	if (!$context) {
+		croak "Can't call end() without an array or record context";
+	}
+	elsif (defined $context->{n}) {
+		my $remain= $context->{n} - $context->{i};
+		croak "Expected $remain more elements before end()" if $remain;
+		pop @{ $self->_enc_stack };
+	}
+	$self->_next;
 }
 
 =head2 str
@@ -335,6 +417,12 @@ sub _encode_vqty {
 	$self->bigendian
 		? Userp::Bits::concat_vqty_be(${$self->{buffer_ref}}, $value)
 		: Userp::Bits::concat_vqty_le(${$self->{buffer_ref}}, $value)
+}
+
+sub _encode_typeref {
+	my ($self, $type_id)= @_;
+	$type_id= $type_id->id if ref $type_id;
+	$self->_encode_vqty($type_id);
 }
 
 #sub _encode_option_for_type {
