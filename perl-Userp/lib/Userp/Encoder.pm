@@ -176,8 +176,12 @@ stream.  Returns the encoder for convenient chaining.
 sub int {
 	my ($self, $val)= @_;
 	my $type= $self->current_type;
-	if (!$type || !$type->isa_int) {
-		croak "Unimplemented";
+	if (!$type) {
+		croak "Expected end()" if @{ $self->_enc_stack || [] };
+		croak "Can't encode after end of block";
+	}
+	if (!$type->isa_int) {
+		croak "Can't encode ".$type->name." using int() method";
 #	# If $type is a choice, search for an option compatible with this integer value
 #	if ($type->isa_choice) {
 #		my $opt_node= $type->_option_tree->{int}
@@ -301,19 +305,19 @@ sub begin {
 		my $elem_type= $array->elem_type;
 		if (!$elem_type) {
 			$elem_type= shift;
-			ref($elem_type) && ref($elem_type)->isa('Userp::Type')
-				or croak "First argument to begin must be elem_type, when encoding ".$array->name;
+			unless (ref($elem_type) && ref($elem_type)->isa('Userp::Type')) {
+				my $t= $self->scope->type_by_name($elem_type)
+					or croak "No such type '$elem_type' (expected element type as first argument to begin()";
+				$elem_type= $t;
+			}
 		}
 		my $dim_type= $array->dim_type || $self->scope->type_Integer;
 		my @dim= @_;
-		@dim && !(grep /\D/, @dim)
-			or croak 'Must specify one or more integer dimensions to ->begin when encoding '.$array->name;
 		my @typedim= $array->dim? @{$array->dim} : ();
 		# If the type specifies some dimensions, make sure they agree with supplied dimensions
 		if (@typedim) {
-			my @typedim= @{ $array->dim };
 			croak "Supplied ".@dim." dimensions for type ".$array->name." which defines ".@typedim." dimensions"
-				unless @dim == @typedim;
+				unless @dim <= @typedim;
 			# The dimensions given must match or fill-in spots in the type-declared dimensions
 			for (my $i= 0; $i < @typedim; $i++) {
 				$dim[$i]= $typedim[$i] unless defined $dim[$i];

@@ -23,13 +23,18 @@ An Integer type to use when decoding dimensions which are written in-line with t
 Normally, the dimensions of an array are written as variable-length integers.  By specifying
 a fixed-width integer type this can make an array compatible with a C struct such as
 
-  struct MyIntArray { uint32_t len; uint32_t buffer[] };
+  struct MyIntArray { uint32_t len; uint32_t buffer[]; };
+
+  # The following sets up a compatible type:
+  $uint32_t= Integer->new(bits => 32, min => 0);
+  $MyIntArray= Array->new(elem_type => $uint32_t, dim_type => $uint32_t, dim => [undef]);
 
 =head2 dim
 
 An ArrayRef which defines the dimensions of the array.  If this attribute itself is undefined,
-then the array has one dimension which will be encoded along with the data.  If the arrayref is
-defined, each undefined element represents a dimension that will be encoded along with the data.
+then the number of dimensions and dimensions of the array are encoded along with the data.
+If the arrayref is defined, each undefined element represents a dimension that will be encoded
+along with the data.
 
 =head2 align
 
