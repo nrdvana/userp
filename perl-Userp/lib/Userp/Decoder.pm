@@ -1,98 +1,101 @@
-package Userp::PP::Decoder;
+package Userp::Decoder;
 use Moo;
 use Carp;
-use Math::BigInt;
+use Userp::Bits;
+use Userp::Error;
+
+=head1 SYNOPSIS
+
+  my $decoder= Userp::Decoder->new(scope => $s, buffer => $b, bigendian => 0);
+  
+  # one-shot recursive decode
+  my $perl_data= $dec->decode;
+  
+  # or iterate the data as you decode it
+  if ($dec->node_is_array) {
+    my @array;
+    $dec->begin;
+    push @array, $dec->decode
+      while $dec->node_is_defined;
+    $dec->end;
+  }
+  
+  # introspect the data being decoded
+  $dec->field_name;
+  $dec->array_index;
+  $dec->node_type;
+  $dec->value_type;
+  $dec->as_string;
+  $dec->as_number;
 
 =head1 DESCRIPTION
 
 This class is the API for deserializing data from known Userp types into Perl data.
+A new decoder is created for each block of a Stream, and given a Scope and Endian flag
+and initial Block Root Type.
 
-When decoding, there is always a "current node" which has a type.  In the case of a Union
-and Enum, the type will have a "outer type" and "inner type", and possibly several types
-inbetween, forming a chain.  You can choose to iterate this chain, or ignore it.
-In the case of Enums, the value may have an Identifier.  You can read the identifier, or
-value, or both.  In the case of Sequences, you can choose to iterate the sequence or skip
-over it, or possibly read it into another data structure like a String as a single operation.
+The decoder tracks its position within the buffer, and a "current node" which refers to the
+type that should be encoded at this position.  A block is a single node, but if it is an array
+or record you can "begin" the node to inspect its component nodes, calling "next" or "seek"
+to traverse within the parent node.
 
-The decoding API operates roughly like this:
-
-  $type= $dec->node_type;
-  $value= $dec->node_${PERLTYPE}_val;
-  $dec->next;
-
-There is also a shortcut for each perl-type called C<decode_${PERLTYPE}> which performs a pair
-of C<node_X_val> followed by C<next>.
-
-The patterns for each general Userp type are as follows:
+The API for each general Userp type are as follows:
 
 =over
 
 =item Integer
 
-  $dec->node_is_int;             # will be true
-  $int_val= $dec->node_int_val;
-  $int_val= $dec->decode_int;
-
-=item Enum
-
-  $dec->node_is_enum;            # will be true
-  $enum_type= $dec->node_type;   # outer type is enum
-  $type= $dec->node_type(1);     # $enum_type->member_type (i.e. thing actually being decoded)
-  $val= $dec->node_enum_index;   # index of enum member; always defined
-  $ident= $dec->node_ident_val;  # can be NULL if enum doesn't name all values
-  $val= $dec->decode_enum_index; # returns the enum member index; always defined
-  $val= $dec->decode_ident;      # returns the identifier; can be NULL
+  $dec->value_is_int;            # will be true
+  $int_val= $dec->value_number;  # read value without advancing
+  $int_val= $dec->decode_number; # read value and advance to next node
+  $int_val= $dec->decode;        # same as decode_number
   
-  # To retrieve literal enum value, use any normal decode methods appropriate to that type
-  $val= $dec->decode_int;
-  $val= $dec->decode_float;
-  $val= $dec->decode_array;
-  ... # etc
+  # for Integer with a named value
+  $dec->value_is_sym;            # will be true
+  $sym_name= $dec->value_symbol; # get symbolic name of value without advancing
+  $int= $dec->decode;            # default is still to decode as a number
 
-=item Union
+=item Symbol
 
-  $union_type= $dec->node_type;      # returns the type of the union itself
-  $subtype   = $dec->node_type(1)    # selected type within union
-  # and there can be further sub-types, recursively through unions and enums
-  $leaf_type = $dec->node_type(-1)   # the leaf-type, i.e. thing actually being decoded
-  $union_depth= $dec->node_is_union  # returns the *count* of nested unions
+  $dec->value_is_sym;            # will be true
+  $sym= $dec->value_symbol;      # read value without advancing
+  $sym= $dec->decode_symbol;     # read value and advance to next node
 
-In the case of a union of enums, node_type(-1) refers to the enum's member type, and
-node_type(-2) refers to the enum type itself, but C<node_is_enum> will still return true.
+=item Choice
 
-=item Sequence
-
-  if ($dec->node_is_seq) {
-    $dec->enter_seq;
-    while ($dec->node_type) {
-      my $ident= $dec->node_elem_ident; # not ident_val, because the value might also be an ident
-      # decode the node
-      ...
-      $dec->next;
-    }
-  }
+  $dec->node_type->is_choice;    # will be true
+  $dec->selector;                # arrayref of choice type selections
   
-  # or, if sequence is array-compatible:
-  my $arrayref= $dec->decode_array;
+  # the value is never a choice, so inspect $dec->value_type and $dec->value_is_...
+  # in order to determine what methods to use to extract the value.
 
-  # or, if sequence is record-compatible:
-  my $hashref= $dec->decode_record;
+=item Array
+
+  $dec->value_is_array;          # will be true
+  $dec->value_is_string;         # can be true
+  $dec->array_dim;               # arrayref of dimensions of array
+  $dec->array_elem_type;         # type of each element of array (May be 'Any')
+  $dec->value_array;             # returns arrayref with each delement decoded
+  $dec->begin;                   # enter array node and iterate element nodes
+  $i= $dec->node_index;          # After entering array, returns index of node
+  $dec->seek( $idx );            # After entering array, seek to array element
+  $dec->end;                     # After entering array, seek to node following the array
   
-  # or if sequence is string-compatible:
-  my $string= $dec->decode_string;
+  # if Array is string-compatible:
+  $string= $dec->value_string;
+  $string= $dec->decode_string;
 
-=item Ident
+=item Record
 
-Identifiers are not expected to be used as values much, but can be.
-
-  $ident= $enc->node_ident_val;
-  $ident= $enc->decode_ident;
+  $dec->value_is_record;         # will be true
+  $dec->begin;                   # enter record node and iterate field nodes
+  $n= $dec->node_name;           # After entering record, returns Symbol of field name
+  $dec->seek( $node_name );      # Seek to named field
+  $dec->end;                     # After entering record, seek to node following record
 
 =back
 
 =cut
-
-my $have_pack_Q; BEGIN { $have_pack_Q= eval { pack "Q>", 1 }? 1 : 0; }
 
 has scope      => ( is => 'ro', required => 1 );
 has buffer     => ( is => 'ro', required => 1 );
