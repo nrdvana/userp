@@ -97,185 +97,126 @@ The API for each general Userp type are as follows:
 
 =cut
 
-has scope      => ( is => 'ro', required => 1 );
-has buffer     => ( is => 'ro', required => 1 );
-has bigendian  => ( is => 'rw', trigger => \&_change_endian );
+has scope        => ( is => 'ro', required => 1 );
+has bigendian    => ( is => 'ro' );
+has buffer_ref   => ( is => 'rwp' );
+sub buffer          { ${ shift->buffer_ref } }
+has root_type    => ( is => 'ro', required => 1 );
+
+has _bitpos    => ( is => 'rw' );
 has _remainder => ( is => 'rw' );
 has _iterstack => ( is => 'rw' );
 
-push @Userp::PP::Decoder::BE::ISA, __PACKAGE__;
+sub node_type  { $_[0]{_iterstack}[-1]{node_type} }
+sub node_index { $_[0]{_iterstack}[-1]{i} }
+sub node_name  { $_[0]{_iterstack}[-1]{fieldname} }
+sub value_type { $_[0]{_iterstack}[-1]{value_type} }
 
 sub BUILD {
 	my ($self, $args)= @_;
-	$self->_change_endian;
-	pos(${$self->buffer}) ||= 0;
+	# If user supplied 'buffer' instead of buffer_ref, make a ref automatically.
+	if (!$self->buffer_ref && defined $args->{buffer}) {
+		$self->_set_buffer_ref(\(my $buf= $args->{buffer}));
+	}
+	pos(${$self->buffer_ref}) ||= 0; # user can set position, but needs to be defined regardless
+	$self->_iterstack([{ node_type => $self->root_type }]);
+	$self->_parse_node;
 }
 
-sub _change_endian {
+sub _parse_node {
 	my $self= shift;
-	my $be= $self->bigendian;
-	if ($be && ref($self) !~ /::BE$/) { bless $self, ref($self).'::BE'; }
-	if (!$be && ref($self) =~ /(.*?)::BE$/) { bless $self, $1; }
+	my $it= $self->_iterstack->[-1];
+	my $t= $it->{node_type};
+	if ($t->isa_int) {
+		return $self->_parse_int;
+	} elsif ($t->isa_array) {
+		return $self->_parse_array;
+	} else {
+		croak "unimplemented";
+	}
 }
 
-our $EOF= \"EOF";
-
-sub node_type {
-	my $self= shift;
-	return $self->parent->buffer_type unless $self->_iterstack;
-	return $self->_iterstack->[-1]{type};
-}
-
-sub decode {
+sub _parse_int {
 	my ($self)= @_;
-	my $type= $self->_decode_typeid;
-	my $value= $self->_decode($type);
-	return $value;
-}
-
-sub decode_Integer {
-	my ($self, $type)= @_;
-	if (defined (my $bits= $type->bitsizeof)) {
-		return $type->min_val unless $bits;
-		return $self->decode_qty($bits) + $type->min_val;
+	my $it= $self->_iterstack->[-1];
+	my $t= $it->{value_type};
+	$it->{int}= $self->_decode_int($t);
+	if ($t->names) {
+		$it->{sym}= $t->_name_by_val->{$it->{int}};
 	}
-	my $ofs= $self->decode_vqty;
-	return $type->min_val + $ofs if defined $type->min_val;
-	return $type->max_val - $ofs if defined $type->max_val;
-	return (($ofs & 1)? (-$ofs-1) : $ofs) >> 1;
 }
 
-sub decode_Enum {
-	my ($self, $type)= @_;
-	if ($type->encode_literal) {
-		croak "Unimplemented";
-		my $val= $self->decode_Integer($type->members->[0][1]);
+sub _parse_array {
+	my ($self)= @_;
+	my $it= $self->_iterstack->[-1];
+	my $t= $it->{value_type};
+	$it->{elem_type}= $t->elem_type || $self->_decode_typeref;
+	$it->{dims}= $t->dims || [ (undef) x $self->_decode_vqty ];
+	my $n= 1;
+	for (@{ $it->{dims} }) {
+		$_= $t->dim_type? $self->_decode_int($t->dim_type) : $self->_decode_vqty
+			unless defined $_;
+		$n *= $_;
 	}
-	my $bits= $type->bitsizeof;
-	my $val= $self->decode_qty($bits);
-	croak "Enum out of bounds" if $val > $#{$type->members};
-	return $type->members->[$val][0];
+	$it->{n}= $n;
 }
 
-sub decode_Union {
-	croak "Unimplemented";
-}
-
-=cut
-sub decode_Sequence {
-	my ($self, $type)= @_;
-	my $len= $type->len_type? $self->decode_Integer($type->len_type) : $type->const_len;
-	my $elem_spec= $type->elem_spec;
-	my @result;
-	while (1) {
-		my ($elem_idx, $elem_type, $elem_ident);
-		if ($type->sparse) {
-			if ($type->named_elems) {
-				# Spare named elems which might refer to elem_spec:
-				# Read a signed var-int.  Values 0..#members refer to elem_spec, values above #members
-				# are an identifier ID, and negative values are an inline identifier. 
-				my $val= $self->decode_vqty;
-				if ($val < 0) {
-					$elem_ident= $self->decode_ident_suffix;
-					$elem_type= $self->decode_typeid;
-				} elsif (!$val < 
-		my $i= @result;
-		my $elem_type= ref $elem_spec ne 'ARRAY'? $elem_spec
-			: $i < @{$elem_spec}? ( ref $elem_spec->[$i] eq 'ARRAY'? $elem_spec->[$i][0] : $elem_spec->[$i] )
-			: undef;
-		my $
-	croak "Unimplemented";
-}
-=cut
-
-sub decode_vqty {
-	my $self= shift;
-	return delete $self->{remainder} if defined $self->{remainder};
-	pos ${$self->buffer} < length ${$self->buffer} or die $EOF;
-	my $switch= unpack('C', ${$self->buffer});
-	if (!($switch & 1)) {
-		++ pos ${$self->buffer};
-		return $switch >> 1;
+sub _begin_array {
+	my ($self, $indexed)= @_;
+	my $it= $self->_iterstack->[-1];
+	my $t= $it->{value_type};
+	push @{ $self->_iterstack }, { node_type => $it->{elem_type}, node_index => 0 };
+	if ($it->{elem_pos}) {
+		my $p= pos ${ $self->buffer_ref };
+		$it->{elem_pos}{0}= $self->_bitpos? [ $self->_bitpos, $p ] : $p;
 	}
-	return !($switch & 2)? $self->decode_qty(16) >> 2
-		:  !($switch & 4)? $self->decode_qty(32) >> 3
-		: $switch != 0xFF? $self->decode_qty(64) >> 3
-		: do {
-			++ pos ${$self->buffer};
-			my $n= $self->decode_qty(8);
-			$n= $self->decode_qty(16) if $n == 0xFF;
-			croak "Refusing to decode ludicrously large integer value" if $n == 0xFFFF;
-			$self->decode_qty(8 * (8 + $n));
-		};
+	$self->_parse_node;
 }
 
-sub Userp::PP::Decoder::BE::decode_vqty {
-	my $self= shift;
-	return delete $self->{remainder} if defined $self->{remainder};
-	pos ${$self->buffer} < length ${$self->buffer} or die $EOF;
-	my $switch= unpack('C', ${$self->buffer});
-	if ($switch < 0x80) {
-		++ pos ${$self->buffer};
-		return $switch;
-	}
-	return $self->decode_qty(
-		$switch < 0xC0? 14
-		: $switch < 0xE0? 29
-		: $switch < 0xFF? 61
-		: do {
-			++ pos ${$self->buffer};
-			my $n= $self->decode_qty(8);
-			$n= $self->decode_qty(16) if $n == 0xFF;
-			croak "Refusing to decode ludicrously large integer value" if $n == 0xFFFF;
-			8 * (8 + $n)
+sub _decode_int {
+	my ($self, $t)= @_;
+	if ($t->bitlen) {
+		my $v= $self->_decode_qty($t->bitlen);
+		if ($t->bits && $t->min < 0) {
+			# sign-extend
+			$v= Userp::Bits::sign_extend($v, $t->bits);
 		}
-	);
+		Userp::Error::Domain->assert_minmax($v, $t->min, $t->max, 'Value of type '.$t->name);
+		return $v;
+	} elsif (defined $t->min) {
+		return $t->min + $self->_decode_vqty;
+	} elsif (defined $t->max) {
+		return $t->max - $self->_decode_vqty;
+	} else {
+		my $qty= $self->_decode_vqty($t->bits);
+		return $qty & 1? -($qty>>1) : ($qty>>1);
+	}
 }
 
-sub decode_qty {
+sub _decode_qty {
 	my ($self, $bits)= @_;
-	my $bytes= ($bits+7) >> 3;
-	(pos(${$self->buffer}) + $bytes) <= length ${$self->buffer} or die $EOF;
-	my $buf= substr ${$self->buffer}, pos(${$self->buffer}), $bytes;
-	pos(${$self->buffer}) += $bytes;
-	my $val= $self->_qty_from_bytes($buf);
-	if ($bits & 7) {
-		# If not a whole number of bytes, clear some bits at the top
-		if ($bits > ($have_pack_Q? 64 : 32)) {
-			use bigint;
-			$val &= (1 << $bits)-1;
-		}
-		else {
- 			$val &= (1 << $bits)-1;
-		}
+	$bits > 0 or croak "BUG: bits must be positive in decode_qty($bits)";
+	$self->_iterstack->[-1]{align} < 3? (
+		$self->bigendian
+			? Userp::Bits::read_bits_be(${$self->{buffer_ref}}, $self->{_bitpos}, $bits)
+			: Userp::Bits::read_bits_le(${$self->{buffer_ref}}, $self->{_bitpos}, $bits)
+	) : (
+		$self->bigendian
+			? Userp::Bits::read_int_be(${$self->{buffer_ref}}, $bits)
+			: Userp::Bits::read_int_le(${$self->{buffer_ref}}, $bits)
+	)
+}
+
+sub _decode_vqty {
+	my ($self, $value)= @_;
+	$value >= 0 or croak "BUG: value must be positive in decode_vqty($value)";
+	if ($self->{_bitpos}) {
+		++pos(${ $self->buffer_ref });
+		$self->{_bitpos}= 0;
 	}
-	return $val;
-}
-
-sub _qty_from_bytes {
-	my ($self, $bytes)= @_;
-	length $bytes <= 4? (
-		length $bytes == 1? unpack('C', $bytes)
-		: length $bytes == 2? unpack('v', $bytes)
-		: length $bytes == 4? unpack('V', $bytes)
-		:                     unpack('V', $bytes."\0")
-	) : length $bytes <= 8 && $have_pack_Q? (
-		length $bytes == 8? unpack('Q<', $bytes)
-		: unpack('Q<', $bytes . "\0\0\0")
-	) : Math::BigInt->from_bytes(scalar reverse $bytes);
-}
-
-sub Userp::PP::Decoder::BE::_qty_from_bytes {
-	my ($self, $bytes)= @_;
-	length $bytes <= 4? (
-		length $bytes == 1? unpack('C', $bytes)
-		: length $bytes == 2? unpack('n', $bytes)
-		: length $bytes == 4? unpack('N', $bytes)
-		:                     unpack('N', "\0".$bytes)
-	) : length $bytes <= 8 && $have_pack_Q? (
-		length $bytes == 8? unpack('Q>', $bytes)
-		: unpack('Q>', ("\0"x(8-length $bytes)).$bytes)
-	) : Math::BigInt->from_bytes($bytes);
+	$self->bigendian
+		? Userp::Bits::read_vqty_be(${$self->{buffer_ref}})
+		: Userp::Bits::read_vqty_le(${$self->{buffer_ref}})
 }
 
 1;
