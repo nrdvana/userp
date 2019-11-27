@@ -22,6 +22,15 @@ sub unsigned_max {
 	$bits <= 1? 0 : $bits < 64? (1<<$bits)-1 : $bits == 64? ~0 : Math::BigInt->bone->blsft($bits)->bdec;
 }
 
+sub sign_extend {
+	my ($n, $bits)= @_;
+	use integer;
+	return $n unless $n >> ($bits-1); # don't mess with positive values
+	return $n+0 if $bits == 64; # addition in scope of 'use integer' becomes signed.
+	return (-1 << $bits) | $n if $bits < 64;
+	return Math::BigInt->new(-1)->blsft($bits) | $n;
+}
+
 sub pack_bits_le {
 	# (bits, value)
 	my $enc= ref($_[1])? reverse($_[1]->as_bytes) : pack('Q<',$_[1]);
