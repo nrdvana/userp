@@ -21,7 +21,10 @@ todo "Bits32 not written" => sub {
 sub test_bits_api {
 	my $class= shift;
 	subtest sign_extend => sub { test_sign_extend($class) };
-	subtest bitpacking => sub { test_bitpacking($class) };
+	subtest pack_bits => sub { test_pack_bits($class) };
+	subtest concat_bits => sub { test_concat_bits($class) };
+	subtest read_bits => sub { test_read_bits($class) };
+	#subtest bitpacking => sub { test_bitpacking($class) };
 }
 
 sub test_sign_extend {
@@ -41,6 +44,88 @@ sub test_sign_extend {
 	for (@tests) {
 		my ($val, $bits, $expected)= @$_;
 		is( $sign_extend->($val, $bits), $expected, "sign_extend($val, $bits)" );
+	}
+	done_testing;
+}
+
+sub test_pack_bits {
+	my $class= shift;
+	my ($pack_bits_le, $pack_bits_be)= map $class->can($_), qw( pack_bits_le pack_bits_be );
+	my @tests= (
+		# value, bits, encoding_le encoding_be
+		[ 0,  1, "\x00", "\x00" ],
+		[ 1,  1, "\x01", "\x80" ],
+		[ 1,  2, "\x01", "\x40" ],
+		[ 1,  3, "\x01", "\x20" ],
+		[ 1,  4, "\x01", "\x10" ],
+		[ 1,  5, "\x01", "\x08" ],
+		[ 1,  6, "\x01", "\x04" ],
+		[ 1,  7, "\x01", "\x02" ],
+		[ 1,  8, "\x01", "\x01" ],
+		[ 1,  9, "\x01\x00", "\x00\x80" ],
+		[ 1, 15, "\x01\x00", "\x00\x02" ],
+		[ 1, 16, "\x01\x00", "\x00\x01" ],
+		[ 1, 17, "\x01\x00\x00", "\x00\x00\x80" ],
+		[ 1, 23, "\x01\x00\x00", "\x00\x00\x02" ],
+		[ 1, 24, "\x01\x00\x00", "\x00\x00\x01" ],
+		[ 1, 25, "\x01\x00\x00\x00", "\x00\x00\x00\x80" ],
+		[ 1, 31, "\x01\x00\x00\x00", "\x00\x00\x00\x02" ],
+		[ 1, 32, "\x01\x00\x00\x00", "\x00\x00\x00\x01" ],
+		[ 1, 33, "\x01\x00\x00\x00\x00", "\x00\x00\x00\x00\x80" ],
+		[ 1, 63, "\x01\x00\x00\x00\x00\x00\x00\x00", "\x00\x00\x00\x00\x00\x00\x00\x02" ],
+		[ 1, 64, "\x01\x00\x00\x00\x00\x00\x00\x00", "\x00\x00\x00\x00\x00\x00\x00\x01" ],
+		[ 1, 65, "\x01\x00\x00\x00\x00\x00\x00\x00\x00", "\x00\x00\x00\x00\x00\x00\x00\x00\x80" ],
+	);
+	for (@tests) {
+		my ($value, $bits, $le, $be)= @$_;
+		is( $pack_bits_le->($bits, $value), $le, "pack_bits_le($bits,$value)" );
+		is( $pack_bits_be->($bits, $value), $be, "pack_bits_be($bits,$value)" );
+	}
+	done_testing;
+}
+
+sub test_concat_bits {
+	my $class= shift;
+	my ($concat_bits_le, $concat_bits_be)= map $class->can($_), qw( concat_bits_le concat_bits_be );
+	my @tests= (
+		# value_and_bits_list, encoding_le, encoding_be
+		[ [ [1,1], [1,1] ], "\x03", "\xC0" ],
+		[ [ [1,3], [1,9] ], "\x09\x00", "\x20\x10" ],
+		[ [ [7,3], [7,3], [3,2], [1,1] ], "\xFF\x01", "\xFF\x80" ],
+		[ [ [7,3], [7,3], [7,3] ], "\xFF\x01", "\xFF\x80" ],
+	);
+	for (@tests) {
+		my ($list, $le, $be)= @$_;
+		my $name= "conct_bits_le ".join(' ', map '['.join(',', @$_).']', @$list);
+		my ($buf_le, $bitofs_le, $buf_be, $bitofs_be)= ('', 0, '', 0);
+		for (@$list) {
+			$concat_bits_le->($buf_le, $bitofs_le, $_->[1], $_->[0]);
+			$concat_bits_be->($buf_be, $bitofs_be, $_->[1], $_->[0]);
+		}
+		is( $buf_le, $le, $name );
+		is( $buf_be, $be, $name );
+	}
+	done_testing;
+}
+
+sub test_read_bits {
+	my $class= shift;
+	my ($read_bits_le, $read_bits_be)= map $class->can($_), qw( read_bits_le read_bits_be );
+	my @tests= (
+		# value_and_bits_list, encoding_le, encoding_be
+		[ [ [1,1], [1,1] ], "\x03", "\xC0" ],
+		[ [ [1,3], [1,9] ], "\x09\x00", "\x20\x10" ],
+		[ [ [7,3], [7,3], [3,2], [1,1] ], "\xFF\x01", "\xFF\x80" ],
+		[ [ [7,3], [7,3], [7,3] ], "\xFF\x01", "\xFF\x80" ],
+	);
+	for (@tests) {
+		my ($list, $le, $be)= @$_;
+		my $name= "conct_bits_le ".join(' ', map '['.join(',', @$_).']', @$list);
+		my ($buf_le, $bitofs_le, $buf_be, $bitofs_be)= ($le, 0, $be, 0);
+		for (@$list) {
+			is( $_->[0], $read_bits_le->($buf_le, $bitofs_le, $_->[1]), $name );
+			is( $_->[0], $read_bits_be->($buf_be, $bitofs_be, $_->[1]), $name );
+		}
 	}
 	done_testing;
 }
