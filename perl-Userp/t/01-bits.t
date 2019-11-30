@@ -3,6 +3,7 @@ use Data::Printer;
 
 sub main::_dump_hex { join ' ', map sprintf("%02X", $_), unpack 'C*', $_[0] }
 sub bigint { Math::BigInt->new(shift) }
+sub stringify_testvals { join ' ', map { ref $_ eq 'ARRAY'? '['.join(',', @$_).']' : $_ } @{$_[0]} }
 
 SKIP: {
 	skip "Bits64 not supported" unless eval "pack('Q<',1)";
@@ -22,11 +23,11 @@ todo "Bits32 not written" => sub {
 sub test_bits_api {
 	my $class= shift;
 	subtest sign_extend => sub { test_sign_extend($class) };
-	subtest pack_bits => sub { test_pack_bits($class) };
-	subtest bits => sub { test_bits($class) };
-	subtest ints => sub { test_ints($class) };
-	subtest vqty => sub { test_vqty($class) };
-	#subtest bitpacking => sub { test_bitpacking($class) };
+	subtest pack_bits   => sub { test_pack_bits($class) };
+	subtest bits        => sub { test_bits($class) };
+	subtest ints        => sub { test_ints($class) };
+	subtest vqty        => sub { test_vqty($class) };
+	subtest bitpacking  => sub { test_bitpacking($class) };
 }
 
 sub test_sign_extend {
@@ -99,7 +100,7 @@ sub test_bits {
 	);
 	for (@tests) {
 		my ($list, $le, $be)= @$_;
-		my $test_str= join(' ', map '['.join(',', @$_).']', @$list);
+		my $test_str= stringify_testvals($list);
 		my ($buf_le, $bitofs_le, $buf_be, $bitofs_be)= ('', 0, '', 0);
 		for (@$list) {
 			$concat_bits_le->($buf_le, $bitofs_le, $_->[1], $_->[0]);
@@ -110,7 +111,7 @@ sub test_bits {
 	}
 	for (@tests) {
 		my ($list, $le, $be)= @$_;
-		my $test_str= join(' ', map '['.join(',', @$_).']', @$list);
+		my $test_str= stringify_testvals($list);
 		my ($buf_le, $bitofs_le, $buf_be, $bitofs_be)= ($le, 0, $be, 0);
 		for (@$list) {
 			is( $_->[0], $read_bits_le->($buf_le, $bitofs_le, $_->[1]), "read_bits_le $test_str" );
@@ -129,7 +130,7 @@ sub test_ints {
 	);
 	for (@tests) {
 		my ($list, $le, $be)= @$_;
-		my $test_str= join(' ', map '['.join(',', @$_).']', @$list);
+		my $test_str= stringify_testvals($list);
 		my ($buf_le, $buf_be)= ('', '');
 		for (@$list) {
 			$concat_int_le->($buf_le, $_->[1], $_->[0]);
@@ -172,7 +173,7 @@ sub test_vqty {
 	);
 	for (@tests) {
 		my ($list, $le, $be)= @$_;
-		my $test_str= join(' ', @$list);
+		my $test_str= stringify_testvals($list);
 		my ($buf_le, $buf_be)= ('', '');
 		for (@$list) {
 			$concat_vqty_le->($buf_le, $_);
@@ -185,7 +186,7 @@ sub test_vqty {
 	}
 	for (@tests) {
 		my ($list, $le, $be)= @$_;
-		my $test_str= join(' ', @$list);
+		my $test_str= stringify_testvals($list);
 		my ($buf_le, $buf_be)= ($le, $be);
 		pos($buf_le)= 0; pos($buf_be)= 0;
 		for (@$list) {
@@ -211,25 +212,18 @@ sub test_bitpacking {
 		[ 3, [[1,1],[1,3],[1,4],[5,3],[0xFFF,16],[9,4]]],
 		[ 4, [[1,1],[1,3],[1,4],[5,3],[0xFFF,16],[9,4]]],
 		[ 5, [[1,1],[1,3],[1,4],[5,3],[0xFFF,16],[9,4]]],
-		[ 3, [[1]], "\x02", "\x01" ],
-		[ 2, [[1],[1,3],[1,7],[5],[0xFFF,16],[9,4]]],
-		[ 3, [[1],[1,3],[1,7],[5],[0xFFF,16],[9,4]]],
-		[ 4, [[1],[1,3],[1,7],[5],[0xFFF,16],[9,4]]],
+		[ 2, [[1,1],[1,3],[1,7],[0xFFF,16],[9,4]]],
+		[ 3, [[1,1],[1,3],[1,7],[0xFFF,16],[9,4]]],
+		[ 4, [[1,1],[1,3],[1,7],[0xFFF,16],[9,4]]],
 	);
 	for (@tests) {
 		my ($align, $pattern, $encoding_le, $encoding_be)= @$_;
-		subtest 'align='.$align.' '.join(',', map { '['.join(',',@$_).']' } @$pattern) => sub {
+		subtest 'align='.$align.' '.stringify_testvals($pattern) => sub {
 			my %buffers= ( le32 => ['',0], be32 => ['',0], le64 => ['',0], be64 => ['',0] );
 			for my $item (@$pattern) {
-				if (@$item > 1) {
-					$pad_align->(@$_, $align) for values %buffers;
-					$concat_bits_le->($buffers{le64}[0], $buffers{le64}[1], @{$item}[1,0]);
-					$concat_bits_be->($buffers{be64}[0], $buffers{be64}[1], @{$item}[1,0]);
-				} else {
-					$pad_align->(@$_, $align > 3? $align : 3) for values %buffers;
-					$concat_vqty_le->($buffers{le64}[0], $item->[0]);
-					$concat_vqty_be->($buffers{be64}[0], $item->[0]);
-				}
+				$pad_align->(@$_, $align) for values %buffers;
+				$concat_bits_le->($buffers{le64}[0], $buffers{le64}[1], @{$item}[1,0]);
+				$concat_bits_be->($buffers{be64}[0], $buffers{be64}[1], @{$item}[1,0]);
 			}
 
 			# If test has known encodings, verify them
@@ -249,13 +243,8 @@ sub test_bitpacking {
 			}
 			for my $item (@$pattern) {
 				$seek_align->(@$_, $align) for values %buffers;
-				if (@$item > 1) {
-					is( $read_bits_le->($buffers{le64}[0], $buffers{le64}[1], $item->[1]), $item->[0], "(64) read le $item->[1]" );
-					is( $read_bits_be->($buffers{be64}[0], $buffers{be64}[1], $item->[1]), $item->[0], "(64) read be $item->[1]" );
-				} else {
-					is( $read_vqty_le->($buffers{le64}[0], $buffers{le64}[1]), $item->[0], "(64) read le vqty" );
-					is( $read_vqty_be->($buffers{be64}[0], $buffers{be64}[1]), $item->[0], "(64) read be vqty" );
-				}
+				is( $read_bits_le->($buffers{le64}[0], $buffers{le64}[1], $item->[1]), $item->[0], "(64) read le $item->[1]" );
+				is( $read_bits_be->($buffers{be64}[0], $buffers{be64}[1], $item->[1]), $item->[0], "(64) read be $item->[1]" );
 			}
 		};
 	}
