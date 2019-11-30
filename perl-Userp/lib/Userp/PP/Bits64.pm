@@ -106,7 +106,7 @@ sub concat_int_le {
 		: $n == 4? pack 'L<', $_[2]
 		: $n == 8? pack 'Q<', $_[2]
 		: $n < 8? substr(pack('Q<', $_[2]), 0, $n)
-		: reverse substr(Math::BigInt->new($_[2])->as_bytes, -$n);
+		: scalar reverse substr(Math::BigInt->new($_[2])->as_bytes, -$n);
 }
 
 sub concat_int_be {
@@ -125,15 +125,18 @@ sub concat_vqty_le {
 	my $value= $_[1];
 	$_[0] .= $value < 0x80? pack('C',$value<<1)
 		: $value < 0x4000? pack('S<',($value<<2)+1)
-		: $value < 0x20000000? pack('L<',($value<<3)+3)
-		: $value < 0x1FFFFFFF_FFFFFFFF? pack('Q<',($value<<3)+7)
+		: $value < 0x2000_0000? pack('L<',($value<<3)+3)
+		: $value < 0x1000_0000_0000_0000? pack('Q<',($value<<4)+7)
 		: do {
 			my $bytes= ref($value)? reverse($value->as_bytes) : pack('Q<',$value);
-			my $bcnt= length $bytes;
-			$bcnt >= 8 or croak "BUG: bigint wasn't 8 bytes long";
-			$bcnt -= 8;
-			$bcnt < 0xFFFF or croak "Refusing to encode ludicrously large integer value";
-			($bcnt < 0xFF? "\xFF".pack('C', $bcnt) : "\xFF\xFF".pack('S<', $bcnt)).$bytes
+			# needs to be a multiple of 4 bytes
+			$bytes .= "\0" x (4 - (length($bytes) & 3))
+				if length($bytes) & 3;
+			my $n= (length($bytes) >> 2) - 2;
+			$n < 0? croak "BUG: bigint wasn't 8 bytes long"
+			: $n < 0xFFF? pack('S<', ($n << 4) | 0xF) . $bytes
+			: $n < 0xFFFF_FFFF? "\xFF\xFF" . pack('L<', $n) . $bytes
+			: Userp::Error::ImplLimit->throw(message => "Refusing to encode ludicrously large integer value");
 		};
 }
 
@@ -142,15 +145,18 @@ sub concat_vqty_be {
 	my $value= $_[1];
 	$_[0] .= $value < 0x80? pack('C',$value)
 		: $value < 0x4000? pack('S>',0x8000 | $value)
-		: $value < 0x20000000? pack('L>',0xC000_0000 | $value)
+		: $value < 0x2000_0000? pack('L>',0xC000_0000 | $value)
 		: $value < 0x1000_0000_0000_0000? pack('Q>',0xE000_0000_0000_0000 | $value)
 		: do {
 			my $bytes= ref($value)? $value->as_bytes : pack('Q>',$value);
-			my $bcnt= length $bytes;
-			$bcnt >= 8 or croak "BUG: bigint wasn't 8 bytes long";
-			$bcnt -= 8;
-			$bcnt < 0xFFFF or croak "Refusing to encode ludicrously large integer value";
-			($bcnt < 0xFF? "\xFF".pack('C', $bcnt) : "\xFF\xFF".pack('S>', $bcnt)).$bytes
+			# needs to be a multiple of 4 bytes
+			$bytes= ("\0" x (4 - (length($bytes) & 3))) . $bytes
+				if length($bytes) & 3;
+			my $n= (length($bytes) >> 2) - 2;
+			$n < 0? croak "BUG: bigint wasn't 8 bytes long"
+			: $n < 0xFFF? pack('S>', 0xF000 | $n).$bytes
+			: $n < 0xFFFF_FFFF? "\xFF\xFF".pack('L>', $n).$bytes
+			: Userp::Error::ImplLimit->throw(message => "Refusing to encode ludicrously large integer value");
 		};
 }
 
@@ -176,7 +182,7 @@ sub read_bits_le {
 		$v >>= $bit_remainder;
 	}
 	else {
-		$v= Math::BigInt->from_bytes(reverse $bytes);
+		$v= Math::BigInt->from_bytes(scalar reverse $bytes);
 		$v->brsft($bit_remainder) if $bit_remainder;
 	}
 	return $v;
@@ -209,14 +215,15 @@ sub read_int_le {
 	my $n= ($_[1]+7)>>3;
 	pos($_[0])+$n <= length($_[0])
 		or die Userp::Error::EOF->for_buf($_[0], $n, 'int-'.$n);
-	my $buf= substr($_[0], (pos($_[0])+=1)-1, $n);
+	my $buf= substr($_[0], pos $_[0], $n);
+	pos($_[0])+= $n;
 	return ord $buf if $n == 1;
 	return unpack 'S<', $buf if $n == 2;
 	return unpack 'L<', $buf if $n == 4;
 	return unpack 'Q<', $buf if $n == 8;
 	return unpack('L<', $buf."\0")&0xFFFFFF if $n == 3;
 	return unpack('Q<', $buf."\0\0\0")&((1 << $_[1]) - 1) if $n < 8;
-	return Math::BigInt->from_bytes(reverse $buf);
+	return Math::BigInt->from_bytes(scalar reverse $buf);
 }
 
 sub read_int_be {
@@ -224,7 +231,8 @@ sub read_int_be {
 	my $n= ($_[1]+7)>>3;
 	pos($_[0])+$n <= length($_[0])
 		or die Userp::Error::EOF->for_buf($_[0], $n, 'int-'.$n);
-	my $buf= substr($_[0], (pos($_[0])+=1)-1, $n);
+	my $buf= substr($_[0], pos $_[0], $n);
+	pos($_[0])+= $n;
 	return ord $buf if $n == 1;
 	return unpack 'S>', $buf if $n == 2;
 	return unpack 'L>', $buf if $n == 4;
@@ -253,20 +261,25 @@ sub read_vqty_le {
 			or die Userp::Error::EOF->for_buf($_[0], 4, 'vqty-4');
 		return unpack('L<', substr($_[0], (pos($_[0])+=4)-4, 4)) >> 3;
 	}
-	elsif ($switch != 0xFF) {
+	elsif (!($switch & 8)) {
 		pos($_[0])+8 <= length($_[0])
 			or die Userp::Error::EOF->for_buf($_[0], 8, 'vqty-8');
-		return unpack('Q<', substr($_[0], (pos($_[0])+=8)-8, 8)) >> 3;
+		return unpack('Q<', substr($_[0], (pos($_[0])+=8)-8, 8)) >> 4;
 	} else {
-		pos($_[0])+10 <= length($_[0])
-			or die Userp::Error::EOF->for_buf($_[0], 10, 'vqty-N');
-		my $n= ord substr($_[0], (pos($_[0])+=2)-1, 1);
-		$n= unpack('S<', substr($_[0], (pos($_[0])+=2)-2, 2)) if $n == 0xFF;
-		$n < 0xFFFF or die Userp::Error::ImplLimit->new(message => "Refusing to decode ludicrously large integer value");
-		$n += 8;
+		pos($_[0])+6 <= length($_[0])
+			or die Userp::Error::EOF->for_buf($_[0], 6, 'vqty-N');
+		my $n= unpack('S<', substr($_[0], (pos($_[0])+=2)-2, 2));
+		if ($n == 0xFFFF) {
+			$n= unpack('L<', substr($_[0], (pos($_[0])+=4)-4, 4));
+			$n < 0xFFFF_FFFF or Userp::Error::ImplLimit->throw(message => "Refusing to decode ludicrously large integer value");
+		} else {
+			$n >>= 4;
+		}
+		# number of bytes is 8 + $n * 4
+		$n= ($n << 2) + 8;
 		pos($_[0]) + $n <= length($_[0])
 			or die Userp::Error::EOF->for_buf($_[0], $n, 'vqty-'.$n);
-		return Math::BigInt->from_bytes(reverse substr($_[0], (pos($_[0])+=$n)-$n, $n));
+		return Math::BigInt->from_bytes(scalar reverse substr($_[0], (pos($_[0])+=$n)-$n, $n));
 	}
 }
 
@@ -289,18 +302,23 @@ sub read_vqty_be {
 			or die Userp::Error::EOF->for_buf($_[0], 4, 'vqty-4');
 		return unpack('L>', substr($_[0], (pos($_[0])+=4)-4, 4)) & 0x1FFF_FFFF;
 	}
-	elsif ($switch < 0xFF) {
+	elsif ($switch < 0xF0) {
 		pos($_[0])+8 <= length($_[0])
 			or die Userp::Error::EOF->for_buf($_[0], 8, 'vqty-8');
 		return unpack('Q>', substr($_[0], (pos($_[0])+=8)-8, 8)) & 0x0FFF_FFFF_FFFF_FFFF;
 	}
 	else {
-		pos($_[0])+10 <= length($_[0])
-			or die Userp::Error::EOF->for_buf($_[0], 10, 'vqty-N');
-		my $n= ord substr($_[0], (pos($_[0])+=2)-1, 1);
-		$n= unpack('S>', substr($_[0], (pos($_[0])+=2)-2, 2)) if $n == 0xFF;
-		$n < 0xFFFF or die Userp::Error::ImplLimit->new(message => "Refusing to decode ludicrously large integer value");
-		$n += 8;
+		pos($_[0])+6 <= length($_[0])
+			or die Userp::Error::EOF->for_buf($_[0], 6, 'vqty-N');
+		my $n= unpack('S>', substr($_[0], (pos($_[0])+=2)-2, 2));
+		if ($n == 0xFFFF) {
+			$n= unpack('L>', substr($_[0], (pos($_[0])+=4)-4, 4));
+			$n < 0xFFFF_FFFF or Userp::Error::ImplLimit->throw(message => "Refusing to decode ludicrously large integer value");
+		} else {
+			$n &= 0xFFF;
+		}
+		# number of bytes is 8 + $n * 4
+		$n= ($n << 2) + 8;
 		pos($_[0]) + $n <= length($_[0])
 			or die Userp::Error::EOF->for_buf($_[0], $n, 'vqty-'.$n);
 		return Math::BigInt->from_bytes(substr($_[0], (pos($_[0])+=$n)-$n, $n));
