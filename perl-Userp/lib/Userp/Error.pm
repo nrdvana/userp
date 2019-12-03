@@ -22,6 +22,14 @@ sub for_buf_pos {
 	);
 }
 
+package Userp::Error::System;
+use Moo;
+extends 'Userp::Error';
+has '+message' => ( lazy => 1, default => sub { my $self= shift; join ': ', grep defined, $self->syscall, $self->errstr } );
+has errno  => ( is => 'rw', default => sub { $!+0 } );
+has errstr => ( is => 'rw', default => sub { $! } );
+has errset => ( is => 'rw', default => sub { +{ map { $!{$_}? ($_ => $!{$_}) : () } keys %! } } );
+
 package Userp::Error::ImplLimit;
 use Moo;
 extends 'Userp::Error';
@@ -60,6 +68,10 @@ use Moo;
 extends 'Userp::Error';
 
 package Userp::Error::NotInScope;
+use Moo;
+extends 'Userp::Error';
+
+package Userp::Error::Protocol;
 use Moo;
 extends 'Userp::Error';
 
