@@ -83,9 +83,10 @@ has bytes_read     => ( is => 'rwp' );
 
 has _buffer        => ( is => 'rw' );
 has _eof           => ( is => 'rw' );
-has _want_scopeid  => ( is => 'rw' );
-has _want_blockid  => ( is => 'rw' );
-has _want_blocklen => ( is => 'rw' );
+has _implied_scope => ( is => 'rw' );
+has _next_scope    => ( is => 'rw' );
+has _next_blockid  => ( is => 'rw' );
+has _next_blocklen => ( is => 'rw' );
 
 =head1 METHODS
 
@@ -158,6 +159,28 @@ sub _read_more {
 	$self->_read_until(1 + length $self->{_buffer});
 }
 
+=head2 next_block
+
+  my $block= $stream->next_block;
+
+Returns a L</Userp::StreamReader::DataBlock> if a complete data block is available.  If you set
+the L</fh> attribute, this will block execution until it has read enough data or hit EOF. If you
+did not set C<fh>, you need to call L</read> and then try again, checking for EOF on your own.
+If you reach EOF with data remaining in the internal buffer, this will die with an exception.
+
+=cut
+
+sub next_block {
+	my $self= shift;
+	{
+		my $block= $self->parse_inplace(\$self->{_buffer}, $self->{_offset});
+		return $block unless !$block && $self->fh && !$self->_eof;
+		# need more bytes.  Then try again
+		$self->_read_more;
+		redo;
+	}
+}
+
 =head2 parse_inplace
 
   my $block= $stream->parse_inplace( \$buffer, $offset );
@@ -188,27 +211,55 @@ sub parse_inplace {
 		$self->_want_scopeid(1);
 		$_[2] += 32;
 	}
-	#eval {
-	#	pos($$buffer_ref)= $_[2];
-	#	my $scope_id= !$self->_want_scopeid? undef
-	#		: $self->bigendian? Userp::Bits::read_vqty_be($$buffer_ref)
-	#		: Userp::Bits::read_vqty_le($$buffer_ref)
-	#	
-	#my $dec= Userp::Decoder->new(buffer_ref => $buffer_ref);
-	#my $scope_id= $self->_want_scopeid? $
-	#	
-	#}
-}
-
-sub next_block {
-	my $self= shift;
-	{
-		my $block= $self->parse_inplace(\$self->{_buffer}, $self->{_offset});
-		return $block unless !$block && $self->fh && !$self->_eof;
-		# need more bytes.  Then try again
-		$self->_read_more;
-		redo;
+	# check for end of buffer
+	return unless $_[2] < length $$buffer_ref;
+	# at this point, either need the block header or the block itself, or both
+	my ($scope, $block_id, $len);
+	# blocklen is set after reading the header.  If not set, need the header still.
+	if (!defined $self->_next_blocklen) {
+		unless (eval {
+			pos($$buffer_ref)= $_[2];
+			$scope= $self->_implied_scope
+				|| $self->get_scope(
+					$self->bigendian? Userp::Bits::read_vqty_be($$buffer_ref)
+					: Userp::Bits::read_vqty_le($$buffer_ref)
+				);
+			# scope determines whether there will be blockid and blocklen
+			$block_id= !$scope->block_has_id? 0
+				: $self->bigendian?  Userp::Bits::read_vqty_be($$buffer_ref)
+				: Userp::Bits::read_vqty_le($$buffer_ref);
+			$len= $scope->block_has_fixed_len? $scope->block_len
+				: $self->bigendian?  Userp::Bits::read_vqty_be($$buffer_ref)
+				: Userp::Bits::read_vqty_le($$buffer_ref);
+			# If reach here, then we have successfully parsed the block header
+			# and need to record our position.
+			$_[2]= pos($$buffer_ref);
+			$self->_next_scope($scope);
+			$self->_next_blockid($block_id);
+			$self->_next_blocklen($len);
+			1;
+		}) {
+			# If caught an EOF (the only exception that ought to be encountered above)
+			# then just return undef.  Else re-throw the error.
+			return undef if ref $@ && ref($@)->isa('Userp::Error::EOF');
+			Userp::Error::Protocol->throw(message => "Failed to read block header");
+		}
 	}
+	else {
+		$scope= $self->_next_scope;
+		$block_id= $self->_next_blockid;
+		$len= $self->next_blocklen;
+	}
+	# check for full block
+	return unless $_[2] + $len <= length $$buffer_ref;
+	# Have full block.  Create decoder for it.
+	my $dec= Userp::Decoder->new(
+		scope => $scope,
+		bigendian => $self->bigendian,
+		buffer_ref => $buffer_ref,
+		root_type => $scope->block_root_type,
+	);
+	# If the block is of type MetadataBlock, inflate it to an object, then look for next block.
 }
 
 1;
