@@ -12,14 +12,10 @@ our @api= qw(
 	seek_buffer_to_alignment
 	concat_bits_le
 	concat_bits_be
-	concat_int_le
-	concat_int_be
 	concat_vqty_le
 	concat_vqty_be
 	read_bits_le
 	read_bits_be
-	read_int_le
-	read_int_be
 	read_vqty_le
 	read_vqty_be
 	read_symbol_le

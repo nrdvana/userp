@@ -7,19 +7,34 @@ has message => ( is => 'ro', required => 1 );
 package Userp::Error::EOF;
 use Moo;
 extends 'Userp::Error';
-has '+message' => ( default => 'EOF' );
-has buffer => ( is => 'rw' );
-has pos    => ( is => 'rw' );
-has needed => ( is => 'rw' );
-has goal   => ( is => 'rw' );
+has '+message' => ( lazy => 1, required => 0 );
+has buffer_ref => ( is => 'rw' );
+has bitpos     => ( is => 'rw' );
+has needed     => ( is => 'rw' );
+has goal       => ( is => 'rw' );
 
-sub for_buf_pos {
-	my ($class, undef, $needed, $for)= @_;
-	my $lacking= pos($_[1]) + $needed - length($_[1]);
-	$class->new(
-		buffer => $_[1], pos => pos($_[1]), needed => $needed, for => $for,
-		message => 'Read overrun by '.$lacking.' bytes while reading '.$for
-	);
+sub _build_message {
+	my $self= shift;
+	my $msg= 'EOF';
+	$msg .= ' while reading '.$self->goal if defined $self->goal;
+	if ($self->needed) {
+		$msg .= defined $self->goal? ' of ' : ' while reading ';
+		$msg .= $self->needed & 8? $self->needed.' bits' : ($self->needed>>3).' bytes';
+		if (defined $self->buffer_ref && defined $self->bitpos) {
+			my $avail= (length(${$self->buffer_ref})<<3) - $self->bitpos;
+			$msg .= ' from buffer with '.($avail & 8? $avail.' bits' : ($avail>>3).' bytes').' remaining';
+		}
+	}
+	$msg;
+}
+
+sub for_buf {
+	my ($class, undef, $bytepos, $needed, $goal)= @_;
+	$class->new(buffer_ref => \$_[1], bitpos => $bytepos<<3, needed => $needed<<3, goal => $goal);
+}
+sub for_buf_bits {
+	my ($class, undef, $bitpos, $needed, $goal)= @_;
+	$class->new(buffer_ref => \$_[1], bitpos => $bitpos, needed => $needed, goal => $goal);
 }
 
 package Userp::Error::System;

@@ -25,7 +25,6 @@ sub test_bits_api {
 	subtest sign_extend => sub { test_sign_extend($class) };
 	subtest pack_bits   => sub { test_pack_bits($class) };
 	subtest bits        => sub { test_bits($class) };
-	subtest ints        => sub { test_ints($class) };
 	subtest vqty        => sub { test_vqty($class) };
 	subtest bitpacking  => sub { test_bitpacking($class) };
 }
@@ -97,6 +96,14 @@ sub test_bits {
 		[ [ [1,3], [1,9] ], "\x09\x00", "\x20\x10" ],
 		[ [ [7,3], [7,3], [3,2], [1,1] ], "\xFF\x01", "\xFF\x80" ],
 		[ [ [7,3], [7,3], [7,3] ], "\xFF\x01", "\xFF\x80" ],
+		[ [ [1,8], [0x80, 8], [0x7F, 8], [0xFF,8] ], "\x01\x80\x7F\xFF", "\x01\x80\x7F\xFF" ],
+		[ [ [1,16], [0x8000,16], [0x7FFF,16], [0xFFFF,16] ], "\x01\x00\x00\x80\xFF\x7F\xFF\xFF", "\x00\x01\x80\x00\x7F\xFF\xFF\xFF" ],
+		[ [ [1,32], [0x80000000,32] ], "\x01\x00\x00\x00\x00\x00\x00\x80", "\x00\x00\x00\x01\x80\x00\x00\x00" ],
+		[ [ [0x7FFFFFFF,32], [0xFFFFFFFF,32] ], "\xFF\xFF\xFF\x7F\xFF\xFF\xFF\xFF", "\x7F\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ],
+		[ [ [bigint(1),64] ], "\x01\x00\x00\x00\x00\x00\x00\x00", "\x00\x00\x00\x00\x00\x00\x00\x01" ],
+		[ [ [bigint(1)<<63,64] ], "\x00\x00\x00\x00\x00\x00\x00\x80", "\x80\x00\x00\x00\x00\x00\x00\x00" ],
+		[ [ [(bigint(1)<<63)-1,64] ], "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\x7F", "\x7F\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ],
+		[ [ [(bigint(1)<<64)-1,64] ], "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ],
 	);
 	for (@tests) {
 		my ($list, $le, $be)= @$_;
@@ -119,37 +126,6 @@ sub test_bits {
 		}
 	}
 	done_testing;
-}
-
-sub test_ints {
-	my $class= shift;
-	my ($concat_int_le, $concat_int_be, $read_int_le, $read_int_be)=
-		map $class->can($_), qw( concat_int_le concat_int_be read_int_le read_int_be );
-	my @tests= (
-		[ [[1,1],[7,3],[5,3],[0xFFF,16],[9,4]], "\x01\x07\x05\xFF\x0F\x09", "\x01\x07\x05\x0F\xFF\x09"],
-	);
-	for (@tests) {
-		my ($list, $le, $be)= @$_;
-		my $test_str= stringify_testvals($list);
-		my ($buf_le, $buf_be)= ('', '');
-		for (@$list) {
-			$concat_int_le->($buf_le, $_->[1], $_->[0]);
-			$concat_int_be->($buf_be, $_->[1], $_->[0]);
-		}
-		is( $buf_le, $le, "concat_int_le $test_str" )
-			or diag _dump_hex($buf_le);
-		is( $buf_be, $be, "concat_int_be $test_str" )
-			or diag _dump_hex($buf_be);
-	}
-	for (@tests) {
-		my ($list, $le, $be)= @$_;
-		my $test_str= join(' ', map '['.join(',', @$_).']', @$list);
-		my ($buf_le, $buf_be)= ($le, $be);
-		for (@$list) {
-			is( $read_int_le->($buf_le, $_->[1]), $_->[0], "read_int_le $test_str" );
-			is( $read_int_be->($buf_be, $_->[1]), $_->[0], "read_int_be $test_str" );
-		}
-	}
 }
 
 sub test_vqty {
@@ -187,12 +163,11 @@ sub test_vqty {
 	for (@tests) {
 		my ($list, $le, $be)= @$_;
 		my $test_str= stringify_testvals($list);
-		my ($buf_le, $buf_be)= ($le, $be);
-		pos($buf_le)= 0; pos($buf_be)= 0;
+		my ($buf_le, $buf_le_pos, $buf_be, $buf_be_pos)= ($le, 0, $be, 0);
 		for (@$list) {
 			# comparing bigint confuses Test2, so stringify
-			is( $read_vqty_le->($buf_le).'', $_.'', "read_vqty_le $test_str" );
-			is( $read_vqty_be->($buf_be).'', $_.'', "read_vqty_be $test_str" );
+			is( $read_vqty_le->($buf_le, $buf_le_pos).'', $_.'', "read_vqty_le $test_str" );
+			is( $read_vqty_be->($buf_be, $buf_be_pos).'', $_.'', "read_vqty_be $test_str" );
 		}
 	}
 }
