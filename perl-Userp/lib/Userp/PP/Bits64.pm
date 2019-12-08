@@ -124,8 +124,8 @@ sub concat_bits_be {
 }
 
 sub concat_vqty_le {
-	#my ($buffer, $value)= @_;
-	my $value= $_[1];
+	#my ($buffer, $bitpos, $value)= @_;
+	my $value= $_[2];
 	$_[0] .= $value < 0x80? pack('C',$value<<1)
 		: $value < 0x4000? pack('S<',($value<<2)+1)
 		: $value < 0x2000_0000? pack('L<',($value<<3)+3)
@@ -141,11 +141,12 @@ sub concat_vqty_le {
 			: $n < 0xFFFF_FFFF? "\xFF\xFF" . pack('L<', $n) . $bytes
 			: Userp::Error::ImplLimit->throw(message => "Refusing to encode ludicrously large integer value");
 		};
+	$_[1]= length($_[0])<<3;
 }
 
 sub concat_vqty_be {
-	#my ($buffer, $value)= @_;
-	my $value= $_[1];
+	#my ($buffer, $bitpos, $value)= @_;
+	my $value= $_[2];
 	$_[0] .= $value < 0x80? pack('C',$value)
 		: $value < 0x4000? pack('S>',0x8000 | $value)
 		: $value < 0x2000_0000? pack('L>',0xC000_0000 | $value)
@@ -161,6 +162,7 @@ sub concat_vqty_be {
 			: $n < 0xFFFF_FFFF? "\xFF\xFF".pack('L>', $n).$bytes
 			: Userp::Error::ImplLimit->throw(message => "Refusing to encode ludicrously large integer value");
 		};
+	$_[1]= length($_[0])<<3;
 }
 
 sub seek_buffer_to_alignment {

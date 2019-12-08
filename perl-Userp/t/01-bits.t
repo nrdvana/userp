@@ -150,10 +150,10 @@ sub test_vqty {
 	for (@tests) {
 		my ($list, $le, $be)= @$_;
 		my $test_str= stringify_testvals($list);
-		my ($buf_le, $buf_be)= ('', '');
+		my ($buf_le, $buf_le_pos, $buf_be, $buf_be_pos)= ('', 0, '', 0);
 		for (@$list) {
-			$concat_vqty_le->($buf_le, $_);
-			$concat_vqty_be->($buf_be, $_);
+			$concat_vqty_le->($buf_le, $buf_le_pos, $_);
+			$concat_vqty_be->($buf_be, $buf_be_pos, $_);
 		}
 		is( $buf_le, $le, "concat_vqty_le $test_str" )
 			or diag _dump_hex($buf_le);
