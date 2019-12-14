@@ -115,6 +115,16 @@ sub add_symbol {
 	return $id;
 }
 
+sub find_symbol_prefix {
+	my ($self, $value)= @_;
+	while (length $value) {
+		my $id= $self->symbol_id($value);
+		return ($value, $id) if $id;
+		substr($value,-1)= '';
+	}
+	return;
+}
+
 =head1 TYPE TABLE
 
 Like the symbol table, the type table is a simple array of types.  Each type gets a distinct ID
@@ -246,7 +256,7 @@ sub BUILD {
 		$self->_symbol_table([ undef ]);
 		$self->_type_table_ofs(0);
 		my $tAny= Userp::Type::Any->new(id => 1, name => 'Any');
-		my $tSym= Userp::Type::Any->new(id => 3, name => 'Symbol');
+		my $tSym= Userp::Type::Symbol->new(id => 3, name => 'Symbol');
 		$self->_type_table([
 			undef,
 			$tAny,

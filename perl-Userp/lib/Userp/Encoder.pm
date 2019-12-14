@@ -244,35 +244,36 @@ values, or a Choice that includes one or more of those.
 sub sym {
 	my ($self, $val)= @_;
 	my $type= $self->current_type;
-	# If $type is a choice, search for an option containing this symbol
-	
-	my $ident= $self->scope->find_ident($val);
-	if ($type == $self->scope->type_Ident) {
-		if (@{ $self->_choice_path }) {
-			# Choice path can't include a dynamic identifier unless the identifier is encoded
-			# separately.  So, if $ient->id is defined, then this encoding will have completely
-			# encoded the value.  If it is not defined, then we need to "encode an identifier"
-			# following the selector.
-			$self->_encode_initial_scalar($ident? $ident->id : undef);
-			if (!$ident) {
-				my $base= $self->scope->find_longest_ident_prefix($val);
-				$self->_encode_qty(($base->id << 1) + 1);
-				$self->_append_bytes(substr($val, length $base->name)."\0");
-			}
+	if (!$type) {
+		croak "Expected end()" if @{ $self->_enc_stack || [] };
+		croak "Can't encode after end of block";
+	}
+	if (!$type->isa_Symbol) {
+		die "wtf";
+		if ($type->isa_Any) {
+			$self->_set_current_type($self->scope->type_Symbol);
+			$self->_encode_vqty($self->current_type->id);
+		}
+		# TODO: If $type is a choice, search for an option containing this symbol
+		else {
+			croak "Can't encode ".$type->name." using sym() method";
 		}
 	}
-	elsif ($type->can('_option_for')) {
-		# If type is Union, push subtype if Ident and try again.
-		# TODO: try to DWIM and select any relevant Enum type before falling back to type=Ident.
-		$self->type($self->scope->type_Ident)->encode_ident($val);
+	if (my $sym_id= $self->scope->symbol_id($val)) {
+		$self->_encode_vqty($sym_id << 1);
 	}
-	elsif ($type->can('value_by_name')) {
-		defined (my $ival= $type->value_by_name($val))
-			or croak "Type ".$type->name." does not enumerate a value for identifier ".$val;
-		...
+	elsif (my ($prefix, $prefix_id)= $self->scope->find_symbol_prefix($val)) {
+		$self->_encode_vqty(($prefix_id << 1) | 1);
+		$val= substr($val, length $prefix);
+		utf8::encode($val);
+		$self->_encode_vqty(length $val);
+		${$self->buffer_ref} .= $val;
 	}
 	else {
-		croak "Can't encode identifier as type ".$type->name;
+		utf8::encode($val);
+		$self->_encode_vqty(1);
+		$self->_encode_vqty(length $val);
+		${$self->buffer_ref} .= $val;
 	}
 	$self->_next;
 }
@@ -403,24 +404,17 @@ sub _encode_qty {
 	my ($self, $bits, $value)= @_;
 	$bits > 0 or croak "BUG: bits must be positive in encode_qty($bits, $value)";
 	$value >= 0 or croak "BUG: value must be positive in encode_qty($bits, $value)";
-	$self->_cur_align < 3? (
-		$self->bigendian
-			? Userp::Bits::concat_bits_be(${$self->{buffer_ref}}, $self->{_bitpos}, $bits, $value)
-			: Userp::Bits::concat_bits_le(${$self->{buffer_ref}}, $self->{_bitpos}, $bits, $value)
-	) : (
-		$self->bigendian
-			? Userp::Bits::concat_int_be(${$self->{buffer_ref}}, $bits, $value)
-			: Userp::Bits::concat_int_le(${$self->{buffer_ref}}, $bits, $value)
-	)
+	$self->bigendian
+		? Userp::Bits::concat_bits_be(${$self->{buffer_ref}}, $self->{_bitpos}, $bits, $value)
+		: Userp::Bits::concat_bits_le(${$self->{buffer_ref}}, $self->{_bitpos}, $bits, $value)
 }
 
 sub _encode_vqty {
 	my ($self, $value)= @_;
 	$value >= 0 or croak "BUG: value must be positive in encode_vqty($value)";
-	$self->{_bitpos}= 0;
 	$self->bigendian
-		? Userp::Bits::concat_vqty_be(${$self->{buffer_ref}}, $value)
-		: Userp::Bits::concat_vqty_le(${$self->{buffer_ref}}, $value)
+		? Userp::Bits::concat_vqty_be(${$self->{buffer_ref}}, $self->{_bitpos}, $value)
+		: Userp::Bits::concat_vqty_le(${$self->{buffer_ref}}, $self->{_bitpos}, $value)
 }
 
 sub _encode_typeref {
