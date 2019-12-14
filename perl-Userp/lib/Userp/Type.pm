@@ -55,12 +55,12 @@ has spec       => ( is => 'lazy' );
 has align      => ( is => 'ro', default => 3 );
 has metadata   => ( is => 'ro' );
 
-sub isa_any { 0 }
-sub isa_int { 0 }
-sub isa_sym { 0 }
-sub isa_chc { 0 }
-sub isa_ary { 0 }
-sub isa_rec { 0 }
+sub isa_Any     { 0 }
+sub isa_Integer { 0 }
+sub isa_Symbol  { 0 }
+sub isa_Choice  { 0 }
+sub isa_Array   { 0 }
+sub isa_Record  { 0 }
 
 sub _bitlen {
 	my $x= shift;

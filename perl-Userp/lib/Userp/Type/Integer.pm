@@ -64,7 +64,22 @@ has max   => ( is => 'ro' );
 has bits  => ( is => 'ro' );
 has names => ( is => 'ro' );
 
-sub isa_int { 1 }
+sub isa_Integer { 1 }
+
+has _name_by_val => ( is => 'lazy' );
+has _val_by_name => ( is => 'lazy' );
+
+sub _build__name_by_val {
+	my $names= shift->names || [];
+	my $v= -1;
+	{ reverse map { ref $_ eq 'ARRAY'? ( $_->[0], ($v=$_->[1]) ) : ( $_ => ++$v ) } @$names }
+}
+
+sub _build__val_by_name {
+	my $names= shift->names || [];
+	my $v= -1;
+	{ map { ref $_ eq 'ARRAY'? ( $_->[0], ($v=$_->[1]) ) : ( $_ => ++$v ) } @$names }
+}
 
 sub _check_min_max_bits {
 	my ($min, $max, $bits)= @_;

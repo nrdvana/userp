@@ -30,6 +30,6 @@ but can make the API more convenient and help with integrating with the host lan
 has values => ( is => 'ro' );
 has prefix => ( is => 'ro' );
 
-sub isa_sym { 1 }
+sub isa_Symbol { 1 }
 
 1;

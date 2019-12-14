@@ -126,7 +126,7 @@ sub _build__option_tree {
 	$root;
 }
 
-sub isa_chc { 1 }
+sub isa_Choice { 1 }
 
 sub has_scalar_component { 1 }
 

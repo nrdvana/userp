@@ -18,6 +18,6 @@ See attributes of L<Userp::Type>.
 
 =cut
 
-sub isa_any { 1 }
+sub isa_Any { 1 }
 
 1;

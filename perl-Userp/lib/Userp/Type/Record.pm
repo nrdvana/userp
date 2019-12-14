@@ -54,7 +54,7 @@ has static_count     => ( is => 'ro' );
 has adhoc_name_type  => ( is => 'ro' );
 has adhoc_value_type => ( is => 'ro' );
 
-sub isa_rec { 1 }
+sub isa_Record { 1 }
 
 sub has_scalar_component { !defined shift->len_const }
 

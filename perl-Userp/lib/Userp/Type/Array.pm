@@ -46,7 +46,7 @@ has elem_type => ( is => 'ro' );
 has dim_type  => ( is => 'ro' );
 has dim       => ( is => 'ro' );
 
-sub isa_ary { 1 }
+sub isa_Array { 1 }
 
 sub _merge_self_into_attrs {
 	my ($self, $attrs)= @_;
