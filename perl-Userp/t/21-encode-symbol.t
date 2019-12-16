@@ -19,10 +19,10 @@ for (
 ) {
 	my ($symbol, $encoding_le, $encoding_be)= @$_;
 	my $enc_le= Userp::Encoder->new(scope => $scope, current_type => $scope->type_Symbol);
-	is( $enc_le->sym($symbol)->buffer, $encoding_le, "encode $symbol little-endian" )
+	is( $enc_le->str($symbol)->buffer, $encoding_le, "encode $symbol little-endian" )
 		or diag "encoded as: "._dump_hex($enc_le->buffer);
 	my $enc_be= Userp::Encoder->new(scope => $scope, current_type => $scope->type_Symbol, bigendian => 1);
-	is( $enc_be->sym($symbol)->buffer, $encoding_be, "encode $symbol big-endian" )
+	is( $enc_be->str($symbol)->buffer, $encoding_be, "encode $symbol big-endian" )
 		or diag "encoded as: "._dump_hex($enc_be->buffer);
 }
 

@@ -14,8 +14,7 @@ use Userp::Bits;
 =head1 DESCRIPTION
 
 This class is the API for serializing data.  The behavior of the encoder is highly dependent
-on the L</scope>, which defines the available defined types and symbol table and other encoding
-details like the endian-ness of the stream.
+on the L</scope>, which defines the available defined types and symbol table.
 
 The sequence of API calls depends on type of the value being encoded.  Here is a brief
 overview:
@@ -25,19 +24,19 @@ overview:
 =item Integer
 
   $enc->int($int_value);
-  $enc->sym($symbolic_name);   # for integer types with named values
+  $enc->str($symbolic_name);   # for integer types with named values
 
 =item Symbol
 
-  $enc->sym($symbolic_name);
+  $enc->str($symbolic_name);
 
-=item Choice
+=item Choice (or Any)
 
   $enc->sel($type)->...  # select a member (or sub-member) type
 
 Depending on which types are available in the Choice, you might need to specify which sub-type
 you are about to encode.  If the types are obvious, you can skip straight to the C<int> or
-C<sym> or C<type> or C<begin> method.
+C<str> or C<type> or C<begin> method.
 
 =item Array
 
@@ -204,76 +203,65 @@ sub int {
 	}
 	# Type should be integer, here.
 
-	# validate min/max
-	my $min= $type->min;
-	my $max= $type->max;
-	Userp::Error::Domain->assert_minmax($val, $min, $max, 'Type "'.$type->name.'" value');
-
-	# Pad to correct alignment
-	$self->_align($type->align);
-	# If defined as 2's complement then encode as a fixed number of bits, signed if min is negative.
-	if ($type->bits) {
-		$self->_encode_qty($type->bits, $val & ((1 << $type->bits)-1));
-	}
-	# If min and max are both defined, encode as a quantity counting from $min
-	elsif (defined $min && defined $max) {
-		$self->_encode_qty($type->bitlen, $val - $min);
-	}
-	# Else encode as a variable unsigned displacement from either $min or $max, or if neither of those
-	# are given, encode as the unsigned quantity shifted left to use bit 0 as sign bit.
-	else {
-		$self->_encode_vqty(
-			defined $min? $val - $min
-			: defined $max? $max - $val
-			: $val < 0? (-$val<<1) | 1
-			: $val<<1
-		);
-	}
+	$self->_encode_int($type, $val);
 	$self->_next;
 }
 
-=head2 sym
+=head2 str
 
-  $enc->sym($symbol)->... # Symbol object or plain string
+  $enc->str($string)->...
 
-Encode a symbol.  The current type must be Any, a Symbol type, an Integer type with named
-values, or a Choice that includes one or more of those.
+Encode a string.  The type must be one of the known string types (i.e. Arrays of characters or
+bytes), Symbol, an Integer with symbolic (enum) names, or a Choice including one of those.
+If the type is 'Any', it will default to the first (lowest type id) string type in the current
+Scope, else Symbol.
 
 =cut
 
-sub sym {
-	my ($self, $val)= @_;
+sub str {
+	my ($self, $str)= @_;
 	my $type= $self->current_type;
 	if (!$type) {
 		croak "Expected end()" if @{ $self->_enc_stack || [] };
 		croak "Can't encode after end of block";
 	}
-	if (!$type->isa_Symbol) {
-		die "wtf";
-		if ($type->isa_Any) {
-			$self->_set_current_type($self->scope->type_Symbol);
-			$self->_encode_vqty($self->current_type->id);
+	my ($choicetype, $choiceiter);
+	if ($type->isa_Choice) {
+		$choicetype= $type;
+		my @stack;
+		$choiceiter= sub {
+			...
+		};
+		$choiceiter->();
+	}
+	my $err;
+	{
+		if ($type->isa_Symbol) {
+			# TODO: verify that the value matches the rules for a Symbol
+			$self->_encode_symbol($str);
 		}
-		# TODO: If $type is a choice, search for an option containing this symbol
-		else {
-			croak "Can't encode ".$type->name." using sym() method";
+		elsif ($type->isa_Integer) {
+			if (defined (my $ival= $type->_val_by_name->{$str})) {
+				$self->_encode_int($type, $ival);
+			} else {
+				$err= "Integer type '".$type->name."' does not have enum for '".$str."'";
+			}
 		}
-	}
-	if (my $sym_id= $self->scope->symbol_id($val)) {
-		$self->_encode_vqty($sym_id << 1);
-	}
-	elsif (my ($prefix, $prefix_id)= $self->scope->find_symbol_prefix($val)) {
-		$self->_encode_vqty(($prefix_id << 1) | 1);
-		$val= substr($val, length $prefix);
-		utf8::encode($val);
-		$self->_encode_vqty(length $val);
-		${$self->buffer_ref} .= $val;
-	}
-	else {
-		utf8::encode($val);
-		$self->_encode_vqty(1);
-		$self->_encode_vqty(length $val);
-		${$self->buffer_ref} .= $val;
+		elsif ($type->isa_Array) {
+			# either array of bytes, or array of codepoints
+			# If bytes, need to encode string first
+			...
+		}
+		elsif ($type->isa_Any) {
+			$type= $self->scope->default_string_type;
+			redo;
+		}
+		if (defined $err) {
+			croak $err unless defined $choiceiter;
+			$err= undef;
+			redo if $choiceiter->();
+			croak "No options of choice-type '".$choicetype."' can encode the value '$str'";
+		}
 	}
 	$self->_next;
 }
@@ -391,15 +379,6 @@ sub end {
 	$self->_next;
 }
 
-=head2 str
-
-=cut
-
-sub str {
-	my ($self, $str)= @_;
-	$self;
-}
-
 sub _encode_qty {
 	my ($self, $bits, $value)= @_;
 	$bits > 0 or croak "BUG: bits must be positive in encode_qty($bits, $value)";
@@ -421,6 +400,55 @@ sub _encode_typeref {
 	my ($self, $type_id)= @_;
 	$type_id= $type_id->id if ref $type_id;
 	$self->_encode_vqty($type_id);
+}
+
+sub _encode_symbol {
+	my ($self, $val)= @_;
+	if (my $sym_id= $self->scope->symbol_id($val)) {
+		$self->_encode_vqty($sym_id << 1);
+	}
+	elsif (my ($prefix, $prefix_id)= $self->scope->find_symbol_prefix($val)) {
+		$self->_encode_vqty(($prefix_id << 1) | 1);
+		$val= substr($val, length $prefix);
+		utf8::encode($val);
+		$self->_encode_vqty(length $val);
+		${$self->buffer_ref} .= $val;
+	}
+	else {
+		utf8::encode($val);
+		$self->_encode_vqty(1);
+		$self->_encode_vqty(length $val);
+		${$self->buffer_ref} .= $val;
+	}
+}
+
+sub _encode_int {
+	my ($self, $type, $val)= @_;
+	# validate min/max
+	my $min= $type->min;
+	my $max= $type->max;
+	Userp::Error::Domain->assert_minmax($val, $min, $max, 'Type "'.$type->name.'" value');
+
+	# Pad to correct alignment
+	$self->_align($type->align);
+	# If defined as 2's complement then encode as a fixed number of bits, signed if min is negative.
+	if ($type->bits) {
+		$self->_encode_qty($type->bits, $val & ((1 << $type->bits)-1));
+	}
+	# If min and max are both defined, encode as a quantity counting from $min
+	elsif (defined $min && defined $max) {
+		$self->_encode_qty($type->bitlen, $val - $min);
+	}
+	# Else encode as a variable unsigned displacement from either $min or $max, or if neither of those
+	# are given, encode as the unsigned quantity shifted left to use bit 0 as sign bit.
+	else {
+		$self->_encode_vqty(
+			defined $min? $val - $min
+			: defined $max? $max - $val
+			: $val < 0? (-$val<<1) | 1
+			: $val<<1
+		);
+	}
 }
 
 #sub _encode_option_for_type {
