@@ -7,7 +7,7 @@ has message => ( is => 'ro', required => 1 );
 package Userp::Error::EOF;
 use Moo;
 extends 'Userp::Error';
-has '+message' => ( lazy => 1, required => 0 );
+has '+message' => ( lazy => 1, builder => 1, required => 0 );
 has buffer_ref => ( is => 'rw' );
 has bitpos     => ( is => 'rw' );
 has needed     => ( is => 'rw' );
@@ -53,30 +53,37 @@ has '+message' => ( default => 'Value exceeds implementation limits' );
 package Userp::Error::Domain;
 use Moo;
 extends 'Userp::Error';
-has '+message' => ( default => 'Value of out bounds' );
-has value => ( is => 'rw' );
-has min   => ( is => 'rw' );
-has max   => ( is => 'rw' );
+has '+message' => ( lazy => 1, builder => 1, required => 0 );
+has valtype => ( is => 'rw' );
+has value   => ( is => 'rw' );
+has min     => ( is => 'rw' );
+has max     => ( is => 'rw' );
+
+sub _build_message {
+	my $self= shift;
+	my $what= $self->valtype || 'Value';
+	return $what.' undefined' unless defined $self->value;
+	return $what.' "'.$self->value.'" greater than maximum bound "'.$self->max.'"'
+		if defined $self->max && $self->value > $self->max;
+	return $what.' "'.$self->value.'" less than minimum bound "'.$self->min.'"'
+		if defined $self->min && $self->value < $self->min;
+	return $what.' "'.$self->value.'" out of bounds';
+}
+
+sub new_minmax {
+	my ($class, $val, $min, $max, $what)= @_;
+	$class->new(value => $val, min => $min, max => $max, valtype => $what);
+}
 
 sub assert_minmax {
 	my ($class, $val, $min, $max, $what)= @_;
-	return unless defined $val;
-	if (defined $min && $val < $min) {
-		$what ||= 'Value';
-		$class->throw(
-			message => "$what '$val' out of bounds (min $min)",
-			value => $val, min => $min
-		);
-	}
-	if (defined $max && $val > $max) {
-		$what ||= 'Value';
-		$class->throw(
-			message => "$what '$val' out of bounds (max $max)",
-			value => $val, max => $max
-		);
-	}
-	$val;
+	return $val if defined $val && (!defined $min || $val >= $min) && (!defined $max || $val <= $max);
+	$class->new_minmax($val, $min, $max, $what)->throw;
 }
+
+package Userp::Error::API;
+use Moo;
+extends 'Userp::Error';
 
 package Userp::Error::Readonly;
 use Moo;

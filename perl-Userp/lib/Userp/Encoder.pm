@@ -101,6 +101,7 @@ has buffer_ref   => ( is => 'rw', lazy => 1, default => sub { \(my $x="") } );
 sub buffer          { ${ shift->buffer_ref } }
 has current_type => ( is => 'rwp', required => 1 );
 
+has _type_vtable => ( is => 'rw', default => sub { {} } );
 has _cur_align   => ( is => 'rw', default => 3 );
 has _bitpos      => ( is => 'rw' );
 has _enc_stack   => ( is => 'rw', default => sub { [] } );
@@ -126,6 +127,18 @@ sub _align {
 	}
 	$self->_cur_align($new_align);
 	$self;
+}
+
+sub _vtable_for {
+	my ($self, $type)= @_;
+	$self->_type_vtable->{$type->id} ||= (
+		$type->isa_Integer? $self->_gen_Integer_encoder($type)
+		: $type->isa_Symbol? $self->_gen_Symbol_encoder($type)
+		: $type->isa_Choice? $self->_gen_Choice_encoder($type)
+		: $type->isa_Array? $self->_gen_Array_encoder($type)
+		: $type->isa_Record? $self->_gen_Record_encoder($type)
+		: $self->_gen_Any_encoder($type) # $type->isa_Any
+	);
 }
 
 =head1 METHODS
@@ -179,31 +192,10 @@ sub int {
 		croak "Expected end()" if @{ $self->_enc_stack || [] };
 		croak "Can't encode after end of block";
 	}
-	if (!$type->isa_int) {
-		croak "Can't encode ".$type->name." using int() method";
-#	# If $type is a choice, search for an option compatible with this integer value
-#	if ($type->isa_choice) {
-#		my $opt_node= $type->_option_tree->{int}
-#			or croak "Must select sub-type of ".$type->name." before encoding an integer value";
-#		if ($opt_node->{values} && defined $opt_node->{values}{$val}) {
-#			$self->_encode_selector($opt_node->{values}{$val});
-#		}
-#		elsif ($opt_node->
-#
-#|| $opt_node->{ranges} || ($opt_node->{'.'} && defined $opt_node->{'.'}{merge_ofs})) {
-#			push @{ $self->_sel_paths }, { type => $type, opt_node => $opt_node };
-#		}
-#		elsif ($opt_node->{'.'}) {
-#			$self->_encode_selector($opt_node->{'.'}{sel_ofs});
-#		}
-#		else { croak "BUG" }
-#	}
-#	$type->isa_int
-#		or croak "Type ".$type->name." cannot encode integers";
-	}
-	# Type should be integer, here.
-
-	$self->_encode_int($type, $val);
+	my $enc_fn= $self->_vtable_for($type)->{int}
+		or croak "Can't encode ".$type->name." using int() method";
+	my $err= $enc_fn->($self, $val);
+	$err->throw if defined $err;
 	$self->_next;
 }
 
@@ -225,44 +217,10 @@ sub str {
 		croak "Expected end()" if @{ $self->_enc_stack || [] };
 		croak "Can't encode after end of block";
 	}
-	my ($choicetype, $choiceiter);
-	if ($type->isa_Choice) {
-		$choicetype= $type;
-		my @stack;
-		$choiceiter= sub {
-			...
-		};
-		$choiceiter->();
-	}
-	my $err;
-	{
-		if ($type->isa_Symbol) {
-			# TODO: verify that the value matches the rules for a Symbol
-			$self->_encode_symbol($str);
-		}
-		elsif ($type->isa_Integer) {
-			if (defined (my $ival= $type->_val_by_name->{$str})) {
-				$self->_encode_int($type, $ival);
-			} else {
-				$err= "Integer type '".$type->name."' does not have enum for '".$str."'";
-			}
-		}
-		elsif ($type->isa_Array) {
-			# either array of bytes, or array of codepoints
-			# If bytes, need to encode string first
-			...
-		}
-		elsif ($type->isa_Any) {
-			$type= $self->scope->default_string_type;
-			redo;
-		}
-		if (defined $err) {
-			croak $err unless defined $choiceiter;
-			$err= undef;
-			redo if $choiceiter->();
-			croak "No options of choice-type '".$choicetype."' can encode the value '$str'";
-		}
-	}
+	my $enc_fn= $self->_vtable_for($type)->{str}
+		or croak "Can't encode ".$type->name." using str() method";
+	my $err= $enc_fn->($self, $str);
+	$err->throw if defined $err;
 	$self->_next;
 }
 
@@ -289,18 +247,132 @@ Finish encoding the elements of a sequence, returning to the parent type, if any
 
 sub begin {
 	my $self= shift;
-	if ($self->current_type->isa_ary) {
-		my $array= $self->current_type;
+	my $type= $self->current_type;
+	if (!$type) {
+		croak "Expected end()" if @{ $self->_enc_stack || [] };
+		croak "Can't encode after end of block";
+	}
+	my $begin_fn= $self->_vtable_for($type)->{begin}
+		or croak "begin() is not relevant for type ".$type->name;
+	my $err= $self->$begin_fn(@_);
+	$err->throw if defined $err;
+	return $self;
+}
+
+sub _next {
+	my $self= shift;
+	if ((my $context= $self->_enc_stack->[-1])) {
+		my $err= $context->{next}->($self);
+		$err->throw if defined $err;
+	}
+	else {
+		$self->_set_current_type(undef);
+	}
+	return $self;
+}
+
+sub end {
+	my $self= shift;
+	my $context= $self->_enc_stack->[-1]
+		or croak "Can't call end() without begin()";
+	my $err= $context->{end}->($self);
+	$err->throw if defined $err;
+	$self->_next;
+}
+
+sub _encode_typeref {
+	my ($self, $type_id)= @_;
+	$type_id= $type_id->id if ref $type_id;
+	$self->_encode_vqty($type_id);
+}
+
+sub _gen_Integer_encoder {
+	my ($self, $type)= @_;
+	my $min= $type->effective_min;
+	my $max= $type->effective_max;
+	my $align= $type->effective_align;
+	my $bits= $type->effective_bits;
+	my $bits_fn= Userp::Bits->can($self->bigendian? 'concat_bits_be' : 'concat_bits_le');
+	my $vqty_fn= Userp::Bits->can($self->bigendian? 'concat_vqty_be' : 'concat_vqty_le');
+	my %methods;
+	# If a type has a declared number of bits, or if it has both a min and max value,
+	# then it gets encoded as a fixed number of bits.  For the case where min and max
+	# are defined and bits are not, the value is encoded as an offset from the minimum.
+	if (defined $bits) {
+		my $base= defined $type->bits? 0 : $min;
+		$methods{int}= sub {
+			return Userp::Error::Domain->new_minmax($_[1], $min, $max, 'Type "'.$type->name.'" value')
+				if $_[1] < $min || $_[1] > $max;
+			$_[0]->_align($align);
+			$bits_fn->(${$_[0]->{buffer_ref}}, $_[0]->{_bitpos}, $bits, $_[1] - $base);
+			return;
+		};
+	}
+	# If the type is unlimited, but has a min or max, then encode as a variable quantity
+	# offset from whichever limit was given.
+	elsif (defined $min || defined $max) {
+		$methods{int}= sub {
+			return Userp::Error::Domain->new_minmax($_[1], $min, $max, 'Type "'.$type->name.'" value')
+				if defined $min && $_[1] < $min or defined $max && $_[1] > $max;
+			$_[0]->_align($align);
+			$vqty_fn->(${$_[0]->{buffer_ref}}, $_[0]->{_bitpos}, defined $min? $_[1] - $min : $max - $_[1]);
+			return;
+		};
+	}
+	# If the type is fully unbounded, encode nonnegative integers as value * 2, and negative integers
+	# as value * 2 + 1
+	else {
+		$methods{int}= sub {
+			$_[0]->_align($align);
+			$vqty_fn->(${$_[0]->{buffer_ref}}, $_[0]->{_bitpos}, $_[1] < 0? (-$_[1]<<1) | 1 : $_[1]<<1);
+			return;
+		};
+	}
+	# If a type has names, then calling $encoder->str($enum_name) needs to look up the value
+	# for that name, and throw an error if it doesn't exist.
+	if ($type->names && @{ $type->names }) {
+		my $enc_int= $methods{int};
+		$methods{str}= sub {
+			my $val= $type->_val_by_name->{$_[1]};
+			return Userp::Error::Domain->new(valtype => 'Type "'.$type->name.'" enum', value => $_[1])
+				unless defined $val;
+			$enc_int->($_[0], $val);
+			return;
+		};
+	}
+	return \%methods;
+}
+
+sub _gen_Choice_encoder {
+	my ($self, $type)= @_;
+	my $sel_fn= sub {
+		
+	};
+	...
+}
+
+sub _gen_Array_encoder {
+	my ($self, $array)= @_;
+	my $vqty_fn= Userp::Bits->can($self->bigendian? 'concat_vqty_be' : 'concat_vqty_le');
+	my $dim_type= $array->dim_type;
+	my $dim_type_enc= $dim_type? $self->_vtable_for($dim_type)->{int}
+		: sub { $vqty_fn->(${$_[0]{buffer_ref}}, $_[0]{_bitpos}, $_[1]) };
+	my ($next_fn, $end_fn);
+	my $begin_fn= sub {
+		my $self= shift;
 		my $elem_type= $array->elem_type;
 		if (!$elem_type) {
 			$elem_type= shift;
-			unless (ref($elem_type) && ref($elem_type)->isa('Userp::Type')) {
+			if (ref($elem_type) && ref($elem_type)->isa('Userp::Type')) {
+				$self->scope->type_by_id($elem_type->id) == $elem_type
+					or croak "Type '".$elem_type->name."' is not in the current scope";
+			}
+			else {
 				my $t= $self->scope->type_by_name($elem_type)
 					or croak "No such type '$elem_type' (expected element type as first argument to begin()";
 				$elem_type= $t;
 			}
 		}
-		my $dim_type= $array->dim_type || $self->scope->type_Integer;
 		my @dim= @_;
 		my @typedim= $array->dim? @{$array->dim} : ();
 		# If the type specifies some dimensions, make sure they agree with supplied dimensions
@@ -317,164 +389,146 @@ sub begin {
 			}
 		}
 		
-		push @{ $self->_enc_stack }, { type => $array, dim => \@dim, elem_type => $elem_type, i => 0, n => scalar @dim };
+		push @{ $self->_enc_stack }, {
+			type => $array,
+			dim => \@dim,
+			elem_type => $elem_type,
+			i => 0,
+			n => scalar @dim,
+			next => $next_fn,
+			end => $end_fn,
+		};
 		
+		$self->_align($array->align);
 		# Encode the elem_type unless part of the array type
-		$self->_encode_typeref($elem_type) unless $array->elem_type;
+		$vqty_fn->(${$self->{buffer_ref}}, $self->{_bitpos}, $elem_type->id) unless $array->elem_type;
 		# Encode the number of dimensions unless part of the array type
-		$self->_encode_vqty(scalar @dim) unless @typedim;
+		$vqty_fn->(${$self->{buffer_ref}}, $self->{_bitpos}, scalar @dim) unless @typedim;
 		# Encode the list of dimensions, for each that wasn't part of the array type
 		my $n= 1;
 		for (0..$#dim) {
 			$n *= $dim[$_]; # TODO: check overflow
 			next if $typedim[$_];
-			if ($dim_type == $self->scope->type_Integer) {
-				$self->_encode_vqty($dim[$_]);
-			}
-			else {
-				local $self->{current_type}= $dim_type;
-				$self->int($dim[$_]);
-			}
+			$self->$dim_type_enc($dim[$_]);
 		}
 		
 		$self->_enc_stack->[-1]{n}= $n; # now store actual number of array elements pending
-		
 		$self->_set_current_type($n? $elem_type : undef);
-	}
-	elsif ($self->current_type->isa_rec) {
-		
-	}
-	else {
-		croak "begin() is not relevant for type ".$self->current_type->name;
-	}
-}
-
-sub _next {
-	my $self= shift;
-	my $context= $self->_enc_stack->[-1];
-	if (!$context) {
-		$self->_set_current_type(undef);
-	}
-	elsif (defined $context->{n}) {
+		return;
+	};
+	$next_fn= sub {
+		my $self= shift;
+		my $context= $self->_enc_stack->[-1];
 		if (++$context->{i} < $context->{n}) {
 			$self->_set_current_type($context->{elem_type});
 		} else {
 			$self->_set_current_type(undef);
 		}
-	}
-	return $self;
-}
-
-sub end {
-	my $self= shift;
-	my $context= $self->_enc_stack->[-1];
-	if (!$context) {
-		croak "Can't call end() without an array or record context";
-	}
-	elsif (defined $context->{n}) {
+		return;
+	};
+	$end_fn= sub {
+		my $self= shift;
+		my $context= $self->_enc_stack->[-1];
 		my $remain= $context->{n} - $context->{i};
 		croak "Expected $remain more elements before end()" if $remain;
 		pop @{ $self->_enc_stack };
-	}
-	$self->_next;
+		return;
+	};
+	return { begin => $begin_fn, end => $end_fn, next => $next_fn };
 }
 
-sub _encode_qty {
-	my ($self, $bits, $value)= @_;
-	$bits > 0 or croak "BUG: bits must be positive in encode_qty($bits, $value)";
-	$value >= 0 or croak "BUG: value must be positive in encode_qty($bits, $value)";
-	$self->bigendian
-		? Userp::Bits::concat_bits_be(${$self->{buffer_ref}}, $self->{_bitpos}, $bits, $value)
-		: Userp::Bits::concat_bits_le(${$self->{buffer_ref}}, $self->{_bitpos}, $bits, $value)
+sub _gen_Record_encoder {
+	my ($self, $record)= @_;
+	my $vqty_fn= Userp::Bits->can($self->bigendian? 'concat_vqty_be' : 'concat_vqty_le');
+	my $begin_fn= sub {
+		my $self= shift;
+		push @{ $self->_enc_stack }, { type => $record, pending => {} };
+		return;
+	};
+	my $end_fn= sub {
+		my $self= shift;
+		...;
+		return;
+	};
+	my $field_fn= sub {
+		my ($self, $name)= @_;
+		...;
+		return;
+	};
+	my $next_fn= sub {
+		...;
+		return;
+	};
+	return { begin => $begin_fn, field => $field_fn, end => $end_fn, next => $next_fn };
 }
 
-sub _encode_vqty {
-	my ($self, $value)= @_;
-	$value >= 0 or croak "BUG: value must be positive in encode_vqty($value)";
-	$self->bigendian
-		? Userp::Bits::concat_vqty_be(${$self->{buffer_ref}}, $self->{_bitpos}, $value)
-		: Userp::Bits::concat_vqty_le(${$self->{buffer_ref}}, $self->{_bitpos}, $value)
+sub _gen_Symbol_encoder {
+	my ($self, $type)= @_;
+	my $vqty_fn= Userp::Bits->can($self->bigendian? 'concat_vqty_be' : 'concat_vqty_le');
+	my $str_fn= sub {
+		my ($self, $val)= @_;
+		if (my $sym_id= $self->scope->symbol_id($val)) {
+			$vqty_fn->(${$_[0]{buffer_ref}}, $_[0]{_bitpos}, $sym_id << 1);
+		}
+		elsif (my ($prefix, $prefix_id)= $self->scope->find_symbol_prefix($val)) {
+			$vqty_fn->(${$_[0]{buffer_ref}}, $_[0]{_bitpos}, ($prefix_id << 1) | 1);
+			$val= substr($val, length $prefix);
+			utf8::encode($val);
+			$vqty_fn->(${$_[0]{buffer_ref}}, $_[0]{_bitpos}, length $val);
+			${$self->buffer_ref} .= $val;
+		}
+		else {
+			utf8::encode($val);
+			$vqty_fn->(${$_[0]{buffer_ref}}, $_[0]{_bitpos}, 1);
+			$vqty_fn->(${$_[0]{buffer_ref}}, $_[0]{_bitpos}, length $val);
+			${$self->buffer_ref} .= $val;
+		}
+		return;
+	};
+	return { str => $str_fn };
 }
 
-sub _encode_typeref {
-	my ($self, $type_id)= @_;
-	$type_id= $type_id->id if ref $type_id;
-	$self->_encode_vqty($type_id);
+sub _gen_Any_encoder {
+	my ($self, $type)= @_;
+	my $vqty_fn= Userp::Bits->can($self->bigendian? 'concat_vqty_be' : 'concat_vqty_le');
+	my $align= $type->align;
+	my $sel_fn= sub {
+		# Verify this type is in scope
+		$_[0]->scope->type_by_id($_[1]->id) == $_[1]
+			or return Userp::Error::API->new(message => 'Type "'.$_[1]->name.'" is not in the current scope');
+		# Encode the type selector
+		$_[0]->_align($align);
+		$vqty_fn->($_[0], $_[1]->id);
+		# And now that type is the current type
+		$_[0]->_set_current_type($_[1]);
+		return;
+	};
+	my $int_fn= sub {
+		my $int_t= $_[0]->scope->default_integer_type
+			or return Userp::Error::API->new(message => 'No default Integer type specified in scope');
+		$_[0]->_align($align);
+		$vqty_fn->($_[0], $int_t->id);
+		$_[0]->_vtable_for($int_t)->{int}->($_[0], $_[1]);
+		return;
+	};
+	my $str_fn= sub {
+		my $str_t= $_[0]->scope->default_string_type
+			or return Userp::Error::API->new(message => 'No default String type specified in scope');
+		$_[0]->_align($align);
+		$vqty_fn->($_[0], $str_t->id);
+		$_[0]->_vtable_for($str_t)->{str}->($_[0], $_[1]);
+		return;
+	};
+	my $begin_fn= sub {
+		my $seq_t= $_[0]->scope->default_sequence_type
+			or return Userp::Error::API->new(message => 'No default sequence type (array/record) specified in scope');
+		$_[0]->_align($align);
+		$vqty_fn->($_[0], $seq_t->id);
+		$_[0]->_vtable_for($seq_t)->{str}->($_[0], $_[1]);
+		return;
+	};
+	return { sel => $sel_fn, int => $int_fn, str => $str_fn, begin => $begin_fn };
 }
-
-sub _encode_symbol {
-	my ($self, $val)= @_;
-	if (my $sym_id= $self->scope->symbol_id($val)) {
-		$self->_encode_vqty($sym_id << 1);
-	}
-	elsif (my ($prefix, $prefix_id)= $self->scope->find_symbol_prefix($val)) {
-		$self->_encode_vqty(($prefix_id << 1) | 1);
-		$val= substr($val, length $prefix);
-		utf8::encode($val);
-		$self->_encode_vqty(length $val);
-		${$self->buffer_ref} .= $val;
-	}
-	else {
-		utf8::encode($val);
-		$self->_encode_vqty(1);
-		$self->_encode_vqty(length $val);
-		${$self->buffer_ref} .= $val;
-	}
-}
-
-sub _encode_int {
-	my ($self, $type, $val)= @_;
-	# validate min/max
-	my $min= $type->min;
-	my $max= $type->max;
-	Userp::Error::Domain->assert_minmax($val, $min, $max, 'Type "'.$type->name.'" value');
-
-	# Pad to correct alignment
-	$self->_align($type->align);
-	# If defined as 2's complement then encode as a fixed number of bits, signed if min is negative.
-	if ($type->bits) {
-		$self->_encode_qty($type->bits, $val & ((1 << $type->bits)-1));
-	}
-	# If min and max are both defined, encode as a quantity counting from $min
-	elsif (defined $min && defined $max) {
-		$self->_encode_qty($type->bitlen, $val - $min);
-	}
-	# Else encode as a variable unsigned displacement from either $min or $max, or if neither of those
-	# are given, encode as the unsigned quantity shifted left to use bit 0 as sign bit.
-	else {
-		$self->_encode_vqty(
-			defined $min? $val - $min
-			: defined $max? $max - $val
-			: $val < 0? (-$val<<1) | 1
-			: $val<<1
-		);
-	}
-}
-
-#sub _encode_option_for_type {
-#	my ($self, $subtype)= @_;
-#	if 
-#	my $type= $self->current_type;
-#	my @options= @{$self->_options }
-#	# If current type is "Any", just write the ID of the type
-#	if ($type == $self->scope->type_Any) {
-#		$
-#	my $opts= $self->_choice_options;
-#	(@$opts= grep { $_->{type} == $subtype or $_->{type}->isa_choice && $_->{type}->contains_type($subtype) } @$opts)
-#		or croak "Type ".$self->_choice_type->name." does not contain sub-type ".$subtype->name;
-#}
-#sub _encode_option_for_int {
-#}
-#sub _encode_option_for_sym {
-#}
-#sub _encode_option_for_typeref {
-#}
-#
-#
-#		or croak "Type ".$type->name." is not a valid option for ".$self->current_type->name;
-#	push @{ $self->_choice_path }, $self->current_type;
-#	$self->_set_current_type($type);
-#
 
 sub _encode_initial_scalar {
 	my ($self, $scalar_value)= @_;

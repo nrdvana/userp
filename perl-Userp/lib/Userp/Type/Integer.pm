@@ -66,6 +66,11 @@ has names => ( is => 'ro' );
 
 sub isa_Integer { 1 }
 
+has effective_min   => ( is => 'rwp' );
+has effective_max   => ( is => 'rwp' );
+has effective_bits  => ( is => 'rwp' );
+has effective_align => ( is => 'rwp' );
+
 has _name_by_val => ( is => 'lazy' );
 has _val_by_name => ( is => 'lazy' );
 
@@ -133,25 +138,38 @@ sub _merge_self_into_attrs {
 
 sub BUILD {
 	my $self= shift;
-	if ($self->bits) {
-		if (!defined $self->min || $self->min < 0) {
-			my ($min2s, $max2s)= Userp::Bits::twos_minmax($self->bits);
-			$self->{min}= $min2s unless defined $self->min;
-			$self->{max}= $max2s unless defined $self->max;
-			Userp::Error::Domain->assert_minmax($self->min, $min2s, $self->max, 'Integer min');
-			Userp::Error::Domain->assert_minmax($self->max, $self->min, $max2s, 'Integer max');
+	my ($min, $max, $bits, $align)= ($self->min, $self->max, $self->bits, $self->align);
+	if ($bits) {
+		# If bits attribute is defined, value is encoded in a fixed number of bits.
+		# Those bits are 2's complement if $min is negative or not set, unsigned otherwise.
+		if (!defined $min || $min < 0) {
+			my ($min2s, $max2s)= Userp::Bits::twos_minmax($bits);
+			$min= $min2s unless defined $min;
+			$max= $max2s unless defined $max;
+			Userp::Error::Domain->assert_minmax($min, $min2s, $max, 'Integer min');
+			Userp::Error::Domain->assert_minmax($max, $min, $max2s, 'Integer max');
 		}
 		else {
-			my $max= Userp::Bits::unsigned_max($self->bits);
-			$self->{min}= 0 unless defined $self->{min};
-			$self->{max}= $max unless defined $self->{max};
-			Userp::Error::Domain->assert_minmax($self->min, 0, $self->max, 'Integer min');
-			Userp::Error::Domain->assert_minmax($self->max, $self->min, $max, 'Integer max');
+			my $max_unsigned= Userp::Bits::unsigned_max($bits);
+			$min= 0 unless defined $min;
+			$max= $max_unsigned unless defined $max;
+			Userp::Error::Domain->assert_minmax($min, 0, $max, 'Integer min');
+			Userp::Error::Domain->assert_minmax($max, $min, $max, 'Integer max');
 		}
 	}
-	else {
-		Userp::Error::Domain->assert_minmax($self->max, $self->min, undef, 'Integer max');
+	elsif (defined $min && defined $max) {
+		# If min and max are both defined, bits is derived from the largest value that can be encoded
+		Userp::Error::Domain->assert_minmax($max, $min, undef, 'Integer max');
+		$bits= Userp::Bits::bitcount($max-$min);
 	}
+	else {
+		# variable-length integers are always byte-aligned or higher
+		$align= 3 if $align < 3;
+	}
+	$self->_set_effective_min($min);
+	$self->_set_effective_max($max);
+	$self->_set_effective_bits($bits);
+	$self->_set_effective_align($align);
 }
 
 1;

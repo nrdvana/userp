@@ -27,7 +27,7 @@ skipped over during decoding.
 
 The order of this list matters for the encoding of the first N C<static_count>.
 
-=head2 static_count
+=head2 fixed_count
 
 A count of how many elements of the C<fields> array will be written into every record.
 Any field beyond this will be available as a dynamic field.
