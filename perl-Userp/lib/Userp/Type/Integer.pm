@@ -160,7 +160,7 @@ sub BUILD {
 	elsif (defined $min && defined $max) {
 		# If min and max are both defined, bits is derived from the largest value that can be encoded
 		Userp::Error::Domain->assert_minmax($max, $min, undef, 'Integer max');
-		$bits= Userp::Bits::bitcount($max-$min);
+		$bits= Userp::Bits::bitlen($max-$min);
 	}
 	else {
 		# variable-length integers are always byte-aligned or higher

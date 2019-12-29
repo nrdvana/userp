@@ -31,6 +31,19 @@ sub sign_extend {
 	return Math::BigInt->new(-1)->blsft($bits) | $n;
 }
 
+my @_bitlen= ( 0, 1, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4 );
+sub bitlen {
+	my ($val)= @_;
+	return 0 unless $val;
+	return length($val->as_bin)-2 if ref $val; # TODO: use smarter algorithm
+	my $len= 0;
+	($val >>= 32, $len += 32) if $val >> 32;
+	($val >>= 16, $len += 16) if $val >> 16;
+	($val >>=  8, $len +=  8) if $val >>  8;
+	($val >>=  4, $len +=  4) if $val >>  4;
+	return $len + $_bitlen[$val]
+}
+
 sub pack_bits_le {
 	# (bits, value)
 	my $enc= ref($_[1])? reverse($_[1]->as_bytes) : pack('Q<',$_[1]);

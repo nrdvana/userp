@@ -6,6 +6,7 @@ our @api= qw(
 	twos_minmax
 	unsigned_max
 	sign_extend
+	bitlen
 	pack_bits_le
 	pack_bits_be
 	pad_buffer_to_alignment

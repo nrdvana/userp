@@ -23,6 +23,7 @@ todo "Bits32 not written" => sub {
 sub test_bits_api {
 	my $class= shift;
 	subtest sign_extend => sub { test_sign_extend($class) };
+	subtest bitlen      => sub { test_bitlen($class) };
 	subtest pack_bits   => sub { test_pack_bits($class) };
 	subtest bits        => sub { test_bits($class) };
 	subtest vqty        => sub { test_vqty($class) };
@@ -48,6 +49,45 @@ sub test_sign_extend {
 		is( $sign_extend->($val, $bits), $expected, "sign_extend($val, $bits)" );
 	}
 	done_testing;
+}
+
+sub test_bitlen {
+	my $bitlen_fn= shift->can('bitlen') || die;
+	my @tests= (
+		[ 0, 0 ],
+		[ 1, 1 ],
+		[ 2, 2 ],
+		[ 3, 2 ],
+		[ 4, 3 ],
+		[ 5, 3 ],
+		[ 6, 3 ],
+		[ 7, 3 ],
+		[ 8, 4 ],
+		[ 9, 4 ],
+		[ 15, 4 ],
+		[ 16, 5 ],
+		[ 31, 5 ],
+		[ 32, 6 ],
+		[ 63, 6 ],
+		[ 64, 7 ],
+		[ 127, 7 ],
+		[ 128, 8 ],
+		[ 255, 8 ],
+		[ 256, 9 ],
+		[ 511, 9 ],
+		[ 512, 10 ],
+		[ 1023, 10 ],
+		[ 1024, 11 ],
+		[ 2047, 11 ],
+		[ 2048, 12 ],
+		[ 4095, 12 ],
+		[ 4096, 13 ],
+	);
+	for (@tests) {
+		my ($val, $bitlen)= @$_;
+		my $x= $bitlen_fn->($val);
+		is( $x, $bitlen, $val );
+	}
 }
 
 sub test_pack_bits {
