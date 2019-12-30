@@ -156,15 +156,17 @@ sub BUILD {
 			Userp::Error::Domain->assert_minmax($min, 0, $max, 'Integer min');
 			Userp::Error::Domain->assert_minmax($max, $min, $max, 'Integer max');
 		}
+		$align ||= 0;
 	}
 	elsif (defined $min && defined $max) {
 		# If min and max are both defined, bits is derived from the largest value that can be encoded
 		Userp::Error::Domain->assert_minmax($max, $min, undef, 'Integer max');
 		$bits= Userp::Bits::bitlen($max-$min);
+		$align ||= 0;
 	}
 	else {
 		# variable-length integers are always byte-aligned or higher
-		$align= 3 if $align < 3;
+		$align= 3 unless $align && $align > 3;
 	}
 	$self->_set_effective_min($min);
 	$self->_set_effective_max($max);

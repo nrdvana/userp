@@ -52,7 +52,7 @@ A number of bits used to encode this type, or C<undef> if the encoding has a var
 has name       => ( is => 'ro', required => 1 );
 has id         => ( is => 'ro', required => 1 );
 has spec       => ( is => 'lazy' );
-has align      => ( is => 'ro', default => 3 );
+has align      => ( is => 'ro' );
 has metadata   => ( is => 'ro' );
 
 sub isa_Any     { 0 }
