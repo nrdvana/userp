@@ -2,7 +2,8 @@ use Test2::V0;
 use Userp::Type::Integer;
 
 my @tests= (
-	# ctor, min  effective_min, max effective_max, bits, effective_bits, align, effective_align  
+	#    constructor
+	#    min  effective_min, max effective_max, bits, effective_bits, align, effective_align  
 	[
 		{ name => 'Int' },
 		undef, undef,     undef, undef,   undef, undef,       undef, 3,
@@ -20,13 +21,18 @@ my @tests= (
 		undef, -128,      undef, 127,     8, 8,               undef, 0,
 	],
 	[
-		{ name => 'intFF', parent => 'Int', min => 0, max => 0xFF },
+		{ name => 'int0_FF', parent => 'Int', min => 0, max => 0xFF },
 		0, 0,             0xFF, 0xFF,     undef, 8,           undef, 0,
 	],
-#my $max1000= $signed8pos->subtype( name => '', id => 0, max => 1000 );
-#is( $max1000->min, 0, 'min=0' );
-#is( $max1000->max, 1000, 'max=1000' );
-#is( $max1000->bits, undef, 'twos setting was removed' );
+	[
+		{ name => 'int8u', parent => 'Int', bits => 8, min => 0 },
+		0, 0,             undef, 0xFF,    8, 8,               undef, 0,
+	],
+	[
+		# max conflicts with bits of parent.  bits should become unset but min should be preserved.
+		{ name => 'max1000', parent => 'int8u', max => 1000 },
+		0, 0,             1000, 1000,     undef, 10,          undef, 0,
+	],
 );
 
 my %types;
