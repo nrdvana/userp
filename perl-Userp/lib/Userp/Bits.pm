@@ -41,4 +41,8 @@ else {
 	*$_ = *{"Userp::PP::Bits32::$_"} for @api;
 }
 
+sub is_valid_symbol {
+	!!( $_[0] =~ /^[^\0-\x1F]+$/ )
+}
+
 1;
