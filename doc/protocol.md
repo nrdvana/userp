@@ -1,23 +1,28 @@
 Universal Serialization Protocol
 ================================
 
-Userp is a "wire protocol" for efficiently exchanging data.  It serves a similar purpose to
-ASN.1 or Google Protocol Buffers, though the design is meant to be more usable for ad-hoc
-purposes like JSON or YAML without needing a full type specification pre-processed by a compiler.
+Userp is a "wire protocol" for efficiently exchanging data, similar in purpose to ASN.1, CBOR,
+or Google Protocol Buffers.  The primary design goal is to allow the writer to embed type
+definitions within the data such that the data can be written compactly and efficiently, while
+still allowing any reader to decode the data without any prior knowledge of the schema.
+This allows performance equal or better than ASN.1 or Protocol Buffers, while allowing the
+flexibility of CBOR or JSON, and potentially as much utility for type introspection as Json
+Schema.
 
-The primary design is for streaming data with no pre-defined schema, though the protocol is
-built in such a way that it could be used in many different ways, such as storing protocol
-fragments in a database or exchanging protocol fragments that depend on pre-negotiated metadata
-shared between writer and reader.
+The Userp library is also meant to be a data-coding toolkit rather than just a reader/writer of
+streams.  While the normal protocol is a self-contained stream of metadata and blocks of data,
+you could also store protocol fragments in a database or exchange protocol fragments over UDP
+that depend on pre-negotiated metadata shared between writer and reader.
 
 Userp contains many design considerations to make it suitable for any of the following:
 
-  * Storage of large data packed tightly
-  * Storage of data aligned for fast access
-  * Storage of data that matches "C" language structs
+  * Small / Tightly packed data
+  * Massive data (the protocol has no upper limits)
+  * Data aligned for fast access
+  * Data that matches the memory layout of "C" language structs
   * Encoding and decoding in constrained environments, like Microcontrollers
   * Zero-copy exchange of data (memory mapping)
-  * Efficiently storing data with repetitive string content
+  * Efficiently storing data with repetitive content
   * Types that can translate to and from other popular formats like JSON
 
 In other words, Userp is equally usable for microcontroller bus messages, audio/video container
@@ -25,12 +30,12 @@ formats, database row storage, or giant trees of structured application data.
 
 Obviously many of these are at odds with eachother, and so applying Userp to one of these
 purposes requires thoughtful definition of the data types.  Planning of the types
-should also include consideration for the capabilities of the target; the natural limits of
-the Userp protocol are far higher than the limits of any given userp implementation, so for
-example, it is a bad idea to use 65-bit integers if you expect an application without BigInt
-support to be able to read them.  For embedded applications, if you know that the decoder only
-has 4K of RAM to work with then it obviously can't handle 10K of symbol-table from your
-Record and Enum definitions unless they are identical to the ones stored on ROM.
+should also include consideration for the capabilities of the target; whie the protocol is
+un-bounded, implementations can choose sensible maximums, so for example it is a bad idea to
+use 65-bit integers if you expect an application without BigInt support to be able to read them.
+For embedded applications, if you know that the decoder only has 4K of RAM to work with then it
+obviously can't handle 10K of symbol-table from your Record and Enum definitions unless they
+are identical to the ones stored on ROM.
 
 Structure
 ---------
@@ -83,7 +88,7 @@ The Userp type system is built on these fundamental types:
 
   * Integer - the infinite set of integers, also allowing "named values" (i.e. Enum)
   * Symbol  - an infinite subset of Unicode strings
-  * Choice  - a type composed of other types, ranges of types, or constant values
+  * Choice  - a type composed of other types, subsets of types, or constant values
   * Array   - A sequence of elements identified by position in one or more dimensions
   * Record  - A sequence of elements identified by name
 

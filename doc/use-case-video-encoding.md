@@ -132,6 +132,12 @@ The structure of this particular stream looks like:
   - Userp Stream Header
   - Block Len
     - Block Type (USERP_BLOCK_STREAM)
+    - Symbol Table count (5)
+      - "myapp.AlignedBuffer"
+      - "timestamp"
+      - "frame_type"
+      - "data"
+      - "myapp.VideoFrame"
     - Type Count (1)
       - Definition of myapp.VideoFrame
     - Extra Attr Count (0)
