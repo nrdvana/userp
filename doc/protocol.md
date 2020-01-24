@@ -40,38 +40,39 @@ are identical to the ones stored on ROM.
 Structure
 ---------
 
-Userp consists of Data and Metadata.  The Metadata sets up the types, symbol table, and other
-decoding details, and then those types are used to decode the Data.  The Metadata may also
-carry application-specific tags attached to data types.
+Userp is organized into blocks.  Each block has a length associated with it so that the reader
+can process the protocol in large chunks, and possibly skip over the ones it isn't interested
+in.  Blocks can define metadata, including a symbol table and type definitions used for the
+encoding of its data.  The metadata is followed either by a direct data payload, or a stream
+of inner blocks.  The symbols and types declared in the parent block remain in scope for all of
+the inner blocks.  The inner blocks may also define their own symbols and types and inner
+blocks in a recursive manner.
 
-All Data and Metadata are divided into Blocks.  A Data Block is encoded according to the
-current state of the protocol that was described by the Metadata.  In a streaming arrangement,
-this means that a decoder must process every Metadata Block, though it can skip over Data
-Blocks.  In a random-access (i.e. database) arrangement, it means that something must keep
-track of which Metadata Block is acting as the scope for each Data Block.  In more restrictive
-or custom applications, the encoder and decoder might be initialized to a common Metadata state
-(as if they had each processed the same Metadata Block) and then just exchange Data Blocks
-exclusively.  (but I recommend against that design when possible because it defeats the ad-hoc
-aspect of the protocol)
+While the metadata and direct data payload must be contained within a declared number of bytes,
+the inner-block payload can act as a stream, with an arbitrary number of inner blocks before
+the end of the parent.  Or, the parent can declare an index of inner blocks to help a reader
+seek immediately to a point of interest, if the medium is seekable.
 
-Data Blocks may contain references to other data blocks.  This provides a basic ability for the
-data to form graphs or other non-tree data structures, though not at a very specific level of
-detail.  However, a block reference could be combined with an application-specific notation to
-form a "symlink" to some data within a block.  For example, an application storing many Nodes
-of a directed graph could store an array of nodes in a block, and then encode any reference to
-nodes of another block as the block number and the node-array index.  The decoder library would
-be responsible for looking up / loading the referenced block, and the application could use the
-node index to then re-create the object reference in memory.
+The symbol table declares all symbolic (string) identifiers used by the types, as well as any
+symbolic constants used in the data.  The symbol table is a series of NUL terminated strings,
+so they can be used directly by library code without being copied into separate string objects
+in the host language.
 
-The encoding of a block depends on what message framing is available in the particular
-application.  For instance, in a stream, the block will be encoded as a length, data payload,
-Block ID, and block type indicator.  However if the messages are encoded as datagrams, the
-length is known and the payload begins the message.  In a database arrangement the block ID,
-type, and length are all known, and only the data payload is present.
+The type table declares the structure and minimal metadata of each defined type.  See below for
+the details of the type system.  
 
-Within a block, the data is arranged into a tree of elements.  The Metadata may have declared
-that all blocks are a certain type, in which case the entire payload is an encoding of that type,
-else the block begins with a declaration of the type of the data followed by the data.
+Following the type table, the block can declare additional arbitrary metadata that the reader
+might find useful.  For instance, it can annotate the type definitions to declare character
+encodings, indicate versions, or recommend code modules to be used for the decoding.
+Applications could also use this for declaring more compreensive schema information than the
+type system permits.
+
+Within a direct data payload, the data is arranged into a tree of elements encoded end-to-end
+(but with optional alignment or padding).  It is not possible to seek within a data payload
+without parsing it, though the length of elements can often be known such that the reader
+doesn't need to inspect a majority of the bytes.  For instance, strings are declared with a
+byte count, so the reader can skip across strings without scanning for a terminating character
+or escape sequences.
 
 Type System
 -----------
@@ -87,10 +88,10 @@ a type without breaking compatibility with older decoders.
 The Userp type system is built on these fundamental types:
 
   * Integer - the infinite set of integers, also allowing "named values" (i.e. Enum)
-  * Symbol  - an infinite subset of Unicode strings
-  * Choice  - a type composed of other types, subsets of types, or constant values
-  * Array   - A sequence of elements identified by position in one or more dimensions
-  * Record  - A sequence of elements identified by name
+  * Symbol  - a "friendly" subset of Unicode strings
+  * Choice  - a type composed of other types, subsets of types, or enumerated values
+  * Array   - a sequence of elements identified by position in one or more dimensions
+  * Record  - a sequence of elements identified by name
 
 During encoding/decoding, the API allows you to "begin" and "end" the elements of an array or
 record, and to write/read each element as Integer or Symbol.  You may also select a sub-type
@@ -99,59 +100,48 @@ This basic API can handle all cases of Userp data, but common API extensions wil
 native-language conversions like mapping String to an array of integer, mapping float to a
 tuple of (sign,exponent,mantissa), and so on, which would be rather inefficient otherwise.
 
-Each type can be "subclassed" (and in fact, Record and Choice *must* be subclassed) to create
-new types.  A "subclass" really just copies all the attributes of the base class and then lets
-you override them as needed.
-
 ### Standard Attributes
 
 Every type supports these attributes:
 
-  * align - power-of-2 bits to which the value will be aligned, measured from start of block.
+  * align - power-of-2 bits to which the value will be aligned.
     Zero causes bit-packing.  3 causes byte-alignment.  5 causes 4-byte alignment, and so on.
   * pad   - number of NUL bytes to follow the encoded value (useful for nul-terminated strings)
 
 ### Integer
 
 The base Integer type is the set of integers extending infintiely in the positive and negative
-direction.  A subclass of integer can be limited by the following attributes:
+direction.  Integer can be limited by the following attributes:
 
   * min - the minimum value allowed
   * max - the maximum value allowed
-  * bits - forces encoding of the type to N-bit signed 2's complement
+  * bits - forces encoding of the type to N bits
   * names - a dictionary of symbol/value pairs
 
-Any infinite integer type will be encoded as a variable-length quantity, which is specific to
-the Userp protocol.  Any integer type with "bits" defined will get an automatic min and max
-according to the 2's complement limits for that number of bits.  An integer type with min and
-max and without bits will be encoded as an unsigned value of the bits necessary to hold the
-value of (max - min).  Fixed-bit-width values can be encode little-endian or big-endian based
-on a flag in the stream header.
+Any infinite integer type will be encoded as a variable-length quantity.  When 'min' is given,
+the variable quantity counts upward from 'min'.  If 'max' is given, it counts downward from
+'max'.  If neither are given, the low bit acts as a sign bit.
 
-When names are given, the integer can be encoded with the API encode_int *or* encode_symbol.
-Specifying a symbol that does not exist in `names` is an error.
+Finite integer types result from declaring any two of 'bits', 'min' or 'max'.  'bits' alone
+results in standard 2's complement encoding, where specifying either 'min' or 'max' causes
+unsigned encoding offset from that value.  Fixed-bit-width values can be encoded little-endian
+or big-endian based on a flag in the stream header.
+
+When names are given, the resulting integer type can be encoded with the API encode_int *or*
+encode_str.  Specifying a symbol that does not exist in `names` is an error.
 
 ### Symbol
 
 Symbols in Userp are Unicode strings with some character restrictions which act much like the
 symbols in Ruby or the `String.intern()` of Java.  These are meant to represent concepts
-with no particular integer value.  When encoded, the symbols can make use of a string table in
-the metadata block to remove common prefixes.  Thus, they get encoded as small integers rather
-than as string literals.
-
-  * `prefix` - a symbol value which must appear at the start of every value of this type
-
-Symbols get encoded as an existing symbol ID and optional suffix (byte array).  If a suffix was
-given, it gets added to the temporary Scope of the current Block, enlarging the symbol table.
-
-The combined bytes (prefix with suffix) must be valid UTF-8 codepoints, but the userp
-implementation does not apply any transformation to the codepoints and is generally unaware of
-any Unicode rules other than what constitutes a valid UTF-8 sequence.
+with no particular integer value.  Symbols are written into the symbol table, and then any time
+they are used in the data they are encoded as a small integer.
 
 ### Choice
 
-A choice is composed of one or more Types, Type sub-ranges (for applicable types), or values.
-When encoded, a Choice type is written as an integer selector that indicates what comes next.
+A choice is composed of one or more Types, Type subsets (for applicable types), or enumerated
+values.  When encoded, a Choice type is written as an integer selector that indicates what
+comes next.
 
 The main purpose of a choice type is to reduce the size of the type-selector, but it can also
 help constrain data for application purposes, or provide data compression by pre-defining
@@ -203,23 +193,38 @@ struct { uint16_t len; char bytes[]; }
 Because the initial Scope gives you a type for Array with all fields Null, this means you can
 write arrays of any other type with arbitrary dimensions without needing to declare
 array-of-my-type as a distinct type, in much the same way that C lets you declare an array of
-any type by adding one or more `[]` siffixes.
+any type by adding one or more `[]` suffixes.
 
 ### Record
 
 A record is a sequence of elements keyed by name.  Records can have fixed and dynamic elements,
 to accommodate both C-style structs or JSON-style objects, or even a mix of the two.
-A record is defined using a sequence of fields.  Some number of those fields can be
-designated as "static", meaning they appear in order at the start of each instance of the
-record.  Remaining fields are dynamic, meaning they are encoded as a name/value pair.  (but of
-course the name is encoded as a simple integer indicating which field)  A record may then be
-followed by "ad-hoc" fields, where the name/value are arbitrary, like in JSON.  Ad-hoc fields
-are enabled if either adhoc_name_type or adhoc_value_type is set.
+A record is defined using a sequence of fields.  Each field has a name, type, and Placement.
+A Placement is either a numeric offset, `SEQUENCE`, or `OPTIONAL`.  Fields with numeric
+placement appear at that bit-offset from the start of the record.  Fields with `SEQUENCE`
+placement follow the static portion of the record, end-to-end.  Fields with `OPTIONAL`
+placement can be appended to the record as `(key,value)` pairs (but where `key` is a known
+symbol, not an encoded string).
 
-  * fields - a list of field definitions, each composed of `(Symbol, Type)`.
-  * static_fields - a count of fields which are encoded statically.
-  * adhoc_name_type - optional type of Symbol whose names can be used for ad-hoc fields
-  * adhoc_value_type - optional type of value for the ad-hoc fields
+A record may then be followed by "ad-hoc" fields, where the name/value are arbitrary, like in
+JSON.  Ad-hoc fields encode the field name as a byte array, and are not bound by the
+restrictions of being Symbol-friendly unicode.
+
+  * fields - a list of field definitions, each composed of `(Symbol, Type, Placement)`.
+  * static_bits - optional declaration of total "static" space in record
+  * adhoc - `NONE`, `SYMBOL`, or `STRING`
+
+If `static_bits` is given, there will always be this many bits reserved for the static portion
+of the record even if no field occupies it.  This allows for "reserved" fields without needing
+to give them a name or spend time decoding them.  Encoders must fill all unused bits with
+zeroes.
+
+If `adhoc` is `NONE`, the record doesn't need to include a counter for number of adhoc fields.
+If `adhoc` is `SYMBOL`, the keys of the adhoc fields come from the symbol table.  If `adhoc`
+is `STRING`, each field name is encoded as an array of bytes, with the data following it.
+The bytes *should* be UTF-8, but no guarantees are made and the decoder should use caution
+on what it does with these values.  (for instance, they could duplicate another field name,
+which is conceptually an error, but not one the library will check for)
 
 Data Language
 -------------
