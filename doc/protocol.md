@@ -292,7 +292,7 @@ IEEE float   | !Float32+2.5e17            | .sel(Float32).float32(2.5e17);
              | !Float64+2.5e17            | .sel(Float64).float64(2.5e17);
 (equivalent) | !Float32( sign=0 exp=17 sig=#200000 ) | .sel(Float32).begin().int(0).int(17).int(0x200000).end()
 
-User Stream Protocol 1
+Userp Stream Protocol 1
 ----------------------
 
 Userp can be used in various contexts, one of which is a stream of blocks.  This describes the
@@ -301,103 +301,76 @@ Userp can be used in various contexts, one of which is a stream of blocks.  This
 Component       |  Encoding
 ----------------|--------------------------------------------------------------
 Stream          | Header Block [Block...]
-Header          | "Userp S1 LE" (or "Userp S1 BE") 0x00 MinorVersion WriterSignature
-MinorVersion    | Int16
-WriterSignature | 18 bytes containing UTF-8 name and version of writer library
-Block           | ScopeID BlockID Length Data
-ScopeID         | Integer (variable length)
-BlockID         | Integer (variable length)
-Length          | Integer (variable length, or can be fixed if changed by Scope)
-Data            | Encoded per the block-root-type defined by the Scope.
+Header          | "UserpS1<" (or "UserpS1>") Int8u WriterID
+WriterID        | WriterName \x00 [EnvStr...]
+EnvStr          | /[^=]+(=.*)/ \x00
+Block           | ControlCode BlockLen? MetaLen? Meta Data
+Meta            | SymTable TypeTable [AdHocField...]
+Data            | Encoded per the block-root-type
 
 ### Header
 
 Stream mode begins with a magic number identifying the protocol version and endian-ness.
 The major version is tied to any change that would break an older implementation's ability to
-read the stream.  Less important changes related to metadata or optional features (those which
-don't cause undefined behavior for older versions) can be indicated with the MinorVersion which
-follows.
+read the stream.
 
-A stream can be big-endian (Integers written most significant bit first) or litle-endian
+A stream can be big-endian (Integers written most significant byte first) or litle-endian
 (Integers written least significant byte first).  This is meant to facilitate C-struct
 compatibility without placing extra burden on writers.  The flag is part of the header and
 applies to the entire stream.
 
-To help identify bugs that might have come from a particular implementation, there is
-a string of UTF-8 that follows, where a library can write identifying information about itself.
-The string is not required to be NUL-terminated, but must be padded out to 18 characters using
-NULs. (bringing the total size of the header to 32 bytes)
-There is no standard for the format of this string.
+To help identify bugs that might have come from a particular implementation, there is WriterID
+that follows, where a library or application can write identifying information about itself.
+The length of the WriterID is a single byte (not variable quantity) to make it easy to parse
+by tools that don't have full Userp support (like the 'file' command).  The WriterID must be
+UTF-8 and include a NUL terminator.  After the NUL, it may include additional NUL-terminated
+strings of the form ``NAME=VALUE``.  The total ID is capped at 255 bytes (including NULs) so
+any metadata of a larger nature should be encoded as normal Userp metadata on the first block.
 
-### Per-Block Metadata
+### Block
 
-The encoding of a block depends on what attributes have been declared to be in effect for the
-stream.  The main feature of a block's encoding is a Length (count of bytes) followed by some
-value encoded within those bytes.  In the initial Scope, blocks have dynamic Scope and dynamic,
-Block ID, so the encoding is ScopeID followed by Block ID followed by Length followed by value
-of type Any.
+The rest of the stream is a series of Blocks prefixed by control codes.  The control code
+indicates the nature of the next block: Meta+Data, Meta, Data, Meta+ScopeStart, ScopeEnd.
+If the control code is not ScopeEnd, the next value will be the total number of bytes to
+reach the next block.
 
-A decoder must check the type of the block to see if it is one of the special types that defines
-changes to the encoding of the stream.  If the block is just plain data, it may skip over the
-block using the Length to indicate how many bytes to skip.
+A block can have a metadata section and/or a data payload.  If a block is marked ScopeStart,
+the reader and writer will retain a reference to it so that the symbols and types are
+available for future blocks.  ScopeEnd releases one reference from the stack.
 
-### Metadata Blocks
+### Block Metadata
 
-The first (and only?) special type of block is the Metadata Block.  A metadata block is defined
-as a record of ( Identifiers, Types, BlockRootType, BlockHasID, BlockImpliedScope, BlockIndex ) 
-It also allows dynamic fields for other data which does not affect the encoding.
+The metadata of a block starts with a symbol table, followed by a type table, followed by any
+number of ad-hoc fields.
 
-#### Identifiers
+#### Symbol Table
 
-This is an array of type 'Ident'.  Each identifier is written as an optional prefix identifier
-followed by an array of bytes (which should be valid UTF-8, but isn't enforced).
-Every identifier is given the next available ID in the identifier table.  The Identifier table
-inherits from a parent Scope to its child.
+The symbol table is an array of strings.  They are delimited by length, but also include a
+trailing NUL character for convenience to C programs.  Each symbol must be valid UTF-8 with
+some further restrictions.  The symbol table occupies the first N symbol IDs of the new scope,
+and the previous scope can be accessed starting at IDs above that.  This allows the newest
+symbols to be (in all likelihood) encoded as a single byte.  The symbol table may re-declare
+symbols that were already in scope.
 
-#### Types
+#### Type Table
 
-Each type is encoded as the identifier name of the type (optional) followed by a type which it
-inherits followed by the type-definition's attributes it wants to override.
+The type table defines a list of types which will be appended to the stack of existing types.
+Only the name and structure of the types are declared here; any other per-type metadata gets
+encoded later.  The decoder must fully process the table before any further decoding on this
+block, or later blocks if this block begins a Scope.
 
-Every type gets added to the Choice type named "Any".
+#### Ad-hoc Fields
 
-#### TypeMetadata
+The remainder of the metadata section is a list of ad-hoc fields.  These fields may be encoded
+using types and symbols that were just defined in the previous steps.  The ad-hoc fields can be
+used by encoders for whatever data they like, but it can also be used for Userp protocol
+features like indxing blocks (for random access) or appending metadata to the types in the type
+table.
 
-Each type may have additional metadata attached to it.  However, encoding the values for that
-metadata might require the type to be defined, so the array of metadata is encoded after the
-array of types.  Metadata element N applies metadata to the Nth type of the types array.
-The arrays do not need to be the same length, though.
+These extra metadata fields may include special keys that have meaning to the protocol, but are
+not required in order to parse it.
 
-#### BlockRootType
-
-This specifies the type of every block in this scope.  If the type is a choice like 'Any' or
-'AnyPublic', then essentially every block defines its own type.  If the type has a known
-constant length, then every block is a constant size and no Length will be written between
-blocks.
-
-#### BlockHasID
-
-This is a boolean.  If true, every block referencing this scope will also by prefixed by a
-Block ID.  If false, all Block IDs are assumed to be 0 and does not need encoded.
-
-#### BlockImpliedScope
-
-This is a boolean.  If true, then all blocks following this metadata block will automatically
-belong to this scope, and do not need their ScopeID encoded.  This will continue infinitely
-to the end of the stream unless BlockIndex is also given, which limits the number of blocks.
-
-#### BlockIndex
-
-This is an array of N block metadata entries for Blocks that follow this one.  The array is of
-type 'BlockMeta', whose fields are affected by the various flags defined previously, but this
-also implies BlockImpliedScope=true, meaning every block in this index belongs to this Scope.
-
-If every block would have BlockID and Length, then this is an array of { BlockID, Length }.
-At the opposite extreme, if Length is known and BlockHasID is false, the record has no
-attributes at all and so the array is nothing but a count of the number of blocks.
-
-This allows a metadata block to contain an index of many following records so that
-a reader could skip to the Nth block, if it wanted, or just quickly look up the location of a
-block with a specific ID.  The block values are then packed end to end, which could be useful
-if all the values needed to be 4K aligned or something.
-
+  - TypeMetadata: generic key/value data attached to any of the types defined in the type table
+  - BlockIndex: an index of locations of blocks within this stream.
+  - BlockRootType: change the default root type for this block and any others in this Scope
+  - BlockID: attach an ID to this block so that other blocks can refer to it.
