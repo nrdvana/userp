@@ -71,9 +71,9 @@ re-synchronizing the stream.
 
 Stream initiation would look something like:
 
-  /* send entire Userp header, defining the my_data type */
-  for (i= 0; i < sizeof(comm_stream_header); i++)
-    write_char(comm_stream_header[i]);
+    /* send entire Userp header, defining the my_data type */
+    for (i= 0; i < sizeof(comm_stream_header); i++)
+      write_char(comm_stream_header[i]);
 
 ### Write messages
 
@@ -83,13 +83,13 @@ blocks, which in this case consist of a stream control byte, payload-length,
 type selector, and the bytes of `my_data`.  Since the first three are
 constants, they can be copied from ROM.
 
-  struct my_data data;
-  ...
-  /* write a block of data coming from instance of my_data */
-  for (i= 0; i < sizeof(comm_my_data_block_header); i++)
-    write_char(comm_my_data_block_header[i]);
-  for (i= 0; i < sizeof(data); i++)
-    write_char(((char*)&data)[i]);
+    struct my_data data;
+    ...
+    /* write a block of data coming from instance of my_data */
+    for (i= 0; i < sizeof(comm_my_data_block_header); i++)
+      write_char(comm_my_data_block_header[i]);
+    for (i= 0; i < sizeof(data); i++)
+      write_char(((char*)&data)[i]);
 
 If the block were variable length, the program would need code to serialize
 Userp "variable quantities" (integer encoded in a varying number of bytes)
