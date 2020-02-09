@@ -5,8 +5,8 @@ Suppose you have a tiny microcontroller program that collects data
 and only has a few KB of RAM to work with, though many KB of ROM.
 A common solution is to write fixed-length records that are just a
 coy of the global C structs in the program, but then the receiving
-end needs to be aware of the versions of the microcontroller so that
-it can correctly decode the data.
+end needs to be aware of the versions of the firmware so that it
+can correctly decode the data.
 
 Userp can help in this scenario by allowing the microcontroller to
 emit a description of the data structure at the start of a stream.
@@ -31,11 +31,10 @@ Suppose you have this struct:
 
 The metadata can be generated at compile time from your Makefile:
 
-    stream_header.c: my_data.h
-      # this tool doesn't exist yet BTW
+    comm.c: my_data.h
       userp-static-meta --bigendian --writer="MySoftware $(VERSION)" \
         --pretty --namespace="comm_" \
-        -t my_data my_data.h -o stream_header.c
+        -t my_data $< -o $@
 
 The result will look like:
 
@@ -44,18 +43,18 @@ The result will look like:
       "\x10MySoftware 1.2.3\0" /* Stream writer name */
       "\x06" /* Control Byte: Block with meta and no data, begin scope */
       "\x.." /* block length */
-      "\x02" /* string table elem count */
+      "\x03" /* string table elem count */
         "\x09" /* strlen of "timestamp" */
         "\x0C" /* strlen of "measurements" */
         "\x07" /* strlen of "my_data" */
-      /* string table */
+        /* string table */
         "timestamp\0measurements\0my_data\0"
       "\x01" /* type table elem count */
         "...."
       "\x00" /* 0 optional metadata fields */
     ;
     extern const char comm_my_data_typecode[1]= "\x40";
-    extern const char comm_my_data_block_header[2]=
+    extern const char comm_my_data_block_header[3]=
       "\x01" /* stream control: data payload, no metadata */
       "\x13" /* data payload length */
       "\x40" /* type code for my_data */

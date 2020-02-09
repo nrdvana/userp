@@ -271,7 +271,8 @@ starting address for the value.  Then:
     userp_enc_bytearray_zerocopy_commit(enc, vframe->data_len);
 
 For the alternate "less-copy" design, you can ask Userp to use your buffer directly when
-it gets to the phase where it writes the completed block:
+it gets to the phase where it writes the completed block.  You then of course need to ensure
+the buffer pointer remains valid until after the block has been written.
 
     userp_enc_bytearray_using_buffer(enc, vframe->data_len, vframe->data);
 
