@@ -5,12 +5,30 @@ use Userp::Bits;
 
 =head1 SYNOPSIS
 
-  # Direct use of an Encoder object
-  my $scope= Userp::Scope->new();
-  my $enc= Userp::Encoder->new(scope => $scope, current_type => $scope->type_Any);
-  $enc->sel($scope->type_Integer)->int(5);  # select Integer type, encode value '5'
-  syswrite($fh, $enc->buffer);
-
+  # Encode Integer types
+  $enc->int(42);
+  
+  # Encode symbolic constants
+  $enc->sym('True');
+  
+  # Select a specific sub-type of the current type
+  $enc->sel($sub_type);
+  
+  # Encode Arrays
+  $enc->begin_array(3)->int(1)->int(2)->int(3)->end_array;
+  
+  # Encode records
+  $enc->begin_record->field('foo')->int(6)->field('bar')->int(2)->end_record;
+  
+  # Encode records with known order of fields
+  $enc->sel($my_rec_type)->begin_record->int(6)->int(2)->end_record;
+  
+  # Encode any type with a known optimized conversion from float
+  $enc->float(4.2);
+  
+  # Encode any type with a known optimized conversion from string
+  $enc->str("Hello World");
+  
 =head1 DESCRIPTION
 
 This class is the API for serializing data.  The behavior of the encoder is highly dependent
@@ -24,7 +42,7 @@ overview:
 =item Integer
 
   $enc->int($int_value);
-  $enc->str($symbolic_name);   # for integer types with named values
+  $enc->sym($symbolic_name);   # for integer types with named values
 
 =item Symbol
 
