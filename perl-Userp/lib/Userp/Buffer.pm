@@ -48,6 +48,12 @@ sub Userp::Buffer::BE::bigendian { 1 }
 *Userp::Buffer::BE::encode_vqty= *Userp::Bits::buffer_encode_vqty_be;
 *Userp::Buffer::BE::decode_vqty= *Userp::Bits::buffer_decode_vqty_be;
 
+sub seek {
+	$_[0][2]= $_[2] || 0;
+	$_[0][3]= $_[1];
+	$_[0]
+}
+
 sub seek_to_alignment {
 	my ($self, $pow2)= @_;
 	if ($pow2 > 0) {

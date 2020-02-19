@@ -134,38 +134,37 @@ sub test_bits {
 	my @tests= (
 		# value_and_bits_list, encoding_le, encoding_be
 		[ [ [1,1], [1,1] ], "\x03", "\xC0" ],
-		[ [ [1,3], [1,9] ], "\x09\x00", "\x20\x10" ],
-		[ [ [7,3], [7,3], [3,2], [1,1] ], "\xFF\x01", "\xFF\x80" ],
-		[ [ [7,3], [7,3], [7,3] ], "\xFF\x01", "\xFF\x80" ],
-		[ [ [1,8], [0x80, 8], [0x7F, 8], [0xFF,8] ], "\x01\x80\x7F\xFF", "\x01\x80\x7F\xFF" ],
-		[ [ [1,16], [0x8000,16], [0x7FFF,16], [0xFFFF,16] ], "\x01\x00\x00\x80\xFF\x7F\xFF\xFF", "\x00\x01\x80\x00\x7F\xFF\xFF\xFF" ],
-		[ [ [1,32], [0x80000000,32] ], "\x01\x00\x00\x00\x00\x00\x00\x80", "\x00\x00\x00\x01\x80\x00\x00\x00" ],
-		[ [ [0x7FFFFFFF,32], [0xFFFFFFFF,32] ], "\xFF\xFF\xFF\x7F\xFF\xFF\xFF\xFF", "\x7F\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ],
-		[ [ [bigint(1),64] ], "\x01\x00\x00\x00\x00\x00\x00\x00", "\x00\x00\x00\x00\x00\x00\x00\x01" ],
-		[ [ [bigint(1)<<63,64] ], "\x00\x00\x00\x00\x00\x00\x00\x80", "\x80\x00\x00\x00\x00\x00\x00\x00" ],
-		[ [ [(bigint(1)<<63)-1,64] ], "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\x7F", "\x7F\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ],
-		[ [ [(bigint(1)<<64)-1,64] ], "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ],
+		[ [ [3,1], [9,1] ], "\x09\x00", "\x20\x10" ],
+		[ [ [3,7], [3,7], [2,3], [1,1] ], "\xFF\x01", "\xFF\x80" ],
+		[ [ [3,7], [3,7], [3,7] ], "\xFF\x01", "\xFF\x80" ],
+		[ [ [8,1], [8,0x80], [8,0x7F], [8,0xFF] ], "\x01\x80\x7F\xFF", "\x01\x80\x7F\xFF" ],
+		[ [ [16,1], [16,0x8000], [16,0x7FFF], [16,0xFFFF] ], "\x01\x00\x00\x80\xFF\x7F\xFF\xFF", "\x00\x01\x80\x00\x7F\xFF\xFF\xFF" ],
+		[ [ [32,1], [32,0x80000000] ], "\x01\x00\x00\x00\x00\x00\x00\x80", "\x00\x00\x00\x01\x80\x00\x00\x00" ],
+		[ [ [32,0x7FFFFFFF], [32,0xFFFFFFFF] ], "\xFF\xFF\xFF\x7F\xFF\xFF\xFF\xFF", "\x7F\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ],
+		[ [ [64,bigint(1)] ], "\x01\x00\x00\x00\x00\x00\x00\x00", "\x00\x00\x00\x00\x00\x00\x00\x01" ],
+		[ [ [64,bigint(1)<<63] ], "\x00\x00\x00\x00\x00\x00\x00\x80", "\x80\x00\x00\x00\x00\x00\x00\x00" ],
+		[ [ [64,(bigint(1)<<63)-1] ], "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\x7F", "\x7F\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ],
+		[ [ [64,(bigint(1)<<64)-1] ], "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ],
 	);
 	for (@tests) {
 		my ($list, $le, $be)= @$_;
 		my $test_str= stringify_testvals($list);
 		my ($buf_le, $buf_be)= (Userp::Buffer->new, Userp::Buffer->new);
 		for (@$list) {
-			$enc_bits_le->($buf_le, $_->[1], $_->[0]);
-			$enc_bits_be->($buf_be, $_->[1], $_->[0]);
+			$enc_bits_le->($buf_le, @$_);
+			$enc_bits_be->($buf_be, @$_);
 		}
 		is( ${$buf_le->[0]}, $le, "encode_bits_le $test_str" );
 		is( ${$buf_be->[0]}, $be, "encode_bits_be $test_str" );
 	}
 	for (@tests) {
 		my ($list, $le, $be)= @$_;
-		my $test_str= stringify_testvals($list);
 		my ($buf_le, $buf_be)= (Userp::Buffer->new_le(\$le), Userp::Buffer->new_be(\$be));
 		for (@$list) {
-			is( $_->[0], $dec_bits_le->($buf_le, $_->[1]), "decode_bits_le $test_str" )
-				or diag _dump_hex($buf_le->[0]);
-			is( $_->[0], $dec_bits_be->($buf_be, $_->[1]), "decode_bits_be $test_str" )
-				or diag _dump_hex($buf_be->[0]);
+			is( $dec_bits_le->($buf_le, $_->[0]), ''.$_->[1], "decode_bits_le ".stringify_testvals([$_]) )
+				or diag _dump_hex(${$buf_le->bufref});
+			is( $dec_bits_be->($buf_be, $_->[0]), ''.$_->[1], "decode_bits_be ".stringify_testvals([$_]) )
+				or diag _dump_hex(${$buf_be->bufref});
 		}
 	}
 	done_testing;
@@ -214,59 +213,6 @@ sub test_vqty {
 			is( $dec_vqty_be->($buf_be).'', $_.'', "decode_vqty_be $test_str" )
 				or diag _dump_hex(${$buf_be->[0]});
 		}
-	}
-}
-
-sub test_bitpacking {
-	my $class= shift;
-	my ($pad_align, $seek_align, $concat_bits_le, $concat_bits_be, $concat_vqty_le, $concat_vqty_be,
-		$read_bits_le, $read_bits_be, $read_vqty_le, $read_vqty_be)= map $class->can($_),
-		qw( pad_buffer_to_alignment seek_buffer_to_alignment concat_bits_le concat_bits_be
-		concat_vqty_le concat_vqty_be read_bits_le read_bits_be read_vqty_le read_vqty_be );
-	my @tests= (
-		# align, [patterns], known_encoding_le, known_encoding_be
-		[ 0, [[1,1]], "\x01", "\x80" ],
-		[ 0, [[1,1],[1,3],[1,4]], "\x13", "\x91" ],
-		[ 1, [[1,1],[1,3],[1,4],[5,3],[0xFFF,16],[9,4]]],
-		[ 2, [[1,1],[1,3],[1,4],[5,3],[0xFFF,16],[9,4]]],
-		[ 3, [[1,1],[1,3],[1,4],[5,3],[0xFFF,16],[9,4]]],
-		[ 4, [[1,1],[1,3],[1,4],[5,3],[0xFFF,16],[9,4]]],
-		[ 5, [[1,1],[1,3],[1,4],[5,3],[0xFFF,16],[9,4]]],
-		[ 2, [[1,1],[1,3],[1,7],[0xFFF,16],[9,4]]],
-		[ 3, [[1,1],[1,3],[1,7],[0xFFF,16],[9,4]]],
-		[ 4, [[1,1],[1,3],[1,7],[0xFFF,16],[9,4]]],
-	);
-	for (@tests) {
-		my ($align, $pattern, $encoding_le, $encoding_be)= @$_;
-		subtest 'align='.$align.' '.stringify_testvals($pattern) => sub {
-			my %buffers= ( le32 => ['',0], be32 => ['',0], le64 => ['',0], be64 => ['',0] );
-			for my $item (@$pattern) {
-				$pad_align->(@$_, $align) for values %buffers;
-				$concat_bits_le->($buffers{le64}[0], $buffers{le64}[1], @{$item}[1,0]);
-				$concat_bits_be->($buffers{be64}[0], $buffers{be64}[1], @{$item}[1,0]);
-			}
-
-			# If test has known encodings, verify them
-			if (defined $encoding_le) {
-				is( $buffers{$_}[0], $encoding_le, "$_ encoding" ) || diag('LE enc: '.main::_dump_hex($buffers{$_}[0]))
-					for grep length($buffers{$_}[0]), 'le32','le64';
-			}
-			if (defined $encoding_be) {
-				is( $buffers{$_}[0], $encoding_be, "$_ encoding" ) || diag('BE enc: '.main::_dump_hex($buffers{$_}[0]))
-					for grep length($buffers{$_}[0]), 'be32','be64';
-			}
-		
-			# Then verify the same values get decoded
-			for (values %buffers) {
-				pos($_->[0])= 0;
-				$_->[1]= 0;
-			}
-			for my $item (@$pattern) {
-				$seek_align->(@$_, $align) for values %buffers;
-				is( $read_bits_le->($buffers{le64}[0], $buffers{le64}[1], $item->[1]), $item->[0], "(64) read le $item->[1]" );
-				is( $read_bits_be->($buffers{be64}[0], $buffers{be64}[1], $item->[1]), $item->[0], "(64) read be $item->[1]" );
-			}
-		};
 	}
 }
 
