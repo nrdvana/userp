@@ -1,5 +1,7 @@
 use Test2::V0;
 use Data::Printer;
+use Userp::Bits;
+use Userp::Buffer;
 
 sub main::_dump_hex { join ' ', map sprintf("%02X", $_), unpack 'C*', $_[0] }
 sub bigint { Math::BigInt->new(shift) }
@@ -27,7 +29,7 @@ sub test_bits_api {
 	subtest pack_bits   => sub { test_pack_bits($class) };
 	subtest bits        => sub { test_bits($class) };
 	subtest vqty        => sub { test_vqty($class) };
-	subtest bitpacking  => sub { test_bitpacking($class) };
+	#subtest bitpacking  => sub { test_bitpacking($class) };
 }
 
 sub test_sign_extend {
@@ -128,8 +130,8 @@ sub test_pack_bits {
 
 sub test_bits {
 	my $class= shift;
-	my ($concat_bits_le, $concat_bits_be, $read_bits_le, $read_bits_be)=
-		map $class->can($_), qw( concat_bits_le concat_bits_be read_bits_le read_bits_be );
+	my ($enc_bits_le, $enc_bits_be, $dec_bits_le, $dec_bits_be)=
+		map $class->can($_), qw( buffer_encode_bits_le buffer_encode_bits_be buffer_decode_bits_le buffer_decode_bits_be );
 	my @tests= (
 		# value_and_bits_list, encoding_le, encoding_be
 		[ [ [1,1], [1,1] ], "\x03", "\xC0" ],
@@ -148,21 +150,23 @@ sub test_bits {
 	for (@tests) {
 		my ($list, $le, $be)= @$_;
 		my $test_str= stringify_testvals($list);
-		my ($buf_le, $bitofs_le, $buf_be, $bitofs_be)= ('', 0, '', 0);
+		my ($buf_le, $buf_be)= (Userp::Buffer->new, Userp::Buffer->new);
 		for (@$list) {
-			$concat_bits_le->($buf_le, $bitofs_le, $_->[1], $_->[0]);
-			$concat_bits_be->($buf_be, $bitofs_be, $_->[1], $_->[0]);
+			$enc_bits_le->($buf_le, $_->[1], $_->[0]);
+			$enc_bits_be->($buf_be, $_->[1], $_->[0]);
 		}
-		is( $buf_le, $le, "concat_bits_le $test_str" );
-		is( $buf_be, $be, "concat_bits_be $test_str" );
+		is( ${$buf_le->[0]}, $le, "encode_bits_le $test_str" );
+		is( ${$buf_be->[0]}, $be, "encode_bits_be $test_str" );
 	}
 	for (@tests) {
 		my ($list, $le, $be)= @$_;
 		my $test_str= stringify_testvals($list);
-		my ($buf_le, $bitofs_le, $buf_be, $bitofs_be)= ($le, 0, $be, 0);
+		my ($buf_le, $buf_be)= (Userp::Buffer->new(\$le), Userp::Buffer->new(\$be));
 		for (@$list) {
-			is( $_->[0], $read_bits_le->($buf_le, $bitofs_le, $_->[1]), "read_bits_le $test_str" );
-			is( $_->[0], $read_bits_be->($buf_be, $bitofs_be, $_->[1]), "read_bits_be $test_str" );
+			is( $_->[0], $dec_bits_le->($buf_le, $_->[1]), "decode_bits_le $test_str" )
+				or diag _dump_hex($buf_le->[0]);
+			is( $_->[0], $dec_bits_be->($buf_be, $_->[1]), "decode_bits_be $test_str" )
+				or diag _dump_hex($buf_be->[0]);
 		}
 	}
 	done_testing;
@@ -170,8 +174,8 @@ sub test_bits {
 
 sub test_vqty {
 	my $class= shift;
-	my ($concat_vqty_le, $concat_vqty_be, $read_vqty_le, $read_vqty_be)=
-		map $class->can($_), qw( concat_vqty_le concat_vqty_be read_vqty_le read_vqty_be );
+	my ($enc_vqty_le, $enc_vqty_be, $dec_vqty_le, $dec_vqty_be)=
+		map $class->can($_), qw( buffer_encode_vqty_le buffer_encode_vqty_be buffer_decode_vqty_le buffer_decode_vqty_be );
 	my @tests= (
 		[ [1], "\x02", "\x01" ],
 		[ [0x7F], "\xFE", "\x7F" ],
@@ -190,24 +194,26 @@ sub test_vqty {
 	for (@tests) {
 		my ($list, $le, $be)= @$_;
 		my $test_str= stringify_testvals($list);
-		my ($buf_le, $buf_le_pos, $buf_be, $buf_be_pos)= ('', 0, '', 0);
+		my ($buf_le, $buf_be)= (Userp::Buffer->new, Userp::Buffer->new);
 		for (@$list) {
-			$concat_vqty_le->($buf_le, $buf_le_pos, $_);
-			$concat_vqty_be->($buf_be, $buf_be_pos, $_);
+			$enc_vqty_le->($buf_le, $_);
+			$enc_vqty_be->($buf_be, $_);
 		}
-		is( $buf_le, $le, "concat_vqty_le $test_str" )
-			or diag _dump_hex($buf_le);
-		is( $buf_be, $be, "concat_vqty_be $test_str" )
-			or diag _dump_hex($buf_be);
+		is( ${$buf_le->[0]}, $le, "encode_vqty_le $test_str" )
+			or diag _dump_hex(${$buf_le->[0]});
+		is( ${$buf_be->[0]}, $be, "encode_vqty_be $test_str" )
+			or diag _dump_hex(${$buf_be->[0]});
 	}
 	for (@tests) {
 		my ($list, $le, $be)= @$_;
 		my $test_str= stringify_testvals($list);
-		my ($buf_le, $buf_le_pos, $buf_be, $buf_be_pos)= ($le, 0, $be, 0);
+		my ($buf_le, $buf_be)= (Userp::Buffer->new(\$le), Userp::Buffer->new(\$be));
 		for (@$list) {
 			# comparing bigint confuses Test2, so stringify
-			is( $read_vqty_le->($buf_le, $buf_le_pos).'', $_.'', "read_vqty_le $test_str" );
-			is( $read_vqty_be->($buf_be, $buf_be_pos).'', $_.'', "read_vqty_be $test_str" );
+			is( $dec_vqty_le->($buf_le).'', $_.'', "decode_vqty_le $test_str" )
+				or diag _dump_hex(${$buf_le->[0]});
+			is( $dec_vqty_be->($buf_be).'', $_.'', "decode_vqty_be $test_str" )
+				or diag _dump_hex(${$buf_be->[0]});
 		}
 	}
 }

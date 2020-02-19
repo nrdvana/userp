@@ -10,6 +10,9 @@ BEGIN { eval "pack('Q<',1)" or die "pack('Q') not supported on this perl.  Use B
 use constant {
 	scalar_bit_size => $Config{uvsize},
 	pack_bit_size => 64,
+	BUF_ALIGN_ATTR => 1,
+	BUF_BITPOS_ATTR => 1,
+	BUF_BITOFS_ATTR => 2,
 };
 
 sub twos_minmax {
@@ -65,81 +68,78 @@ sub pack_bits_be {
 	substr($enc, -$byte_n);
 }
 
-sub pad_buffer_to_alignment {
-	#my ($buffer, $bitpos, $align)= @_;
-	if ($_[2] == 3) { # byte-align
-		$_[1]= 0;
-	}
-	elsif ($_[2] > 3) {
-		my $n_bytes= 1 << ($_[2] - 3);
-		my $remainder= length($_[0]) & ($n_bytes - 1);
-		$_[0] .= "\0"x($n_bytes - $remainder) if $remainder;
-		$_[1]= 0;
-	}
-	elsif ($_[2] > 0 && $_[1]) {
-		$_[1]= ($_[1] + 1) & 6 if $_[2] == 1;
-		$_[1]= ($_[1] + 3) & 4 if $_[2] == 2;
-	}
-}
-
-sub concat_bits_le {
-	# (buffer, bit_pos, bits, value)
-	# If bit_pos is a byte boundary and bit_count is a whole number of bytes,
+sub buffer_encode_bits_le {
+	my ($buf, $bits, $value)= @_;
+	# If no bit remainder and bit_count is a whole number of bytes,
 	# use the simpler byte-based code:
-	my $bit_ofs= $_[1] & 7;
-	if (!$bit_ofs && !($_[2] & 7)) {
-		my $n= $_[2] >> 3;
-		$_[0] .= $n == 1? pack 'C', $_[3]
-			: $n == 2? pack 'S<', $_[3]
-			: $n == 4? pack 'L<', $_[3]
-			: $n == 8? pack 'Q<', $_[3]
-			: $n < 8? substr(pack('Q<', $_[3]), 0, $n)
-			: scalar reverse substr(Math::BigInt->new($_[3])->as_bytes, -$n);
-	}
-	elsif (!$bit_ofs) {
-		$_[0] .= pack_bits_le($_[2], $_[3]);
+	if (!$buf->[2] && !($bits & 7)) {
+		my $n= $bits >> 3;
+		${$buf->[0]} .= $n == 1? pack 'C', $value
+			: $n == 2? pack 'S<', $value
+			: $n == 4? pack 'L<', $value
+			: $n == 8? pack 'Q<', $value
+			: $n < 8? substr(pack('Q<', $value), 0, $n)
+			: scalar reverse substr(Math::BigInt->new($value)->as_bytes, -$n);
 	}
 	else {
-		my $wbits= $bit_ofs + $_[2];
-		my $v= ($wbits > 64)? Math::BigInt->new($_[3]) : $_[3];
-		$v <<= $bit_ofs;
-		$v |= ord substr($_[0],-1);
-		substr($_[0], -1)= pack_bits_le($wbits, $v);
+		if (my $remainder_bits= $buf->[2]) {
+			# Move the remainder bits from the end of the buffer into the $value
+			$bits+= $remainder_bits;
+			$value= Math::BigInt->new($value) if $bits > 64;
+			$value <<= $remainder_bits;
+			$value |= ord substr(${$buf->[0]},-1);
+			substr(${$buf->[0]}, -1)= ''; # remove partial byte from end
+		}
+		my $enc= ref($value)? reverse($value->as_bytes) : pack('Q<',$value);
+		my $byte_n= ($bits+7)>>3;
+		$enc.= ("\0"x$byte_n) if length($enc) < $byte_n;
+		${$buf->[0]} .= substr($enc, 0, $byte_n);
+		$buf->[2]= $bits & 7; # calculate new remainder
 	}
-	$_[1] += $_[2];
+	$buf;
 }
 
-sub concat_bits_be {
-	# (buffer, bit_pos, bits, value)
-	# If bit_pos is a byte boundary and bit_count is a whole number of bytes,
+sub buffer_encode_bits_be {
+	my ($buf, $bits, $value)= @_;
+	# If no bit remainder and bit_count is a whole number of bytes,
 	# use the simpler byte-based code:
-	my $bit_ofs= $_[1] & 7;
-	if (!$bit_ofs && !($_[2] & 7)) {
-		my $n= $_[2] >> 3;
-		$_[0] .= $n == 1? pack 'C', $_[3]
-			: $n == 2? pack 'S>', $_[3]
-			: $n == 4? pack 'L>', $_[3]
-			: $n == 8? pack 'Q>', $_[3]
-			: $n < 8? substr(pack('Q>', $_[3]), -$n)
-			: substr(Math::BigInt->new($_[3])->as_bytes, -$n);
-	}
-	elsif (!$bit_ofs) {
-		$_[0] .= pack_bits_be($_[2], $_[3]);
+	if (!$buf->[2] && !($bits & 7)) {
+		my $n= $bits >> 3;
+		${$buf->[0]} .= $n == 1? pack 'C', $value
+			: $n == 2? pack 'S>', $value
+			: $n == 4? pack 'L>', $value
+			: $n == 8? pack 'Q>', $value
+			: $n < 8? substr(pack('Q>', $value), -$n)
+			: substr(Math::BigInt->new($value)->as_bytes, -$n);
 	}
 	else {
-		my $wbits= $bit_ofs + $_[2];
-		my $prev= ord substr($_[0],-1);
-		$prev= Math::BigInt->new($prev) if $wbits > 64;
-		$prev <<= $_[2] - (8-$bit_ofs);
-		substr($_[0], -1)= pack_bits_be($wbits, $prev|$_[3]);
+		# If remainder bits in buffer, merge final byte of buffer into $value
+		if (my $remainder_bits= $buf->[2]) {
+			my $prev= ord substr(${$buf->[0]}, -1);
+			$prev= Math::BigInt->new($prev) if $bits+$remainder_bits > 64;
+			$prev <<= $bits - (8-$remainder_bits);
+			$prev |= $value;
+			$value= $prev;
+			substr(${$buf->[0]}, -1)= ''; # remove partial byte form end
+			$bits += $remainder_bits;
+		}
+		if ($bits & 7) {
+			$value= Math::BigInt->new($value) if $bits > 64 && !ref $value;
+			$value <<= 8 - ($bits & 7);
+		}
+		my $enc= ref($value)? $value->as_bytes : pack('Q>',$value);
+		my $byte_n= ($bits+7)>>3;
+		$enc= ("\0"x$byte_n).$enc if length($enc) < $byte_n;
+		${$buf->[0]} .= substr($enc, -$byte_n);
+		$buf->[2]= $bits & 7;
 	}
-	$_[1] += $_[2];
+	$buf;
 }
 
-sub concat_vqty_le {
-	#my ($buffer, $bitpos, $value)= @_;
-	my $value= $_[2];
-	$_[0] .= $value < 0x80? pack('C',$value<<1)
+sub buffer_encode_vqty_le {
+	my ($buf, $value)= @_;
+	$buf->[2]= 0; # automatic alignment to byte
+	${$buf->[0]} .= $value < 0x80? pack('C',$value<<1)
 		: $value < 0x4000? pack('S<',($value<<2)+1)
 		: $value < 0x2000_0000? pack('L<',($value<<3)+3)
 		: $value < 0x1000_0000_0000_0000? pack('Q<',($value<<4)+7)
@@ -154,13 +154,13 @@ sub concat_vqty_le {
 			: $n < 0xFFFF_FFFF? "\xFF\xFF" . pack('L<', $n) . $bytes
 			: Userp::Error::ImplLimit->throw(message => "Refusing to encode ludicrously large integer value");
 		};
-	$_[1]= length($_[0])<<3;
+	return $buf;
 }
 
-sub concat_vqty_be {
-	#my ($buffer, $bitpos, $value)= @_;
-	my $value= $_[2];
-	$_[0] .= $value < 0x80? pack('C',$value)
+sub buffer_encode_vqty_be {
+	my ($buf, $value)= @_;
+	$buf->[2]= 0; # automatic alignment to byte
+	${$buf->[0]} .= $value < 0x80? pack('C',$value)
 		: $value < 0x4000? pack('S>',0x8000 | $value)
 		: $value < 0x2000_0000? pack('L>',0xC000_0000 | $value)
 		: $value < 0x1000_0000_0000_0000? pack('Q>',0xE000_0000_0000_0000 | $value)
@@ -175,120 +175,125 @@ sub concat_vqty_be {
 			: $n < 0xFFFF_FFFF? "\xFF\xFF".pack('L>', $n).$bytes
 			: Userp::Error::ImplLimit->throw(message => "Refusing to encode ludicrously large integer value");
 		};
-	$_[1]= length($_[0])<<3;
+	return $buf;
 }
 
-sub seek_buffer_to_alignment {
-	#my ($buffer, $bitpos, $align)= @_;
-	my $mask= (1 << $_[2]) - 1;
-	$_[1]= ($_[1] + $mask) & ~$mask;
-}
-
-sub read_bits_le {
-	# (buffer, bit_pos, bit_count)
-	# Ensure we have this many bits available
-	(($_[1]+$_[2]+7)>>3) <= length $_[0]
-		or die Userp::Error::EOF->for_buf_bits($_[0], $_[1], $_[2], 'int');
+sub buffer_decode_bits_le {
+	my ($buf, $bits)= @_;
 	# If bit_pos is a byte boundary and bit_count is a whole number of bytes,
 	# use the simpler byte-based code:
-	if (!($_[1] & 7) && !($_[2] & 7)) {
-		my $buf= substr($_[0], $_[1] >> 3, $_[2] >> 3);
-		$_[1]+= $_[2];
-		return unpack('Q<', $buf."\0\0\0\0\0\0\0\0") if length $buf <= 8;
-		return Math::BigInt->from_bytes(scalar reverse $buf);
+	if (!$buf->[2] && !($bits & 7)) {
+		# Ensure we have this many bits available
+		my $n= $bits >> 3;
+		$buf->[3] + $n <= length ${$buf->[0]}
+			or die Userp::Error::EOF->for_buf_bits($buf, $bits, 'int');
+		my $bytes= substr(${$buf->[0]}, $buf->[3], $n);
+		$buf->[3] += $n;
+		return unpack('Q<', $bytes."\0\0\0\0\0\0\0\0") if length $bytes <= 8;
+		return Math::BigInt->from_bytes(scalar reverse $bytes);
 	}
 	else {
-		my $bit_remainder= $_[1] & 7;
-		my $bit_read= $bit_remainder + $_[2]; # total bits being read including remainder
-		my $buf= substr($_[0], $_[1]>>3, ($bit_read+7)>>3);
+		my $bit_remainder= $buf->[2];
+		# Ensure we have this many bits available
+		$buf->[3] + (($bit_remainder + $bits + 7)>>3) <= length ${$buf->[0]}
+			or die Userp::Error::EOF->for_buf_bits($buf, $bits, 'int');
+		my $bit_read= $bit_remainder + $bits; # total bits being read including remainder
+		my $bytes= substr(${$buf->[0]}, $buf->[3], ($bit_read+7)>>3);
+		$buf->[3] += ($bit_read >> 3); # new pos
+		$buf->[2]= $bit_read & 7; # new remainder
 		# clear highest bits of final byte, if needed
-		substr($buf,-1)= chr( (0xFF >> (8-($bit_read&7))) & ord substr($buf,-1) )
+		substr($bytes,-1)= chr( (0xFF >> (8-($bit_read&7))) & ord substr($bytes,-1) )
 			if $bit_read & 7;
-		$_[1] += $_[2];
 		if ($bit_read <= 64) {
-			my $v= unpack('Q<', $buf."\0\0\0\0\0\0\0\0");
+			my $v= unpack('Q<', $bytes."\0\0\0\0\0\0\0\0");
 			return $v >>= $bit_remainder;
 		}
 		else {
-			my $v= Math::BigInt->from_bytes(scalar reverse $buf);
+			my $v= Math::BigInt->from_bytes(scalar reverse $bytes);
 			$v->brsft($bit_remainder) if $bit_remainder;
 			return $v;
 		}
 	}
 }
 
-sub read_bits_be {
-	# (buffer, bit_pos, bit_count)
-	# Ensure we have this many bits available
-	(($_[1]+$_[2]+7)>>3) <= length $_[0]
-		or die Userp::Error::EOF->for_buf_bits($_[0], $_[1], $_[2], 'int');
+sub buffer_decode_bits_be {
+	my ($buf, $bits)= @_;
 	# If bit_pos is a byte boundary and bit_count is a whole number of bytes,
 	# use the simpler byte-based code:
-	if (!($_[1] & 7) && !($_[2] & 7)) {
-		my $buf= substr($_[0], $_[1] >> 3, $_[2] >> 3);
-		$_[1]+= $_[2];
-		return unpack 'C', $buf if $_[2] == 8;
-		return unpack 'S>', $buf if $_[2] == 16;
-		return unpack 'L>', $buf if $_[2] == 32;
-		return unpack 'Q>', $buf if $_[2] == 64;
-		return unpack('Q>', ("\0" x (8-length $buf)) . $buf) & ((1 << $_[2]) - 1)
-			if $_[2] < 64;
-		return Math::BigInt->from_bytes($buf);
+	if (!$buf->[2] && !($bits & 7)) {
+		# Ensure we have this many bits available
+		my $n= $bits >> 3;
+		$buf->[3] + $n <= length ${$buf->[0]}
+			or die Userp::Error::EOF->for_buf_bits($buf, $bits, 'int');
+		my $bytes= substr(${$buf->[0]}, $buf->[3], $n);
+		$buf->[3] += $n;
+		return unpack 'C',  $bytes if $bits == 8;
+		return unpack 'S>', $bytes if $bits == 16;
+		return unpack 'L>', $bytes if $bits == 32;
+		return unpack 'Q>', $bytes if $bits == 64;
+		return unpack('Q>', ("\0" x (8-length $bytes)) . $bytes) & ((1 << $bits) - 1)
+			if $bits < 64;
+		return Math::BigInt->from_bytes($bytes);
 	}
 	else {
-		my $bit_remainder= $_[1] & 7;
-		my $bit_read= $bit_remainder + $_[2];
-		my $buf= substr($_[0], $_[1] >> 3, ($bit_read+7) >> 3);
+		my $bit_remainder= $buf->[2];
+		my $bit_read= $bit_remainder + $bits;
+		# Ensure we have this many bits available
+		$buf->[3] + (($bit_read + 7)>>3) <= length ${$buf->[0]}
+			or die Userp::Error::EOF->for_buf_bits($buf, $bits, 'int');
+		my $bytes= substr(${$buf->[0]}, $buf->[3], ($bit_read+7)>>3);
+		$buf->[3] += ($bit_read >> 3); # new pos
+		$buf->[2]= $bit_read & 7; # new remainder
 		# clear highest bits of first byte, if needed
-		substr($buf,0,1)= chr( (0xFF >> $bit_remainder) & ord substr($buf,0,1) )
+		substr($bytes,0,1)= chr( (0xFF >> $bit_remainder) & ord substr($bytes,0,1) )
 			if $bit_remainder;
-		$_[1] += $_[2];
 		if ($bit_read <= 64) {
-			return unpack('Q>', $buf."\0\0\0\0\0\0\0\0") >> (64 - $bit_read);
+			return unpack('Q>', $bytes."\0\0\0\0\0\0\0\0") >> (64 - $bit_read);
 		}
 		else {
-			my $v= Math::BigInt->from_bytes($buf);
+			my $v= Math::BigInt->from_bytes($bytes);
 			$v->brsft(8 - ($bit_read & 7)) if $bit_read & 7;
 			return $v;
 		}
 	}
 }
 
-sub read_vqty_le {
-	#my ($buffer, $bitpos)= @_;
-	my $pos= ($_[1]+7)>>3;
-	$pos < length $_[0]
-		or die Userp::Error::EOF->for_buf($_[0], $pos, 1, 'vqty');
-	my $switch= ord substr($_[0], $pos, 1);
+sub buffer_decode_vqty_le {
+	my $buf= shift;
+	my $pos= $buf->[3];
+	++$pos if $buf->[2];
+	$pos < length ${$buf->[0]}
+		or die Userp::Error::EOF->for_buf($buf, $pos, 1, 'vqty');
+	my $switch= ord substr(${$buf->[0]}, $pos, 1);
 	my $v;
 	if (!($switch & 1)) {
 		++$pos;
 		$v= $switch >> 1;
 	}
 	elsif (!($switch & 2)) {
-		$pos+2 <= length $_[0]
-			or die Userp::Error::EOF->for_buf($_[0], $pos, 2, 'vqty-2');
-		$v= unpack('S<', substr($_[0], $pos, 2)) >> 2;
+		$pos+2 <= length ${$buf->[0]}
+			or die Userp::Error::EOF->for_buf($buf, $pos, 2, 'vqty-2');
+		$v= unpack('S<', substr(${$buf->[0]}, $pos, 2)) >> 2;
 		$pos+= 2;
 	}
 	elsif (!($switch & 4)) {
-		$pos+4 <= length $_[0]
-			or die Userp::Error::EOF->for_buf($_[0], $pos, 4, 'vqty-4');
-		$v= unpack('L<', substr($_[0], $pos, 4)) >> 3;
+		$pos+4 <= length ${$buf->[0]}
+			or die Userp::Error::EOF->for_buf($buf, $pos, 4, 'vqty-4');
+		$v= unpack('L<', substr(${$buf->[0]}, $pos, 4)) >> 3;
 		$pos+= 4;
 	}
 	elsif (!($switch & 8)) {
-		$pos+8 <= length $_[0]
-			or die Userp::Error::EOF->for_buf($_[0], $pos, 8, 'vqty-8');
-		$v= unpack('Q<', substr($_[0], $pos, 8)) >> 4;
+		$pos+8 <= length ${$buf->[0]}
+			or die Userp::Error::EOF->for_buf($buf, $pos, 8, 'vqty-8');
+		$v= unpack('Q<', substr(${$buf->[0]}, $pos, 8)) >> 4;
 		$pos+= 8;
 	} else {
-		$pos+6 <= length $_[0]
-			or die Userp::Error::EOF->for_buf($_[0], $pos, 6, 'vqty-N');
-		my $n= unpack('S<', substr($_[0], $pos, 2));
+		$pos+6 <= length ${$buf->[0]}
+			or die Userp::Error::EOF->for_buf($buf, $pos, 6, 'vqty-N');
+		my $n= unpack('S<', substr(${$buf->[0]}, $pos, 2));
 		$pos+= 2;
 		if ($n == 0xFFFF) {
-			$n= unpack('L<', substr($_[0], $pos, 4));
+			$n= unpack('L<', substr(${$buf->[0]}, $pos, 4));
 			$pos+= 4;
 			$n < 0xFFFF_FFFF or Userp::Error::ImplLimit->throw(message => "Refusing to decode ludicrously large integer value");
 		} else {
@@ -296,51 +301,52 @@ sub read_vqty_le {
 		}
 		# number of bytes is 8 + $n * 4
 		$n= ($n << 2) + 8;
-		$pos + $n <= length $_[0]
-			or die Userp::Error::EOF->for_buf($_[0], $pos, $n, 'vqty-'.$n);
-		$v= Math::BigInt->from_bytes(scalar reverse substr($_[0], $pos, $n));
+		$pos + $n <= length ${$buf->[0]}
+			or die Userp::Error::EOF->for_buf($buf, $pos, $n, 'vqty-'.$n);
+		$v= Math::BigInt->from_bytes(scalar reverse substr(${$buf->[0]}, $pos, $n));
 		$pos+= $n;
 	}
-	$_[1]= $pos << 3;
+	$buf->[3]= $pos;
 	return $v;
 }
 
-sub read_vqty_be {
-	#my ($buffer, $bitpos)= @_;
-	my $pos= ($_[1]+7)>>3;
-	$pos < length $_[0]
-		or die Userp::Error::EOF->for_buf($_[0], $pos, 1, 'vqty');
-	my $switch= ord substr($_[0], $pos, 1);
+sub buffer_decode_vqty_be {
+	my $buf= shift;
+	my $pos= $buf->[3];
+	++$pos if $buf->[2];
+	$pos < length ${$buf->[0]}
+		or die Userp::Error::EOF->for_buf($buf, $pos, 1, 'vqty');
+	my $switch= ord substr(${$buf->[0]}, $pos, 1);
 	my $v;
 	if ($switch < 0x80) {
 		++$pos;
 		$v= $switch;
 	}
 	elsif ($switch < 0xC0) {
-		$pos+2 <= length $_[0]
-			or die Userp::Error::EOF->for_buf($_[0], $pos, 2, 'vqty-2');
-		$v= unpack('S>', substr($_[0], $pos, 2)) & 0x3FFF;
+		$pos+2 <= length ${$buf->[0]}
+			or die Userp::Error::EOF->for_buf($buf, $pos, 2, 'vqty-2');
+		$v= unpack('S>', substr(${$buf->[0]}, $pos, 2)) & 0x3FFF;
 		$pos+= 2;
 	}
 	elsif ($switch < 0xE0) {
-		$pos+4 <= length $_[0]
-			or die Userp::Error::EOF->for_buf($_[0], $pos, 4, 'vqty-4');
-		$v= unpack('L>', substr($_[0], $pos, 4)) & 0x1FFF_FFFF;
+		$pos+4 <= length ${$buf->[0]}
+			or die Userp::Error::EOF->for_buf($buf, $pos, 4, 'vqty-4');
+		$v= unpack('L>', substr(${$buf->[0]}, $pos, 4)) & 0x1FFF_FFFF;
 		$pos+= 4;
 	}
 	elsif ($switch < 0xF0) {
-		$pos+8 <= length $_[0]
-			or die Userp::Error::EOF->for_buf($_[0], $pos, 8, 'vqty-8');
-		$v= unpack('Q>', substr($_[0], $pos, 8)) & 0x0FFF_FFFF_FFFF_FFFF;
+		$pos+8 <= length ${$buf->[0]}
+			or die Userp::Error::EOF->for_buf($buf, $pos, 8, 'vqty-8');
+		$v= unpack('Q>', substr(${$buf->[0]}, $pos, 8)) & 0x0FFF_FFFF_FFFF_FFFF;
 		$pos+= 8;
 	}
 	else {
-		$pos+6 <= length $_[0]
-			or die Userp::Error::EOF->for_buf($_[0], $pos, 6, 'vqty-N');
-		my $n= unpack('S>', substr($_[0], $pos, 2));
+		$pos+6 <= length ${$buf->[0]}
+			or die Userp::Error::EOF->for_buf($buf, $pos, 6, 'vqty-N');
+		my $n= unpack('S>', substr(${$buf->[0]}, $pos, 2));
 		$pos+= 2;
 		if ($n == 0xFFFF) {
-			$n= unpack('L>', substr($_[0], $pos, 4));
+			$n= unpack('L>', substr(${$buf->[0]}, $pos, 4));
 			$pos+= 4;
 			$n < 0xFFFF_FFFF or Userp::Error::ImplLimit->throw(message => "Refusing to decode ludicrously large integer value");
 		} else {
@@ -348,47 +354,13 @@ sub read_vqty_be {
 		}
 		# number of bytes is 8 + $n * 4
 		$n= ($n << 2) + 8;
-		$pos + $n <= length $_[0]
-			or die Userp::Error::EOF->for_buf($_[0], $pos, $n, 'vqty-'.$n);
-		$v= Math::BigInt->from_bytes(substr($_[0], $pos, $n));
+		$pos + $n <= length ${$buf->[0]}
+			or die Userp::Error::EOF->for_buf($buf, $pos, $n, 'vqty-'.$n);
+		$v= Math::BigInt->from_bytes(substr(${$buf->[0]}, $pos, $n));
 		$pos+= $n;
 	}
-	$_[1]= $pos << 3;
+	$buf->[3]= $pos;
 	return $v;
-}
-
-sub read_symbol_le {
-	#my ($buffer, $bitpos)= @_;
-	my $symbol_id= &read_vqty_le;
-	my $suffix;
-	if ($symbol_id & 1) {
-		my $len= &read_vqty_le;
-		$len > 0
-			or Userp::Error::Domain->throw({ value => $len, min => 1 });
-		my $pos= $_[1] >> 3;
-		$pos + $len <= length $_[0]
-			or die Userp::Error::EOF->for_buf($_[0], $pos, $len, 'symbol suffix');
-		$suffix= substr($_[0], $pos, $len);
-		$_[1]= ($pos+$len) << 3;
-	}
-	return ($symbol_id>>1, $suffix);
-}
-
-sub read_symbol_be {
-	#my ($buffer, $bitpos)= @_;
-	my $symbol_id= &read_vqty_be;
-	my $suffix;
-	if ($symbol_id & 1) {
-		my $len= &read_vqty_be;
-		$len > 0
-			or die Userp::Error::Domain->new({ value => $len, min => 1 });
-		my $pos= $_[1] >> 3;
-		$pos + $len <= length $_[0]
-			or die Userp::Error::EOF->for_buf($_[0], $pos, $len, 'symbol suffix');
-		$suffix= substr($_[0], $pos, $len);
-		$_[1]= ($pos+$len) << 3;
-	}
-	return ($symbol_id>>1, $suffix);
 }
 
 1;

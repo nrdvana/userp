@@ -1,5 +1,7 @@
 package Userp::Bits;
 
+use constant host_is_be => (pack('s', 1) eq "\0\x01");
+
 our @api= qw(
 	scalar_bit_size
 	pack_bit_size
@@ -9,18 +11,14 @@ our @api= qw(
 	bitlen
 	pack_bits_le
 	pack_bits_be
-	pad_buffer_to_alignment
-	seek_buffer_to_alignment
-	concat_bits_le
-	concat_bits_be
-	concat_vqty_le
-	concat_vqty_be
-	read_bits_le
-	read_bits_be
-	read_vqty_le
-	read_vqty_be
-	read_symbol_le
-	read_symbol_be
+	buffer_encode_bits_le
+	buffer_encode_bits_be
+	buffer_encode_vqty_le
+	buffer_encode_vqty_be
+	buffer_decode_bits_le
+	buffer_decode_bits_be
+	buffer_decode_vqty_le
+	buffer_decode_vqty_be
 );
 
 our $mechanism; # can be set before loading package to request specific source
