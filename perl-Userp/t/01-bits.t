@@ -29,7 +29,6 @@ sub test_bits_api {
 	subtest pack_bits   => sub { test_pack_bits($class) };
 	subtest bits        => sub { test_bits($class) };
 	subtest vqty        => sub { test_vqty($class) };
-	#subtest bitpacking  => sub { test_bitpacking($class) };
 }
 
 sub test_sign_extend {
@@ -161,7 +160,7 @@ sub test_bits {
 	for (@tests) {
 		my ($list, $le, $be)= @$_;
 		my $test_str= stringify_testvals($list);
-		my ($buf_le, $buf_be)= (Userp::Buffer->new(\$le), Userp::Buffer->new(\$be));
+		my ($buf_le, $buf_be)= (Userp::Buffer->new_le(\$le), Userp::Buffer->new_be(\$be));
 		for (@$list) {
 			is( $_->[0], $dec_bits_le->($buf_le, $_->[1]), "decode_bits_le $test_str" )
 				or diag _dump_hex($buf_le->[0]);
@@ -207,7 +206,7 @@ sub test_vqty {
 	for (@tests) {
 		my ($list, $le, $be)= @$_;
 		my $test_str= stringify_testvals($list);
-		my ($buf_le, $buf_be)= (Userp::Buffer->new(\$le), Userp::Buffer->new(\$be));
+		my ($buf_le, $buf_be)= (Userp::Buffer->new_le(\$le), Userp::Buffer->new_be(\$be));
 		for (@$list) {
 			# comparing bigint confuses Test2, so stringify
 			is( $dec_vqty_le->($buf_le).'', $_.'', "decode_vqty_le $test_str" )

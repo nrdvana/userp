@@ -4,70 +4,98 @@ use warnings;
 use Carp;
 use Userp::Bits;
 
+@Userp::Buffer::BE::ISA= ( __PACKAGE__ );
+
 sub new {
-	my ($class, $bufref, $alignment)= @_;
-	bless [ $bufref || \(my $x= ''), $alignment || 0, 0, 0 ], $class;
+	my $class= shift;
+	my $self= [ undef, 0, 0, 0 ];
+	if (@_) {
+		my $opts= @_ == 1 && ref $_[0] eq 'HASH'? $_[0] : { @_ };
+		$self->[0]= $opts->{bufref};
+		$self->[1]= $opts->{alignment};
+		$class .= '::BE' if $opts->{bigendian};
+	}
+	$self->[0] ||= \(my $X= '');
+	bless $self, $class;
 }
 
-sub buf :lvalue { $_[0][0] }
-sub alignment   { $_[0][1] }
-sub _bitpos     { $_[0][2] }
-sub _readpos    { $_[0][3] }
-sub bigendian   { 0 }
+sub new_le {
+	my $class= shift;
+	bless [ $_[0] || \(my $x=''), $_[1] || 0, 0, 0 ], $class;
+}
 
-*Userp::Buffer::encode_int = *Userp::Bits::buffer_encode_bits_le;
-*Userp::Buffer::decode_int = *Userp::Bits::buffer_decode_bits_le;
+sub new_be {
+	my $class= shift;
+	$class .= '::BE';
+	bless [ $_[0] || \(my $x=''), $_[1] || 0, 0, 0 ], $class;
+}
+
+sub bufref :lvalue { $_[0][0] }
+sub alignment      { $_[0][1] }
+sub _bitpos        { $_[0][2] }
+sub _readpos       { $_[0][3] }
+sub bigendian      { 0 }
+sub length         { length ${$_[0][0]} }
+sub Userp::Buffer::BE::bigendian { 1 }
+
+*Userp::Buffer::encode_bits= *Userp::Bits::buffer_encode_bits_le;
+*Userp::Buffer::decode_bits= *Userp::Bits::buffer_decode_bits_le;
 *Userp::Buffer::encode_vqty= *Userp::Bits::buffer_encode_vqty_le;
 *Userp::Buffer::decode_vqty= *Userp::Bits::buffer_decode_vqty_le;
 
+*Userp::Buffer::BE::encode_bits= *Userp::Bits::buffer_encode_bits_be;
+*Userp::Buffer::BE::decode_bits= *Userp::Bits::buffer_decode_bits_be;
+*Userp::Buffer::BE::encode_vqty= *Userp::Bits::buffer_encode_vqty_be;
+*Userp::Buffer::BE::decode_vqty= *Userp::Bits::buffer_decode_vqty_be;
+
 sub seek_to_alignment {
-	#($self, $pow2_bytes)
-	if ($_[1] > 0) {
+	my ($self, $pow2)= @_;
+	if ($pow2 > 0) {
 		# If asking for multi-byte alignment, the ability to provide this depends on
 		# the alignment of the start of the buffer.
-		croak "Can't align to 2^$_[1] on a buffer whose starting alignment is 2^$_[0][1]"
-			unless $_[0][1] >= $_[1];
-		++$_[0][3] if $_[0][2]; # round up to next byte
-		my $mask= (1 << $_[1]) - 1;
-		my $newpos= ($_[0][3] + $mask) & ~$mask;
+		croak "Can't align to 2^$pow2 on a buffer whose starting alignment is 2^$self->[1]"
+			unless $self->[1] >= $pow2;
+		++$self->[3] if $self->[2]; # round up to next byte
+		my $mask= (1 << $pow2) - 1;
+		my $newpos= ($self->[3] + $mask) & ~$mask;
 		# and make sure that is still within the buffer
 		croak "Seek beyond end of buffer"
-			unless $newpos <= length(${$_[0][0]});
-		$_[0][3]= $newpos;
-		$_[0][2]= 0; # no partial byte
+			unless $newpos <= CORE::length(${$self->[0]});
+		$self->[3]= $newpos;
+		$self->[2]= 0; # no partial byte
 	}
 	# If asking for byte alignment or less, only matters if bitpos is not 0
-	elsif ($_[0][2]) {
-		my $mask= (1 << ($_[1]+3)) - 1;
-		if ($_[0][2] & $mask) {
+	elsif ($self->[2]) {
+		my $mask= (1 << ($pow2+3)) - 1;
+		if ($self->[2] & $mask) {
 			# If it rounded up to the next byte, advance 'pos'
-			if (! ($_[0][2]= ($_[0][2] + $mask) & ~$mask) ) {
-				++$_[0][3];
+			if (! ($self->[2]= ($self->[2] + $mask) & ~$mask) ) {
+				++$self->[3];
 			}
 		}
 	}
-	return $_[0];
+	return $self;
 }
 
 sub pad_to_alignment {
-	#($self, $pow2_bytes)
-	if ($_[1] > 0) {
+	my ($self, $pow2)= @_;
+	if ($pow2 > 0) {
 		# If asking for multi-byte alignment, the ability to provide this depends on
 		# the alignment of the start of the buffer.
-		croak "Can't align to 2^$_[1] on a buffer whose starting alignment is 2^$_[0][1]"
-			unless $_[0][1] >= $_[1];
-		my $mask= (1 << $_[1]) - 1;
-		my $len= length ${$_[0][0]};
+		croak "Can't align to 2^$pow2 on a buffer whose starting alignment is 2^$self->[1]"
+			unless $self->[1] >= $pow2;
+		my $mask= (1 << $pow2) - 1;
+		my $len= CORE::length ${$self->[0]};
 		my $newlen= ($len + $mask) & ~$mask;
-		${$_[0][0]} .= "\0" x ($newlen - $len) if $newlen > $len;
-		$_[0][2]= 0; # bitpos is zero
+		${$self->[0]} .= "\0" x ($newlen - $len) if $newlen > $len;
+		$self->[2]= 0; # bitpos is zero
 	}
 	# If asking for byte alignment or less, only matters if bitpos is not 0
-	elsif ($_[0][2]) {
-		my $mask= (1 << ($_[1]+3)) - 1;
-		$_[0][2]= ($_[0][2] + $mask) & ~$mask & 7; # entire op is modulo 8
+	elsif ($self->[2]) {
+		my $mask= (1 << ($pow2+3)) - 1;
+		$self->[2]= ($self->[2] + $mask) & ~$mask & 7; # entire op is modulo 8
 	}
-	return $_[0];
+	return $self;
 }
 
 sub encode_bytes {
@@ -91,26 +119,20 @@ sub decode_bytes {
 }
 
 sub append_buffer {
+	my ($self, $peer)= @_;
 	# The starting alignment of the next buffer cannot be greater than the
 	# starting alignment of this buffer.
-	croak "Can't append buffer aligned to 2^$_[1][1] to buffer whose starting alignment is 2^$_[0][1]"
-		unless $_[1][1] <= $_[0][1];
-	$_[0]->pad_to_alignment($_[1][1]);
+	croak "Can't append buffer aligned to 2^$peer->[1] to buffer whose starting alignment is 2^$self->[1]"
+		unless $peer->[1] <= $self->[1];
+	$self->pad_to_alignment($peer->[1]);
 	# Unpleasantness if next buffer is bit-aligned and current buffer has leftover bits
-	if ($_[1][1] < 0 && $_[0][2]) {
+	if ($peer->[1] < 0 && $self->[2]) {
 		croak "Concatenation of bit-aligned buffer is not implemented";
 	}
 	else {
-		${$_[0][0]} .= ${$_[1][0]};
-		$_[0][2]= $_[1][2]; # copy leftover bit count
+		${$self->[0]} .= ${$peer->[0]};
+		$self->[2]= $peer->[2]; # copy leftover bit count
 	}
 }
-
-sub Userp::Buffer::BE::bigendian { 1 }
-@Userp::Buffer::BE::ISA= ( __PACKAGE__ );
-*Userp::Buffer::BE::encode_int = *Userp::Bits::buffer_encode_bits_be;
-*Userp::Buffer::BE::decode_int = *Userp::Bits::buffer_decode_bits_be;
-*Userp::Buffer::BE::encode_vqty= *Userp::Bits::buffer_encode_vqty_be;
-*Userp::Buffer::BE::decode_vqty= *Userp::Bits::buffer_decode_vqty_be;
 
 1;
