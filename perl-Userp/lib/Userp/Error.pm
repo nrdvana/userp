@@ -8,33 +8,33 @@ package Userp::Error::EOF;
 use Moo;
 extends 'Userp::Error';
 has '+message' => ( lazy => 1, builder => 1, required => 0 );
-has buffer_ref => ( is => 'rw' );
-has bitpos     => ( is => 'rw' );
-has needed     => ( is => 'rw' );
+has buffer     => ( is => 'rw' );
+has bit_pos    => ( is => 'rw' );
+has bit_needed => ( is => 'rw' );
 has goal       => ( is => 'rw' );
 
 sub _build_message {
 	my $self= shift;
 	my $msg= 'EOF';
 	$msg .= ' while reading '.$self->goal if defined $self->goal;
-	if ($self->needed) {
+	if ($self->bit_needed) {
 		$msg .= defined $self->goal? ' of ' : ' while reading ';
-		$msg .= $self->needed & 8? $self->needed.' bits' : ($self->needed>>3).' bytes';
-		if (defined $self->buffer_ref && defined $self->bitpos) {
-			my $avail= (length(${$self->buffer_ref})<<3) - $self->bitpos;
-			$msg .= ' from buffer with '.($avail & 8? $avail.' bits' : ($avail>>3).' bytes').' remaining';
+		$msg .= $self->bit_needed & 7? $self->bit_needed.' bits' : ($self->bit_needed>>3).' bytes';
+		if (defined $self->buffer && defined $self->bit_pos) {
+			my $avail= ($self->buffer->length << 3) - $self->bit_pos;
+			$msg .= ' from buffer with '.($avail & 7? $avail.' bits' : ($avail>>3).' bytes').' remaining';
 		}
 	}
 	$msg;
 }
 
 sub for_buf {
-	my ($class, undef, $bytepos, $needed, $goal)= @_;
-	$class->new(buffer_ref => \$_[1], bitpos => $bytepos<<3, needed => $needed<<3, goal => $goal);
+	my ($class, $buffer, $byte_pos, $byte_needed, $goal)= @_;
+	$class->new(buffer => $buffer, bit_pos => $byte_pos<<3, bit_needed => $byte_needed<<3, goal => $goal);
 }
 sub for_buf_bits {
-	my ($class, undef, $bitpos, $needed, $goal)= @_;
-	$class->new(buffer_ref => \$_[1], bitpos => $bitpos, needed => $needed, goal => $goal);
+	my ($class, $buffer, $bit_pos, $bit_needed, $goal)= @_;
+	$class->new(buffer => $buffer, bit_pos => $bit_pos, bit_needed => $bit_needed, goal => $goal);
 }
 
 package Userp::Error::System;

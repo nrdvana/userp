@@ -5,6 +5,7 @@ use warnings;
 no warnings 'portable';
 use Math::BigInt;
 use Carp;
+use Userp::Error;
 BEGIN { eval "pack('Q<',1)" or die "pack('Q') not supported on this perl.  Use Bits32.pm instead." }
 
 use constant {
@@ -186,7 +187,7 @@ sub buffer_decode_bits_le {
 		# Ensure we have this many bits available
 		my $n= $bits >> 3;
 		$buf->[3] + $n <= length ${$buf->[0]}
-			or die Userp::Error::EOF->for_buf_bits($buf, $bits, 'int');
+			or die Userp::Error::EOF->for_buf($buf, $buf->[3], $n, 'int');
 		my $bytes= substr(${$buf->[0]}, $buf->[3], $n);
 		$buf->[3] += $n;
 		return unpack('Q<', $bytes."\0\0\0\0\0\0\0\0") if length $bytes <= 8;
@@ -196,7 +197,7 @@ sub buffer_decode_bits_le {
 		my $bit_remainder= $buf->[2];
 		# Ensure we have this many bits available
 		$buf->[3] + (($bit_remainder + $bits + 7)>>3) <= length ${$buf->[0]}
-			or die Userp::Error::EOF->for_buf_bits($buf, $bits, 'int');
+			or die Userp::Error::EOF->for_buf_bits($buf, ($buf->[3]<<3)+$buf->[2], $bits, 'int');
 		my $bit_read= $bit_remainder + $bits; # total bits being read including remainder
 		my $bytes= substr(${$buf->[0]}, $buf->[3], ($bit_read+7)>>3);
 		$buf->[3] += ($bit_read >> 3); # new pos
@@ -224,7 +225,7 @@ sub buffer_decode_bits_be {
 		# Ensure we have this many bits available
 		my $n= $bits >> 3;
 		$buf->[3] + $n <= length ${$buf->[0]}
-			or die Userp::Error::EOF->for_buf_bits($buf, $bits, 'int');
+			or die Userp::Error::EOF->for_buf_bits($buf, $buf->[3], $n, 'int');
 		my $bytes= substr(${$buf->[0]}, $buf->[3], $n);
 		$buf->[3] += $n;
 		return unpack 'C',  $bytes if $bits == 8;
@@ -240,7 +241,7 @@ sub buffer_decode_bits_be {
 		my $bit_read= $bit_remainder + $bits;
 		# Ensure we have this many bits available
 		$buf->[3] + (($bit_read + 7)>>3) <= length ${$buf->[0]}
-			or die Userp::Error::EOF->for_buf_bits($buf, $bits, 'int');
+			or die Userp::Error::EOF->for_buf_bits($buf, ($buf->[3]<<3)+$buf->[2], $bits, 'int');
 		my $bytes= substr(${$buf->[0]}, $buf->[3], ($bit_read+7)>>3);
 		$buf->[3] += ($bit_read >> 3); # new pos
 		$buf->[2]= $bit_read & 7; # new remainder
