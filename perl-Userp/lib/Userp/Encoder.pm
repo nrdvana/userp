@@ -41,45 +41,85 @@ overview:
 
 =item Integer
 
+Userp Integer types can have a constrained range, and optional symbols enumerating some of the
+values.  Calling C<int> will interpret the perl scalar as an integer, check whether it is in
+the domain of this Integer type, then encode it.  Calling C<sym> will look for a named value
+within this type and then encode the integer.  If the integer is out of bounds, or if no such
+symbol exists, the operation dies with an exception, and the encoder state remains unchanged.
+
   $enc->int($int_value);
   $enc->sym($symbolic_name);   # for integer types with named values
 
 =item Symbol
 
-  $enc->str($symbolic_name);
+If the current type is Symbol, you may encode any symbolic value that exists in the L</scope>'s
+symbol table.  If the C<scope> is not finalized, you may encode any string value and it will
+be automatically added to the symbol table.
+
+  $enc->sym($symbolic_name);
 
 =item Choice (or Any)
 
-  $enc->sel($type)->...  # select a member (or sub-member) type
+Choice types offer a selection between several types or values.  Select a more specific type
+with the C<sel> method.  Select a specific option of the Choice type by passing two arguments;
+the choice type and the index of the option you want.
 
-Depending on which types are available in the Choice, you might need to specify which sub-type
-you are about to encode.  If the types are obvious, you can skip straight to the C<int> or
-C<str> or C<type> or C<begin> method.
+  $enc->sel($type)->...    # select a member type
+  $enc->sel(undef, 3)->... # select option 3 of the choice
+  $enc->sel($type, 7)->... # select a sub-type and its option both at once
 
-=item Array
+The library may allow you to skip calling C<sel> if there is a member type that can encode the
+next thing you ask to encode.  For instance, if you call L</int> when the current type is
+C<Userp.Any>, it will automatically select the first Integer type of C<Userp.Int>.
 
-  $enc->begin($length, ...); # length and further array dimensions may or may not be required
+=item Array (and String)
+
+Declare the dimensions of an array having dynamic dimensions during C<begin_array>.
+Then, write each element of the array, iterating right-most dimension first.
+(you might call this row-major order, but Userp does not distinguish which array index is
+the "row")  Then call C<end_array>.
+
+  $enc->begin_array($dim_1, ...); # only dimensions not specified in the type
   for(...) {
     $enc->...(...); # call once for each element
   }
-  $enc->end();
+  $enc->end_array();
 
-or, to encode anything that is conceptualy an array of integers, you can use the codepoints of
-a string:
+Between C<begin_array> and C<end_array>, the C<current_type> will be the declared type of the
+arra's elements, switching to C<undef> after the final element has been encoded.  You may not
+call C<end_array> until all elements ar ewritten.
+
+Userp has special handling for some array types, like C<Userp.String> or C<Userp.ByteArray>:
 
   $enc->str($string);
 
+This avoids the obviously unacceptable performance of writing each individual byte with a
+method call.
+
 =item Record
 
-  $enc->begin();
-  for (my ($k, $v)= each %hash) {
-    $enc->field($k)->...($v);
-  }
-  $enc->end();
+Optionally declare the fields you will write, then encode each field in that order.
+If the fields are defined in the type and have a static order, you can avoid fragmented buffers
+by specifying those fields in that same order.
+
+  $enc->begin_record("foo","bar");
+  $enc->int(3);
+  $enc->int(4);
+  $enc->end_record;
+
+If you do not want to pre-declare your fields, you must specify which field you are encoding
+before each element.  However, this can result in more fragmented buffers than pre-declaring
+the fields.
+
+  $enc->begin_record;
+  $enc->field("foo")->int(3);
+  $enc->field("bar")->int(4);
+  $enc->end_record;
 
 =item Type
 
-(i.e. encoding a reference to a type as a value)
+In very few cases, you might want to encode a reference to a type.  (i.e. encoding a reference
+to a type as a value)  This gets its own method:
 
   $enc->typeref($type);
 
@@ -89,34 +129,34 @@ a string:
 
 =head2 scope
 
-The current L<Userp::Scope> which defines what types and identifiers are available.
+The current L<Userp::Scope> which defines what types and symbols are available.
 
 =head2 bigendian
 
 If true, all fixed-length integer values will be written most significant byte first.
-The default on this object is false, but encoders created by L<Userp::Stream> might get a
-platform-dependent default.
+The default on this object is false, but encoders created by L<Userp::StreamWriter> will be set
+to whatever the stream is using.
 
-=head2 buffer_ref
+=head2 buffers
 
-Reference to the scalar that the userp Block data is written into.  It is a ref for efficiency
-when operating on large blocks.
+Arrayref of L<Userp::Buffer> objects into which the data is encoded.
 
-=head2 buffer
+=head2 parent_type
 
-For convenience, this returns the value referenced by L</buffer_ref>.
+The type whose elements are currently being written.  When you call L</begin_array> the
+C<current_type> becomes the C<parent_type>, and the array's element type becomes the
+C<current_type>.  This does not change after calling C<sel>.
 
 =head2 current_type
 
-The type about to be written next.  This should be initialized to the root type of the Block.
-After that, it will track the state changes caused by L</sel>, L</begin> and L</end>.
+The type being written next.  This does change after calling C<sel>.
 
 =cut
 
 has scope        => ( is => 'ro', required => 1 );
 has bigendian    => ( is => 'ro' );
-has buffer_ref   => ( is => 'rw', lazy => 1, default => sub { \(my $x="") } );
-sub buffer          { ${ shift->buffer_ref } }
+has buffers      => ( is => 'rw', lazy => 1, default => sub { ["",3,0] } );
+sub parent_type     { my $st= shift->_enc_stack->[-1]; $st? $st->{type} : undef }
 has current_type => ( is => 'rwp', required => 1 );
 
 has _type_vtable => ( is => 'rw', default => sub { {} } );
@@ -164,16 +204,17 @@ sub _vtable_for {
 =head2 sel
 
   $enc->sel($type)->...
+  $enc->sel(undef, $option)->...
+  $enc->sel($type, $option)->...
 
-Select a sub-type of the current Choice.  This includes selecting any type at all when the
-current type is Any.  This may be given multiple times to express specific choices within
-choices, though doing so is not always required if the option path can be inferred.
+Select a sub-type, option, or option-of-subtype of the current Choice.
+
 Returns the encoder for convenient chaining.
 
 =cut
 
 sub sel {
-	my ($self, $subtype)= @_;
+	my ($self, $subtype, $option)= @_;
 	my $type= $self->current_type;
 	$type->isa_choice
 		or croak "Cannot select sub-type of ".$type->name;
@@ -575,6 +616,42 @@ sub _encode_initial_scalar {
 		$max= $_->[0]->scalar_component_max;
 		$self->_encode_qty($_->[1], defined $max? _bitlen($max) : undef);
 	}
+	return $self;
+}
+
+sub _encode_block_tables {
+	my $self= shift;
+	my $buf= $self->buffers->[-1];
+	croak "Type stack is not empty"
+		if @{ $self->_enc_stack };
+	
+	# Need to encode bytes, not strings, so make a copy
+	my @symbols= @{ $self->scope->_symbols };
+	utf8::encode($_) for @symbols;
+	# Number of entries in the symbol table
+	$buf->encode_int(scalar @symbols);
+	# length of each entry, not including NUL terminator
+	$buf->encode_int(length $_) for @symbols;
+	# Symbol data
+	$buf->encode_bytes($_)->encode_bytes("\0") for @symbols;
+	
+	# Number of entries in the type table
+	my @types= @{ $self->scope->_types };
+	$buf->encode_int(scalar @types);
+	my $typedef_type= $self->scope->type_Typedef;
+	for (@types) {
+		# Each type encodes itself as "Type Typedef"
+		$self->_set_current_type($typdef_type);
+		$_->_encode_definition($self);
+		croak "Incomplete type encoding"
+			if defined $self->current_type || @{ $self->_enc_stack };
+	}
+	for (@types) {
+		# Type "Choice" can include literal values, which can't be processed
+		# until all types have been loaded by the decoder.
+		$_->_encode_constants($self);
+	}
+	# Tables are complete
 	return $self;
 }
 
