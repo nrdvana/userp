@@ -11,14 +11,10 @@ our @api= qw(
 	bitlen
 	pack_bits_le
 	pack_bits_be
-	buffer_encode_bits_le
-	buffer_encode_bits_be
-	buffer_encode_vqty_le
-	buffer_encode_vqty_be
-	buffer_decode_bits_le
-	buffer_decode_bits_be
-	buffer_decode_vqty_le
-	buffer_decode_vqty_be
+	encode_int_le
+	encode_int_be
+	decode_int_le
+	decode_int_be
 );
 
 our $mechanism; # can be set before loading package to request specific source

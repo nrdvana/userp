@@ -13,58 +13,58 @@ sub test_bitpacking {
 	my @tests= (
 		{
 			seq => [
-				[ bits => 1,1 ],
+				[ int => 1,1 ],
 				[ align => -3 ],
-				[ bits => 1,1 ],
+				[ int => 1,1 ],
 				[ align => -3 ],
-				[ vqty => 1 ],
+				[ int => 1 ],
 			],
 			expect_le => "\x03\x02",
 			expect_be => "\xC0\x01",
 	    },
 		{ 
 			seq => [
-				[ bits => 1,1 ],
+				[ int => 1,1 ],
 				[ align => -2 ],
-				[ bits => 1,1 ],
+				[ int => 1,1 ],
 				[ align => -2 ],
-				[ vqty => 1 ],
+				[ int => 1 ],
 			],
 			expect_le => "\x05\x02",
 			expect_be => "\xA0\x01",
 		},
 		(map {
 			+{seq => [
-				[ bits => 1,1],
+				[ int => 1,1],
 				[ align => $_ ],
-				[ bits => 3,1],
+				[ int => 1,3],
 				[ align => $_ ],
-				[ bits => 4,1],
+				[ int => 1,4],
 				[ align => $_ ],
-				[ bits => 3,5],
+				[ int => 5,3],
 				[ align => $_ ],
-				[ bits => 16,0xFFF],
+				[ int => 0xFFF,16],
 				[ align => $_ ],
-				[ bits => 4,9]
+				[ int => 9,4]
 			]}
-			} -2#,-1,0,1,2
+			} -2,-1,0,1,2
 		),
 		(map {
 			+{seq => [
-				[ bits => 1,1 ],
+				[ int => 1,1 ],
 				[ align => $_ ],
-				[ bits => 3,1 ],
+				[ int => 1,3 ],
 				[ align => $_ ],
-				[ bits => 7,1 ],
+				[ int => 1,7 ],
 				[ align => $_ ],
-				[ bits => 16,0xFFF ],
-				[ bits => 4,9 ]
+				[ int => 0xFFF,16 ],
+				[ int => 9,4 ]
 			]}
-			} -2#,-1,0,1,2
+			} -2,-1,0,1,2
 		),
 	);
-	my %enc_method = ( bits => 'encode_bits', vqty => 'encode_vqty', align => 'pad_to_alignment' );
-	my %dec_method = ( bits => 'decode_bits', vqty => 'decode_vqty', align => 'seek_to_alignment' );
+	my %enc_method = ( int => 'encode_int', align => 'pad_to_alignment' );
+	my %dec_method = ( int => sub { $_[0]->decode_int($_[2]) }, align => 'seek_to_alignment' );
 	for (@tests) {
 		my ($seq, $expect_le, $expect_be)= @{$_}{'seq','expect_le','expect_be'};
 		my ($buf_le, $buf_be)= (Userp::Buffer->new_le(undef, 4), Userp::Buffer->new_be(undef, 4));
@@ -88,12 +88,12 @@ sub test_bitpacking {
 			$_->seek(0) for $buf_le, $buf_be;
 			for my $op (@$seq) {
 				my $method= $dec_method{$op->[0]};
-				my $ret= $buf_le->$method($op->[1]);
-				is( $ret, $op->[2], "LE $method $op->[1] = $op->[2]" )
-					if defined $op->[2];
-				$ret= $buf_be->$method($op->[1]);
-				is( $ret, $op->[2], "BE $method $op->[1] = $op->[2]" )
-					if defined $op->[2];
+				my $ret= $buf_le->$method(@{$op}[1 .. $#$op]);
+				is( $ret, $op->[1], "LE $op->[0] => $op->[1]" )
+					if $op->[0] eq 'int';
+				$ret= $buf_be->$method(@{$op}[1 .. $#$op]);
+				is( $ret, $op->[1], "BE $op->[0] => $op->[1]" )
+					if $op->[0] eq 'int';
 			}
 		};
 	}

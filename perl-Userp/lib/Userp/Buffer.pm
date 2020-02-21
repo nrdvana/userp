@@ -38,15 +38,11 @@ sub bigendian      { 0 }
 sub length         { length ${$_[0][0]} }
 sub Userp::Buffer::BE::bigendian { 1 }
 
-*Userp::Buffer::encode_bits= *Userp::Bits::buffer_encode_bits_le;
-*Userp::Buffer::decode_bits= *Userp::Bits::buffer_decode_bits_le;
-*Userp::Buffer::encode_vqty= *Userp::Bits::buffer_encode_vqty_le;
-*Userp::Buffer::decode_vqty= *Userp::Bits::buffer_decode_vqty_le;
+*Userp::Buffer::encode_int= *Userp::Bits::encode_int_le;
+*Userp::Buffer::decode_int= *Userp::Bits::decode_int_le;
 
-*Userp::Buffer::BE::encode_bits= *Userp::Bits::buffer_encode_bits_be;
-*Userp::Buffer::BE::decode_bits= *Userp::Bits::buffer_decode_bits_be;
-*Userp::Buffer::BE::encode_vqty= *Userp::Bits::buffer_encode_vqty_be;
-*Userp::Buffer::BE::decode_vqty= *Userp::Bits::buffer_decode_vqty_be;
+*Userp::Buffer::BE::encode_int= *Userp::Bits::encode_int_be;
+*Userp::Buffer::BE::decode_int= *Userp::Bits::decode_int_be;
 
 sub seek {
 	$_[0][2]= $_[2] || 0;

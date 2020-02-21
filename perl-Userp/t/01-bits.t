@@ -27,8 +27,7 @@ sub test_bits_api {
 	subtest sign_extend => sub { test_sign_extend($class) };
 	subtest bitlen      => sub { test_bitlen($class) };
 	subtest pack_bits   => sub { test_pack_bits($class) };
-	subtest bits        => sub { test_bits($class) };
-	subtest vqty        => sub { test_vqty($class) };
+	subtest ints        => sub { test_int($class) };
 }
 
 sub test_sign_extend {
@@ -127,93 +126,62 @@ sub test_pack_bits {
 	done_testing;
 }
 
-sub test_bits {
+sub test_int {
 	my $class= shift;
-	my ($enc_bits_le, $enc_bits_be, $dec_bits_le, $dec_bits_be)=
-		map $class->can($_), qw( buffer_encode_bits_le buffer_encode_bits_be buffer_decode_bits_le buffer_decode_bits_be );
+	my ($enc_int_le, $enc_int_be, $dec_int_le, $dec_int_be)=
+		map $class->can($_), qw( encode_int_le encode_int_be decode_int_le decode_int_be );
 	my @tests= (
 		# value_and_bits_list, encoding_le, encoding_be
 		[ [ [1,1], [1,1] ], "\x03", "\xC0" ],
-		[ [ [3,1], [9,1] ], "\x09\x00", "\x20\x10" ],
-		[ [ [3,7], [3,7], [2,3], [1,1] ], "\xFF\x01", "\xFF\x80" ],
-		[ [ [3,7], [3,7], [3,7] ], "\xFF\x01", "\xFF\x80" ],
-		[ [ [8,1], [8,0x80], [8,0x7F], [8,0xFF] ], "\x01\x80\x7F\xFF", "\x01\x80\x7F\xFF" ],
-		[ [ [16,1], [16,0x8000], [16,0x7FFF], [16,0xFFFF] ], "\x01\x00\x00\x80\xFF\x7F\xFF\xFF", "\x00\x01\x80\x00\x7F\xFF\xFF\xFF" ],
-		[ [ [32,1], [32,0x80000000] ], "\x01\x00\x00\x00\x00\x00\x00\x80", "\x00\x00\x00\x01\x80\x00\x00\x00" ],
-		[ [ [32,0x7FFFFFFF], [32,0xFFFFFFFF] ], "\xFF\xFF\xFF\x7F\xFF\xFF\xFF\xFF", "\x7F\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ],
-		[ [ [64,bigint(1)] ], "\x01\x00\x00\x00\x00\x00\x00\x00", "\x00\x00\x00\x00\x00\x00\x00\x01" ],
-		[ [ [64,bigint(1)<<63] ], "\x00\x00\x00\x00\x00\x00\x00\x80", "\x80\x00\x00\x00\x00\x00\x00\x00" ],
-		[ [ [64,(bigint(1)<<63)-1] ], "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\x7F", "\x7F\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ],
-		[ [ [64,(bigint(1)<<64)-1] ], "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ],
+		[ [ [1,3], [1,9] ], "\x09\x00", "\x20\x10" ],
+		[ [ [7,3], [7,3], [3,2], [1,1] ], "\xFF\x01", "\xFF\x80" ],
+		[ [ [7,3], [7,3], [7,3] ], "\xFF\x01", "\xFF\x80" ],
+		[ [ [1,8], [0x80,8], [0x7F,8], [0xFF,8] ], "\x01\x80\x7F\xFF", "\x01\x80\x7F\xFF" ],
+		[ [ [1,16], [0x8000,16], [0x7FFF,16], [0xFFFF,16] ], "\x01\x00\x00\x80\xFF\x7F\xFF\xFF", "\x00\x01\x80\x00\x7F\xFF\xFF\xFF" ],
+		[ [ [1,32], [0x80000000,32] ], "\x01\x00\x00\x00\x00\x00\x00\x80", "\x00\x00\x00\x01\x80\x00\x00\x00" ],
+		[ [ [0x7FFFFFFF,32], [0xFFFFFFFF,32] ], "\xFF\xFF\xFF\x7F\xFF\xFF\xFF\xFF", "\x7F\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ],
+		[ [ [bigint(1),64] ], "\x01\x00\x00\x00\x00\x00\x00\x00", "\x00\x00\x00\x00\x00\x00\x00\x01" ],
+		[ [ [bigint(1)<<63,64] ], "\x00\x00\x00\x00\x00\x00\x00\x80", "\x80\x00\x00\x00\x00\x00\x00\x00" ],
+		[ [ [(bigint(1)<<63)-1,64] ], "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\x7F", "\x7F\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ],
+		[ [ [(bigint(1)<<64)-1,64] ], "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ],
+		# variable-length
+		[ [ [1] ], "\x02", "\x01" ],
+		[ [ [0x7F] ], "\xFE", "\x7F" ],
+		[ [ [0x80] ], "\x01\x02", "\x80\x80" ],
+		[ [ [0xFF] ], "\xFD\x03", "\x80\xFF" ],
+		[ [ [0x0FFF] ], "\xFD\x3F", "\x8F\xFF" ],
+		[ [ [0x3FFF] ], "\xFD\xFF", "\xBF\xFF" ],
+		[ [ [0x4000] ], "\x03\x00\x02\x00", "\xC0\x00\x40\x00" ],
+		[ [ [0x1F00_0000] ], "\x03\x00\x00\xF8", "\xDF\x00\x00\x00" ],
+		[ [ [0x1FFF_FFFF] ], "\xFB\xFF\xFF\xFF", "\xDF\xFF\xFF\xFF" ],
+		[ [ [0x2000_0000] ], "\x07\x00\x00\x00\x02\x00\x00\x00", "\xE0\x00\x00\x00\x20\x00\x00\x00" ],
+		[ [ [(bigint(1)<<60)-1] ], "\xF7\xFF\xFF\xFF\xFF\xFF\xFF\xFF", "\xEF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ],
+		[ [ [(bigint(1)<<60)] ],   "\x0F\x00\x00\x00\x00\x00\x00\x00\x00\x10", "\xF0\x00\x10\x00\x00\x00\x00\x00\x00\x00" ],
+		[ [ [(bigint(1)<<64)-1] ], "\x0F\x00\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", "\xF0\x00\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ],
 	);
 	for (@tests) {
 		my ($list, $le, $be)= @$_;
 		my $test_str= stringify_testvals($list);
-		my ($buf_le, $buf_be)= (Userp::Buffer->new, Userp::Buffer->new);
-		for (@$list) {
-			$enc_bits_le->($buf_le, @$_);
-			$enc_bits_be->($buf_be, @$_);
-		}
-		is( ${$buf_le->[0]}, $le, "encode_bits_le $test_str" );
-		is( ${$buf_be->[0]}, $be, "encode_bits_be $test_str" );
-	}
-	for (@tests) {
-		my ($list, $le, $be)= @$_;
-		my ($buf_le, $buf_be)= (Userp::Buffer->new_le(\$le), Userp::Buffer->new_be(\$be));
-		for (@$list) {
-			is( $dec_bits_le->($buf_le, $_->[0]), ''.$_->[1], "decode_bits_le ".stringify_testvals([$_]) )
-				or diag _dump_hex(${$buf_le->bufref});
-			is( $dec_bits_be->($buf_be, $_->[0]), ''.$_->[1], "decode_bits_be ".stringify_testvals([$_]) )
-				or diag _dump_hex(${$buf_be->bufref});
-		}
+		subtest $test_str => sub {
+			my ($buf_le, $buf_be)= (Userp::Buffer->new, Userp::Buffer->new);
+			for (@$list) {
+				$enc_int_le->($buf_le, @$_);
+				$enc_int_be->($buf_be, @$_);
+			}
+			is( ${$buf_le->[0]}, $le, "encode_int_le $test_str" )
+				or diag _dump_hex(${$buf_le->[0]});
+			is( ${$buf_be->[0]}, $be, "encode_int_be $test_str" )
+				or diag _dump_hex(${$buf_be->[0]});
+			($buf_le, $buf_be)= (Userp::Buffer->new_le(\$le), Userp::Buffer->new_be(\$be));
+			for (@$list) {
+				is( $dec_int_le->($buf_le, $_->[1]), ''.$_->[0], "decode_int_le ".stringify_testvals([$_]) )
+					or diag _dump_hex(${$buf_le->bufref});
+				is( $dec_int_be->($buf_be, $_->[1]), ''.$_->[0], "decode_int_be ".stringify_testvals([$_]) )
+					or diag _dump_hex(${$buf_be->bufref});
+			}
+		};
 	}
 	done_testing;
-}
-
-sub test_vqty {
-	my $class= shift;
-	my ($enc_vqty_le, $enc_vqty_be, $dec_vqty_le, $dec_vqty_be)=
-		map $class->can($_), qw( buffer_encode_vqty_le buffer_encode_vqty_be buffer_decode_vqty_le buffer_decode_vqty_be );
-	my @tests= (
-		[ [1], "\x02", "\x01" ],
-		[ [0x7F], "\xFE", "\x7F" ],
-		[ [0x80], "\x01\x02", "\x80\x80" ],
-		[ [0xFF], "\xFD\x03", "\x80\xFF" ],
-		[ [0x0FFF], "\xFD\x3F", "\x8F\xFF" ],
-		[ [0x3FFF], "\xFD\xFF", "\xBF\xFF" ],
-		[ [0x4000], "\x03\x00\x02\x00", "\xC0\x00\x40\x00" ],
-		[ [0x1F00_0000], "\x03\x00\x00\xF8", "\xDF\x00\x00\x00" ],
-		[ [0x1FFF_FFFF], "\xFB\xFF\xFF\xFF", "\xDF\xFF\xFF\xFF" ],
-		[ [0x2000_0000], "\x07\x00\x00\x00\x02\x00\x00\x00", "\xE0\x00\x00\x00\x20\x00\x00\x00" ],
-		[ [(bigint(1)<<60)-1], "\xF7\xFF\xFF\xFF\xFF\xFF\xFF\xFF", "\xEF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ],
-		[ [(bigint(1)<<60)],   "\x0F\x00\x00\x00\x00\x00\x00\x00\x00\x10", "\xF0\x00\x10\x00\x00\x00\x00\x00\x00\x00" ],
-		[ [(bigint(1)<<64)-1], "\x0F\x00\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", "\xF0\x00\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ],
-	);
-	for (@tests) {
-		my ($list, $le, $be)= @$_;
-		my $test_str= stringify_testvals($list);
-		my ($buf_le, $buf_be)= (Userp::Buffer->new, Userp::Buffer->new);
-		for (@$list) {
-			$enc_vqty_le->($buf_le, $_);
-			$enc_vqty_be->($buf_be, $_);
-		}
-		is( ${$buf_le->[0]}, $le, "encode_vqty_le $test_str" )
-			or diag _dump_hex(${$buf_le->[0]});
-		is( ${$buf_be->[0]}, $be, "encode_vqty_be $test_str" )
-			or diag _dump_hex(${$buf_be->[0]});
-	}
-	for (@tests) {
-		my ($list, $le, $be)= @$_;
-		my $test_str= stringify_testvals($list);
-		my ($buf_le, $buf_be)= (Userp::Buffer->new_le(\$le), Userp::Buffer->new_be(\$be));
-		for (@$list) {
-			# comparing bigint confuses Test2, so stringify
-			is( $dec_vqty_le->($buf_le).'', $_.'', "decode_vqty_le $test_str" )
-				or diag _dump_hex(${$buf_le->[0]});
-			is( $dec_vqty_be->($buf_be).'', $_.'', "decode_vqty_be $test_str" )
-				or diag _dump_hex(${$buf_be->[0]});
-		}
-	}
 }
 
 done_testing;

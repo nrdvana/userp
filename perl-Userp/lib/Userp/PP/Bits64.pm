@@ -69,11 +69,29 @@ sub pack_bits_be {
 	substr($enc, -$byte_n);
 }
 
-sub buffer_encode_bits_le {
-	my ($buf, $bits, $value)= @_;
+sub encode_int_le {
+	my ($buf, $value, $bits)= @_;
+	if (!defined $bits) {
+		$buf->[2]= 0; # automatic alignment to byte
+		${$buf->[0]} .= $value < 0x80? pack('C',$value<<1)
+			: $value < 0x4000? pack('S<',($value<<2)+1)
+			: $value < 0x2000_0000? pack('L<',($value<<3)+3)
+			: $value < 0x1000_0000_0000_0000? pack('Q<',($value<<4)+7)
+			: do {
+				my $bytes= ref($value)? reverse($value->as_bytes) : pack('Q<',$value);
+				# needs to be a multiple of 4 bytes
+				$bytes .= "\0" x (4 - (length($bytes) & 3))
+					if length($bytes) & 3;
+				my $n= (length($bytes) >> 2) - 2;
+				$n < 0? croak "BUG: bigint wasn't 8 bytes long"
+				: $n < 0xFFF? pack('S<', ($n << 4) | 0xF) . $bytes
+				: $n < 0xFFFF_FFFF? "\xFF\xFF" . pack('L<', $n) . $bytes
+				: Userp::Error::ImplLimit->throw(message => "Refusing to encode ludicrously large integer value");
+			};
+	}
 	# If no bit remainder and bit_count is a whole number of bytes,
 	# use the simpler byte-based code:
-	if (!$buf->[2] && !($bits & 7)) {
+	elsif (!$buf->[2] && !($bits & 7)) {
 		my $n= $bits >> 3;
 		${$buf->[0]} .= $n == 1? pack 'C', $value
 			: $n == 2? pack 'S<', $value
@@ -100,11 +118,29 @@ sub buffer_encode_bits_le {
 	$buf;
 }
 
-sub buffer_encode_bits_be {
-	my ($buf, $bits, $value)= @_;
+sub encode_int_be {
+	my ($buf, $value, $bits)= @_;
+	if (!defined $bits) {
+		$buf->[2]= 0; # automatic alignment to byte
+		${$buf->[0]} .= $value < 0x80? pack('C',$value)
+			: $value < 0x4000? pack('S>',0x8000 | $value)
+			: $value < 0x2000_0000? pack('L>',0xC000_0000 | $value)
+			: $value < 0x1000_0000_0000_0000? pack('Q>',0xE000_0000_0000_0000 | $value)
+			: do {
+				my $bytes= ref($value)? $value->as_bytes : pack('Q>',$value);
+				# needs to be a multiple of 4 bytes
+				$bytes= ("\0" x (4 - (length($bytes) & 3))) . $bytes
+					if length($bytes) & 3;
+				my $n= (length($bytes) >> 2) - 2;
+				$n < 0? croak "BUG: bigint wasn't 8 bytes long"
+				: $n < 0xFFF? pack('S>', 0xF000 | $n).$bytes
+				: $n < 0xFFFF_FFFF? "\xFF\xFF".pack('L>', $n).$bytes
+				: Userp::Error::ImplLimit->throw(message => "Refusing to encode ludicrously large integer value");
+			};
+	}
 	# If no bit remainder and bit_count is a whole number of bytes,
 	# use the simpler byte-based code:
-	if (!$buf->[2] && !($bits & 7)) {
+	elsif (!$buf->[2] && !($bits & 7)) {
 		my $n= $bits >> 3;
 		${$buf->[0]} .= $n == 1? pack 'C', $value
 			: $n == 2? pack 'S>', $value
@@ -137,53 +173,61 @@ sub buffer_encode_bits_be {
 	$buf;
 }
 
-sub buffer_encode_vqty_le {
-	my ($buf, $value)= @_;
-	$buf->[2]= 0; # automatic alignment to byte
-	${$buf->[0]} .= $value < 0x80? pack('C',$value<<1)
-		: $value < 0x4000? pack('S<',($value<<2)+1)
-		: $value < 0x2000_0000? pack('L<',($value<<3)+3)
-		: $value < 0x1000_0000_0000_0000? pack('Q<',($value<<4)+7)
-		: do {
-			my $bytes= ref($value)? reverse($value->as_bytes) : pack('Q<',$value);
-			# needs to be a multiple of 4 bytes
-			$bytes .= "\0" x (4 - (length($bytes) & 3))
-				if length($bytes) & 3;
-			my $n= (length($bytes) >> 2) - 2;
-			$n < 0? croak "BUG: bigint wasn't 8 bytes long"
-			: $n < 0xFFF? pack('S<', ($n << 4) | 0xF) . $bytes
-			: $n < 0xFFFF_FFFF? "\xFF\xFF" . pack('L<', $n) . $bytes
-			: Userp::Error::ImplLimit->throw(message => "Refusing to encode ludicrously large integer value");
-		};
-	return $buf;
-}
-
-sub buffer_encode_vqty_be {
-	my ($buf, $value)= @_;
-	$buf->[2]= 0; # automatic alignment to byte
-	${$buf->[0]} .= $value < 0x80? pack('C',$value)
-		: $value < 0x4000? pack('S>',0x8000 | $value)
-		: $value < 0x2000_0000? pack('L>',0xC000_0000 | $value)
-		: $value < 0x1000_0000_0000_0000? pack('Q>',0xE000_0000_0000_0000 | $value)
-		: do {
-			my $bytes= ref($value)? $value->as_bytes : pack('Q>',$value);
-			# needs to be a multiple of 4 bytes
-			$bytes= ("\0" x (4 - (length($bytes) & 3))) . $bytes
-				if length($bytes) & 3;
-			my $n= (length($bytes) >> 2) - 2;
-			$n < 0? croak "BUG: bigint wasn't 8 bytes long"
-			: $n < 0xFFF? pack('S>', 0xF000 | $n).$bytes
-			: $n < 0xFFFF_FFFF? "\xFF\xFF".pack('L>', $n).$bytes
-			: Userp::Error::ImplLimit->throw(message => "Refusing to encode ludicrously large integer value");
-		};
-	return $buf;
-}
-
-sub buffer_decode_bits_le {
+sub decode_int_le {
 	my ($buf, $bits)= @_;
+	if (!defined $bits) {
+		my $pos= $buf->[3];
+		++$pos if $buf->[2];
+		$pos < length ${$buf->[0]}
+			or die Userp::Error::EOF->for_buf($buf, $pos, 1, 'vqty');
+		my $switch= ord substr(${$buf->[0]}, $pos, 1);
+		my $v;
+		if (!($switch & 1)) {
+			++$pos;
+			$v= $switch >> 1;
+		}
+		elsif (!($switch & 2)) {
+			$pos+2 <= length ${$buf->[0]}
+				or die Userp::Error::EOF->for_buf($buf, $pos, 2, 'vqty-2');
+			$v= unpack('S<', substr(${$buf->[0]}, $pos, 2)) >> 2;
+			$pos+= 2;
+		}
+		elsif (!($switch & 4)) {
+			$pos+4 <= length ${$buf->[0]}
+				or die Userp::Error::EOF->for_buf($buf, $pos, 4, 'vqty-4');
+			$v= unpack('L<', substr(${$buf->[0]}, $pos, 4)) >> 3;
+			$pos+= 4;
+		}
+		elsif (!($switch & 8)) {
+			$pos+8 <= length ${$buf->[0]}
+				or die Userp::Error::EOF->for_buf($buf, $pos, 8, 'vqty-8');
+			$v= unpack('Q<', substr(${$buf->[0]}, $pos, 8)) >> 4;
+			$pos+= 8;
+		} else {
+			$pos+6 <= length ${$buf->[0]}
+				or die Userp::Error::EOF->for_buf($buf, $pos, 6, 'vqty-N');
+			my $n= unpack('S<', substr(${$buf->[0]}, $pos, 2));
+			$pos+= 2;
+			if ($n == 0xFFFF) {
+				$n= unpack('L<', substr(${$buf->[0]}, $pos, 4));
+				$pos+= 4;
+				$n < 0xFFFF_FFFF or Userp::Error::ImplLimit->throw(message => "Refusing to decode ludicrously large integer value");
+			} else {
+				$n >>= 4;
+			}
+			# number of bytes is 8 + $n * 4
+			$n= ($n << 2) + 8;
+			$pos + $n <= length ${$buf->[0]}
+				or die Userp::Error::EOF->for_buf($buf, $pos, $n, 'vqty-'.$n);
+			$v= Math::BigInt->from_bytes(scalar reverse substr(${$buf->[0]}, $pos, $n));
+			$pos+= $n;
+		}
+		$buf->[3]= $pos;
+		return $v;
+	}
 	# If bit_pos is a byte boundary and bit_count is a whole number of bytes,
 	# use the simpler byte-based code:
-	if (!$buf->[2] && !($bits & 7)) {
+	elsif (!$buf->[2] && !($bits & 7)) {
 		# Ensure we have this many bits available
 		my $n= $bits >> 3;
 		$buf->[3] + $n <= length ${$buf->[0]}
@@ -217,11 +261,62 @@ sub buffer_decode_bits_le {
 	}
 }
 
-sub buffer_decode_bits_be {
+sub decode_int_be {
 	my ($buf, $bits)= @_;
+	if (!defined $bits) {
+		my $pos= $buf->[3];
+		++$pos if $buf->[2];
+		$pos < length ${$buf->[0]}
+			or die Userp::Error::EOF->for_buf($buf, $pos, 1, 'vqty');
+		my $switch= ord substr(${$buf->[0]}, $pos, 1);
+		my $v;
+		if ($switch < 0x80) {
+			++$pos;
+			$v= $switch;
+		}
+		elsif ($switch < 0xC0) {
+			$pos+2 <= length ${$buf->[0]}
+				or die Userp::Error::EOF->for_buf($buf, $pos, 2, 'vqty-2');
+			$v= unpack('S>', substr(${$buf->[0]}, $pos, 2)) & 0x3FFF;
+			$pos+= 2;
+		}
+		elsif ($switch < 0xE0) {
+			$pos+4 <= length ${$buf->[0]}
+				or die Userp::Error::EOF->for_buf($buf, $pos, 4, 'vqty-4');
+			$v= unpack('L>', substr(${$buf->[0]}, $pos, 4)) & 0x1FFF_FFFF;
+			$pos+= 4;
+		}
+		elsif ($switch < 0xF0) {
+			$pos+8 <= length ${$buf->[0]}
+				or die Userp::Error::EOF->for_buf($buf, $pos, 8, 'vqty-8');
+			$v= unpack('Q>', substr(${$buf->[0]}, $pos, 8)) & 0x0FFF_FFFF_FFFF_FFFF;
+			$pos+= 8;
+		}
+		else {
+			$pos+6 <= length ${$buf->[0]}
+				or die Userp::Error::EOF->for_buf($buf, $pos, 6, 'vqty-N');
+			my $n= unpack('S>', substr(${$buf->[0]}, $pos, 2));
+			$pos+= 2;
+			if ($n == 0xFFFF) {
+				$n= unpack('L>', substr(${$buf->[0]}, $pos, 4));
+				$pos+= 4;
+				$n < 0xFFFF_FFFF or Userp::Error::ImplLimit->throw(message => "Refusing to decode ludicrously large integer value");
+			} else {
+				$n &= 0xFFF;
+			}
+			# number of bytes is 8 + $n * 4
+			$n= ($n << 2) + 8;
+			$pos + $n <= length ${$buf->[0]}
+				or die Userp::Error::EOF->for_buf($buf, $pos, $n, 'vqty-'.$n);
+			$v= Math::BigInt->from_bytes(substr(${$buf->[0]}, $pos, $n));
+			$pos+= $n;
+		}
+		$buf->[3]= $pos;
+		return $v;
+	}
 	# If bit_pos is a byte boundary and bit_count is a whole number of bytes,
 	# use the simpler byte-based code:
-	if (!$buf->[2] && !($bits & 7)) {
+	elsif (!$buf->[2] && !($bits & 7)) {
 		# Ensure we have this many bits available
 		my $n= $bits >> 3;
 		$buf->[3] + $n <= length ${$buf->[0]}
@@ -257,111 +352,6 @@ sub buffer_decode_bits_be {
 			return $v;
 		}
 	}
-}
-
-sub buffer_decode_vqty_le {
-	my $buf= shift;
-	my $pos= $buf->[3];
-	++$pos if $buf->[2];
-	$pos < length ${$buf->[0]}
-		or die Userp::Error::EOF->for_buf($buf, $pos, 1, 'vqty');
-	my $switch= ord substr(${$buf->[0]}, $pos, 1);
-	my $v;
-	if (!($switch & 1)) {
-		++$pos;
-		$v= $switch >> 1;
-	}
-	elsif (!($switch & 2)) {
-		$pos+2 <= length ${$buf->[0]}
-			or die Userp::Error::EOF->for_buf($buf, $pos, 2, 'vqty-2');
-		$v= unpack('S<', substr(${$buf->[0]}, $pos, 2)) >> 2;
-		$pos+= 2;
-	}
-	elsif (!($switch & 4)) {
-		$pos+4 <= length ${$buf->[0]}
-			or die Userp::Error::EOF->for_buf($buf, $pos, 4, 'vqty-4');
-		$v= unpack('L<', substr(${$buf->[0]}, $pos, 4)) >> 3;
-		$pos+= 4;
-	}
-	elsif (!($switch & 8)) {
-		$pos+8 <= length ${$buf->[0]}
-			or die Userp::Error::EOF->for_buf($buf, $pos, 8, 'vqty-8');
-		$v= unpack('Q<', substr(${$buf->[0]}, $pos, 8)) >> 4;
-		$pos+= 8;
-	} else {
-		$pos+6 <= length ${$buf->[0]}
-			or die Userp::Error::EOF->for_buf($buf, $pos, 6, 'vqty-N');
-		my $n= unpack('S<', substr(${$buf->[0]}, $pos, 2));
-		$pos+= 2;
-		if ($n == 0xFFFF) {
-			$n= unpack('L<', substr(${$buf->[0]}, $pos, 4));
-			$pos+= 4;
-			$n < 0xFFFF_FFFF or Userp::Error::ImplLimit->throw(message => "Refusing to decode ludicrously large integer value");
-		} else {
-			$n >>= 4;
-		}
-		# number of bytes is 8 + $n * 4
-		$n= ($n << 2) + 8;
-		$pos + $n <= length ${$buf->[0]}
-			or die Userp::Error::EOF->for_buf($buf, $pos, $n, 'vqty-'.$n);
-		$v= Math::BigInt->from_bytes(scalar reverse substr(${$buf->[0]}, $pos, $n));
-		$pos+= $n;
-	}
-	$buf->[3]= $pos;
-	return $v;
-}
-
-sub buffer_decode_vqty_be {
-	my $buf= shift;
-	my $pos= $buf->[3];
-	++$pos if $buf->[2];
-	$pos < length ${$buf->[0]}
-		or die Userp::Error::EOF->for_buf($buf, $pos, 1, 'vqty');
-	my $switch= ord substr(${$buf->[0]}, $pos, 1);
-	my $v;
-	if ($switch < 0x80) {
-		++$pos;
-		$v= $switch;
-	}
-	elsif ($switch < 0xC0) {
-		$pos+2 <= length ${$buf->[0]}
-			or die Userp::Error::EOF->for_buf($buf, $pos, 2, 'vqty-2');
-		$v= unpack('S>', substr(${$buf->[0]}, $pos, 2)) & 0x3FFF;
-		$pos+= 2;
-	}
-	elsif ($switch < 0xE0) {
-		$pos+4 <= length ${$buf->[0]}
-			or die Userp::Error::EOF->for_buf($buf, $pos, 4, 'vqty-4');
-		$v= unpack('L>', substr(${$buf->[0]}, $pos, 4)) & 0x1FFF_FFFF;
-		$pos+= 4;
-	}
-	elsif ($switch < 0xF0) {
-		$pos+8 <= length ${$buf->[0]}
-			or die Userp::Error::EOF->for_buf($buf, $pos, 8, 'vqty-8');
-		$v= unpack('Q>', substr(${$buf->[0]}, $pos, 8)) & 0x0FFF_FFFF_FFFF_FFFF;
-		$pos+= 8;
-	}
-	else {
-		$pos+6 <= length ${$buf->[0]}
-			or die Userp::Error::EOF->for_buf($buf, $pos, 6, 'vqty-N');
-		my $n= unpack('S>', substr(${$buf->[0]}, $pos, 2));
-		$pos+= 2;
-		if ($n == 0xFFFF) {
-			$n= unpack('L>', substr(${$buf->[0]}, $pos, 4));
-			$pos+= 4;
-			$n < 0xFFFF_FFFF or Userp::Error::ImplLimit->throw(message => "Refusing to decode ludicrously large integer value");
-		} else {
-			$n &= 0xFFF;
-		}
-		# number of bytes is 8 + $n * 4
-		$n= ($n << 2) + 8;
-		$pos + $n <= length ${$buf->[0]}
-			or die Userp::Error::EOF->for_buf($buf, $pos, $n, 'vqty-'.$n);
-		$v= Math::BigInt->from_bytes(substr(${$buf->[0]}, $pos, $n));
-		$pos+= $n;
-	}
-	$buf->[3]= $pos;
-	return $v;
 }
 
 1;
