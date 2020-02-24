@@ -38,7 +38,7 @@ along with the data.
 
 =head2 align
 
-See L<Userp::Type>
+See L<Userp::Type/align>
 
 =cut
 
@@ -54,6 +54,26 @@ sub _merge_self_into_attrs {
 	$attrs->{elem_type}= $self->elem_type unless exists $attrs->{elem_type};
 	$attrs->{dim_type}= $self->dim_type unless exists $attrs->{dim_type};
 	$attrs->{dim}= $self->dim unless exists $attrs->{dim};
+}
+
+sub BUILD {
+	my $self= shift;
+	my $elem_type= $self->elem_type;
+	my $elem_align= $elem_type->effective_align;
+	my $elem_bits= $elem_type->bitlen;
+	# The alignment of the array defaults to the same as the element type
+	my $align= defined $self->align? $self->align : $elem_align;
+	# Find out if the array has an overal fixed length
+	my $bits= undef;
+	if (defined $elem_bits and !grep { !defined } @{ $self->dim }) {
+		my $mul= 1;
+		$mul *= $_ for @{ $self->dim };
+		# total bits might be affected by alignment.  Round up length of all elements except last.
+		my $mask= (1 << ($elem_align+3)) - 1;
+		$bits= $elem_bits + ($mul-1) * (($elem_bits + $mask) & ~$mask);
+	}
+	$self->_set_effective_align($align);
+	$self->_set_bitlen($bits);
 }
 
 1;

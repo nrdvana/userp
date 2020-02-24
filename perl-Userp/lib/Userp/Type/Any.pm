@@ -20,4 +20,11 @@ See attributes of L<Userp::Type>.
 
 sub isa_Any { 1 }
 
+sub BUILD {
+	my $self= shift;
+	my $align= $self->align;
+	$align= 0 unless $align && $align > 0;
+	$self->_set_effective_align($align);
+}
+
 1;

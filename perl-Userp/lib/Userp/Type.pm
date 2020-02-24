@@ -39,11 +39,7 @@ True of the encoding of the type begins with an unsigned integer value.
 The maximum value of a type having a leading unsigned integer component, or undef if the
 component has no upper bound.  (also undef if has_scalar_component is false)
 
-=head2 sizeof
-
-Number of octets used to encode this type, or C<undef> if the encoding has a variable length.
-
-=head2 bitsizeof
+=head2 bitlen
 
 A number of bits used to encode this type, or C<undef> if the encoding has a variable length.
 
@@ -55,6 +51,9 @@ has table_idx  => ( is => 'rwp' );
 has spec       => ( is => 'lazy' );
 has align      => ( is => 'ro' );
 has metadata   => ( is => 'ro' );
+
+has effective_align => ( is => 'rwp' );
+has bitlen          => ( is => 'rwp' );
 
 sub isa_Any     { 0 }
 sub isa_Integer { 0 }

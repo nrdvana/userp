@@ -27,9 +27,13 @@ but can make the API more convenient and help with integrating with the host lan
 
 =cut
 
-has values => ( is => 'ro' );
-has prefix => ( is => 'ro' );
-
 sub isa_Symbol { 1 }
+
+sub BUILD {
+	my $self= shift;
+	my $align= $self->align;
+	$align= 0 unless $align && $align > 0;
+	$self->_set_effective_align($align);
+}
 
 1;

@@ -68,8 +68,7 @@ sub isa_Integer { 1 }
 
 has effective_min   => ( is => 'rwp' );
 has effective_max   => ( is => 'rwp' );
-has effective_bits  => ( is => 'rwp' );
-has effective_align => ( is => 'rwp' );
+sub effective_bits { shift->bitlen }
 
 has _name_by_val => ( is => 'lazy' );
 has _val_by_name => ( is => 'lazy' );
@@ -162,7 +161,11 @@ sub BUILD {
 		# If min and max are both defined, bits is derived from the largest value that can be encoded
 		Userp::Error::Domain->assert_minmax($max, $min, undef, 'Integer max');
 		$bits= Userp::Bits::bitlen($max-$min);
-		$align ||= 0;
+		# If alignment is given and bits are not, round up to a multiple of the alignment
+		if ($align ||= 0) {
+			my $mask= (1 << $align) - 1;
+			$bits= (($bits-1) | $mask) + 1;
+		}
 	}
 	else {
 		# variable-length integers are always byte-aligned or higher
@@ -170,8 +173,8 @@ sub BUILD {
 	}
 	$self->_set_effective_min($min);
 	$self->_set_effective_max($max);
-	$self->_set_effective_bits($bits);
 	$self->_set_effective_align($align);
+	$self->_set_bitlen($bits);
 }
 
 1;
