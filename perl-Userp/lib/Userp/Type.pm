@@ -49,8 +49,9 @@ A number of bits used to encode this type, or C<undef> if the encoding has a var
 
 =cut
 
-has name       => ( is => 'ro', required => 1 );
-has id         => ( is => 'ro', required => 1 );
+has name       => ( is => 'ro' );
+has scope_idx  => ( is => 'rwp' );
+has table_idx  => ( is => 'rwp' );
 has spec       => ( is => 'lazy' );
 has align      => ( is => 'ro' );
 has metadata   => ( is => 'ro' );
@@ -62,29 +63,16 @@ sub isa_Choice  { 0 }
 sub isa_Array   { 0 }
 sub isa_Record  { 0 }
 
-sub _bitlen {
-	my $x= shift;
-	my $i= 0;
-	while ($x > 0) {
-		++$i;
-		$x >>= 1;
-	}
-	return $i;
-}
-
 =head1 METHODS
 
 =head2 subtype
 
   my $type2= $type1->subtype( %attrs );
 
-Returns a new type instance with the specified attributes altered.  In some cases, the given
-attributes overwrite the current object's attributes, and in other cases the values get
-combined in a way that feels like "subclassing" the type.  For instance, L<Userp::Type::Integer>
-C<names> are cumulative, L<Userp::Type::Record> fields are cumulative, and so on.  Any
-conflicting attributes are resolved in favor of the new value.
-
-C<%attrs> must always include C<id>, C<public_id>, and C<name>, even if they are C<undef>.
+Returns a new type instance with the specified attributes altered.  New attribute values
+replace old ones of the same name, but there are also some keys that can be given that are
+not actual attributes (like C<add_options> or C<add_fields>) that augment the value of an
+attribute from the parent.
 
 =cut
 
