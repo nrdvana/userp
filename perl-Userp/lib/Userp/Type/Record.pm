@@ -190,8 +190,8 @@ sub BUILD {
 		# Else it is the same as the alignment of the first mandatory field
 		: @static_f? $static_f[0]->type->effective_align
 		: @seq_f? $seq_f[0]->type->effective_align
-		# One of the above must be true
-		: die "BUG: can't determine effective alignment of record";
+		# Else it has no fields and is zero bits long, bit-aligned by default
+		: -3;
 
 	# Find out if the record has an overall fixed length
 	my $bits= undef;
@@ -218,6 +218,12 @@ sub BUILD {
 	$self->_set_effective_static_bits($static_bits);
 	$self->_set_effective_align($align);
 	$self->_set_bitlen($bits);
+}
+
+sub _register_symbols {
+	my ($self, $scope)= @_;
+	$scope->add_symbols(map $_->name, @{$self->fields});
+	$self->next::method($scope);
 }
 
 1;

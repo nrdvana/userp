@@ -7,10 +7,10 @@ subtest ctor => sub {
 		call parent => undef;
 		call final  => undef;
 		call scope_stack => array {
-			item $parent;
+			item 0 => exact_ref $parent;
 		};
 		call scope_idx => 0;
-	});
+	}, 'parent scope' );
 };
 
 done_testing;

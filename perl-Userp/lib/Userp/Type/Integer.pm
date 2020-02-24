@@ -177,4 +177,11 @@ sub BUILD {
 	$self->_set_bitlen($bits);
 }
 
+sub _register_symbols {
+	my ($self, $scope)= @_;
+	$scope->add_symbols(map { ref $_ eq 'ARRAY'? $_->[0] : $_ } @{$self->names})
+		if $self->names;
+	$self->next::method($scope);
+}
+
 1;

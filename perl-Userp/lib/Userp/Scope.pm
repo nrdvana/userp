@@ -294,7 +294,7 @@ sub BUILD {
 			Userp::Type::Record ->new(scope => $self, table_idx => 5, name => 'Record')
 			;
 		for (@$table) {
-			$_->register_symbols($self);
+			$_->_register_symbols($self);
 			$self->_type_by_name->{$_->name}= $_;
 		}
 	}

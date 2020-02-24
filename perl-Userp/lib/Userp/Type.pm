@@ -92,6 +92,18 @@ sub _merge_self_into_attrs {
 	}
 }
 
+sub _register_symbols {
+	my ($self, $scope)= @_;
+	$scope->add_symbols($self->name) if defined $self->name;
+	if ($self->metadata) {
+		$scope->add_symbols(keys %{ $self->metadata });
+		for (values %{ $self->metadata }) {
+			die "Unimplemented: need to find all Symbols in nested metadata"
+				if ref $_;
+		}
+	}
+}
+
 =head2 has_member_type
 
   $bool= $type->has_member_type($other_type);

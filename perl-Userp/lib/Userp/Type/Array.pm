@@ -58,19 +58,36 @@ sub _merge_self_into_attrs {
 
 sub BUILD {
 	my $self= shift;
-	my $elem_type= $self->elem_type;
-	my $elem_align= $elem_type->effective_align;
-	my $elem_bits= $elem_type->bitlen;
-	# The alignment of the array defaults to the same as the element type
-	my $align= defined $self->align? $self->align : $elem_align;
-	# Find out if the array has an overal fixed length
-	my $bits= undef;
-	if (defined $elem_bits and !grep { !defined } @{ $self->dim }) {
-		my $mul= 1;
-		$mul *= $_ for @{ $self->dim };
-		# total bits might be affected by alignment.  Round up length of all elements except last.
-		my $mask= (1 << ($elem_align+3)) - 1;
-		$bits= $elem_bits + ($mul-1) * (($elem_bits + $mask) & ~$mask);
+	my $align= $self->align;
+	my $elem_count;
+	if ($self->dim && !grep { !defined } @{ $self->dim }) {
+		$elem_count= 1;
+		$elem_count *= $_ for @{ $self->dim };
+	}
+	my $bits;
+	if (defined $elem_count && $elem_count == 0) {
+		$bits= 0;
+		$align= $self->elem_type? -3 : 0;
+	}
+	elsif (my $elem_type= $self->elem_type) {
+		my $elem_align= $elem_type->effective_align;
+		my $elem_bits= $elem_type->bitlen;
+		# The alignment of the array must be at least as big as the element alignment
+		$align= $elem_align if !defined $align || $align < $elem_align;
+		# Find out if the array has an overal fixed length
+		if (defined $elem_bits and defined $elem_count) {
+			# total bits might be affected by alignment.  Round up length of all elements except last.
+			my $mask= (1 << ($elem_align+3)) - 1;
+			$bits= $elem_count? $elem_bits + ($elem_count-1) * (($elem_bits + $mask) & ~$mask) : 0;
+		}
+		else {
+			# Alignment of dynamic array must be at least 0
+			$align= 0 if $align < 0;
+		}
+	}
+	else {
+		# Alignment of dynamic elem type array must be at least 0
+		$align= 0 if !defined $align or $align < 0;
 	}
 	$self->_set_effective_align($align);
 	$self->_set_bitlen($bits);

@@ -133,4 +133,13 @@ sub has_scalar_component { 1 }
 has scalar_component_max => ( is => 'lazy' );
 sub _build_scalar_component_max { shift->option_table->[-1]{sel_max} }
 
+sub _register_symbols {
+	my ($self, $scope)= @_;
+	for (@{ $self->options }) {
+		die "Unimplemented: register symbols found in option->value"
+			if defined $_->{value};
+	}
+	$self->next::method($scope);
+}
+
 1;
