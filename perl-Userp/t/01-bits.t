@@ -24,10 +24,16 @@ todo "Bits32 not written" => sub {
 
 sub test_bits_api {
 	my $class= shift;
-	subtest sign_extend => sub { test_sign_extend($class) };
-	subtest bitlen      => sub { test_bitlen($class) };
-	subtest pack_bits   => sub { test_pack_bits($class) };
-	subtest ints        => sub { test_int($class) };
+	for my $fn (qw(
+		sign_extend
+		bitlen
+		unsigned_max
+		roundup_bits_to_alignment
+		pack_bits
+		ints
+	)) {
+		subtest $fn => sub { __PACKAGE__->can("test_$fn")->($class) };
+	}
 }
 
 sub test_sign_extend {
@@ -90,6 +96,55 @@ sub test_bitlen {
 	}
 }
 
+sub test_unsigned_max {
+	my $class= shift;
+	my ($unsigned_max)= map $class->can($_), qw( unsigned_max );
+	my @tests= (
+		[ 0, 0 ],
+		[ 1, 1 ],
+		[ 2, 3 ],
+		[ 3, 7 ],
+		[ 4, 0x0F ],
+		[ 5, 0x1F ],
+		[ 6, 0x3F ],
+		[ 7, 0x7F ],
+		[ 8, 0xFF ],
+		[ 9, 0x1FF ],
+		[ 15, 0x7FFF ],
+		[ 16, 0xFFFF ],
+		[ 31, 0x7FFFFFFF ],
+		[ 32, 0xFFFFFFFF ],
+		[ 63, '9223372036854775807' ],
+		[ 64, '18446744073709551615' ],
+		[ 65, '36893488147419103231' ],
+	);
+	for (@tests) {
+		my ($bits, $max)= @$_;
+		my $x= $unsigned_max->($bits);
+		is( "$x", $max, "2**$bits" );
+	}
+}
+
+sub test_roundup_bits_to_alignment {
+	my $class= shift;
+	my ($roundup)= map $class->can($_), qw( roundup_bits_to_alignment );
+	my @tests= (
+		[ 1, -3 => 1 ],
+		[ 1, -2 => 2 ],
+		[ 0, -1 => 0 ],
+		[ 1, -1 => 4 ],
+		[ 0, 0 => 0 ],
+		[ 1, 0 => 8 ],
+		[ 1, 1 => 16 ],
+		[ 1, 2 => 32 ],
+	);
+	for (@tests) {
+		my ($bits, $align, $expect)= @$_;
+		my $x= $roundup->($bits, $align);
+		is( $x, $expect, "round $bits bits to 2**$align bytes" );
+	}
+}
+
 sub test_pack_bits {
 	my $class= shift;
 	my ($pack_bits_le, $pack_bits_be)= map $class->can($_), qw( pack_bits_le pack_bits_be );
@@ -123,10 +178,9 @@ sub test_pack_bits {
 		is( $pack_bits_le->($bits, $value), $le, "pack_bits_le($bits,$value)" );
 		is( $pack_bits_be->($bits, $value), $be, "pack_bits_be($bits,$value)" );
 	}
-	done_testing;
 }
 
-sub test_int {
+sub test_ints {
 	my $class= shift;
 	my ($enc_int_le, $enc_int_be, $dec_int_le, $dec_int_be)=
 		map $class->can($_), qw( encode_int_le encode_int_be decode_int_le decode_int_be );
@@ -181,7 +235,6 @@ sub test_int {
 			}
 		};
 	}
-	done_testing;
 }
 
 done_testing;

@@ -7,6 +7,7 @@ our @api= qw(
 	pack_bit_size
 	twos_minmax
 	unsigned_max
+	roundup_bits_to_alignment
 	sign_extend
 	bitlen
 	pack_bits_le

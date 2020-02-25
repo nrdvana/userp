@@ -23,7 +23,14 @@ sub twos_minmax {
 }
 sub unsigned_max {
 	my $bits= shift;
-	$bits <= 1? 0 : $bits < 64? (1<<$bits)-1 : $bits == 64? ~0 : Math::BigInt->bone->blsft($bits)->bdec;
+	$bits <= 0? 0 : $bits < 64? (1<<$bits)-1 : $bits == 64? ~0 : Math::BigInt->bone->blsft($bits)->bdec;
+}
+
+sub roundup_bits_to_alignment {
+	# ($bits, $align)= @_;
+	# Alignment is in terms of bytes, so bit shift needs to add 3
+	my $mask= (1 << ($_[1] + 3)) - 1;
+	return ($_[0] + $mask) & ~$mask;
 }
 
 sub sign_extend {

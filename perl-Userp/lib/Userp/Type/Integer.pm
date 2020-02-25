@@ -138,7 +138,7 @@ sub _merge_self_into_attrs {
 sub BUILD {
 	my $self= shift;
 	my ($min, $max, $bits, $align)= ($self->min, $self->max, $self->bits, $self->align);
-	if ($bits) {
+	if (defined $bits) {
 		# If bits attribute is defined, value is encoded in a fixed number of bits.
 		# Those bits are 2's complement if $min is negative or not set, unsigned otherwise.
 		if (!defined $min || $min < 0) {
@@ -155,21 +155,24 @@ sub BUILD {
 			Userp::Error::Domain->assert_minmax($min, 0, $max, 'Integer min');
 			Userp::Error::Domain->assert_minmax($max, $min, $max, 'Integer max');
 		}
-		$align ||= 0;
 	}
 	elsif (defined $min && defined $max) {
 		# If min and max are both defined, bits is derived from the largest value that can be encoded
 		Userp::Error::Domain->assert_minmax($max, $min, undef, 'Integer max');
 		$bits= Userp::Bits::bitlen($max-$min);
 		# If alignment is given and bits are not, round up to a multiple of the alignment
-		if ($align ||= 0) {
-			my $mask= (1 << $align) - 1;
-			$bits= (($bits-1) | $mask) + 1;
+		if (defined $align && $align > -3) {
+			$bits= Userp::Bits::roundup_bits_to_alignment($bits, $align);
 		}
 	}
 	else {
 		# variable-length integers are always byte-aligned or higher
-		$align= 3 unless $align && $align > 3;
+		$align= 0 unless defined $align && $align > 0;
+	}
+	# If alignment not given, determine sensible default from bits
+	if (!defined $align) {
+		$align= -3;
+		for (my $x= $bits; $x && !($x & 1); $x >>= 1, ++$align) {};
 	}
 	$self->_set_effective_min($min);
 	$self->_set_effective_max($max);

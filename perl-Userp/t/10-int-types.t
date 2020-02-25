@@ -6,19 +6,23 @@ my @tests= (
 	#    min  effective_min, max effective_max, bits, effective_bits, align, effective_align  
 	[
 		{ name => 'Int' },
-		undef, undef,     undef, undef,   undef, undef,       undef, 3,
+		undef, undef,     undef, undef,   undef, undef,       undef, 0,
 	],
 	[
 		{ name => 'Positive', parent => 'Int', min => 0 },
-		0, 0,             undef, undef,   undef, undef,       undef, 3,
+		0, 0,             undef, undef,   undef, undef,       undef, 0,
 	],
 	[
 		{ name => 'Negative', parent => 'Int', max => -1 },
-		undef, undef,     -1, -1,         undef, undef,       undef, 3,
+		undef, undef,     -1, -1,         undef, undef,       undef, 0,
 	],
 	[
 		{ name => 'int8', parent => 'Int', bits => 8 },
 		undef, -128,      undef, 127,     8, 8,               undef, 0,
+	],
+	[
+		{ name => 'bit', bits => 1, min => 0 },
+		0, 0,             undef, 1,       1, 1,               undef, -3,
 	],
 	[
 		{ name => 'int0_FF', parent => 'Int', min => 0, max => 0xFF },
@@ -28,11 +32,12 @@ my @tests= (
 		{ name => 'int8u', parent => 'Int', bits => 8, min => 0 },
 		0, 0,             undef, 0xFF,    8, 8,               undef, 0,
 	],
-	[
-		# max conflicts with bits of parent.  bits should become unset but min should be preserved.
-		{ name => 'max1000', parent => 'int8u', max => 1000 },
-		0, 0,             1000, 1000,     undef, 10,          undef, 0,
-	],
+	# TODO: test errors in specifications
+	#[
+	#	# max conflicts with bits of parent.  bits should become unset but min should be preserved.
+	#	{ name => 'max1000', parent => 'int8u', max => 1000 },
+	#	0, 0,             1000, 1000,     undef, 10,          undef, 0,
+	#],
 );
 
 my %types;
