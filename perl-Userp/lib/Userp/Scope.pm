@@ -125,17 +125,17 @@ sub get_symbol {
 
 sub find_symbol {
 	my ($self, $sym, $add)= @_;
-	my ($scope, $scope_i, $sym_i)= ($self, $self->scope_idx, $self->_sym_by_name->{$sym});
-	while (!defined $sym_i && $scope_i > 0) {
+	my $scope= $self;
+	do {
+		my $sym_i= $scope->_sym_by_name->{$sym};
+		return ($scope->scope_idx, $sym_i) if defined $sym_i;
 		$scope= $scope->parent;
-		--$scope_i;
-		$sym_i= $scope->_sym_by_name->{$sym};
-	}
+	} while $scope;
 	if ($add) {
 		Userp::Error::Readonly->throw({ message => 'Cannot alter symbol table of a finalized scope' })
 			if $self->final;
 		push @{ $self->_symbols }, $sym;
-		$sym_i= $self->_sym_by_name->{$sym}= $#{ $self->_symbols };
+		my $sym_i= $self->_sym_by_name->{$sym}= $#{ $self->_symbols } || '0E0';
 		return ($self->scope_idx, $sym_i);
 	}
 	return;
@@ -150,9 +150,9 @@ sub add_symbols {
 	my $parent= $self->parent;
 	my $start_n= @$syms;
 	for (@_) {
-		if (!$by_name->{$_} && (!$parent || !$parent->find_symbol($_))) {
+		if (!defined $by_name->{$_} and (!$parent or !$parent->find_symbol($_))) {
 			push @$syms, $_;
-			$by_name->{$_}= $#$syms;
+			$by_name->{$_}= $#$syms || '0E0';
 		}
 	}
 	return @$syms - $start_n;
@@ -212,13 +212,13 @@ sub get_type {
 
 sub find_type {
 	my ($self, $name)= @_;
-	my ($scope, $scope_i, $type_i)= ($self, $self->scope_idx, $self->_type_by_name->{$name});
-	while (!defined $type_i && $scope_i > 0) {
+	my $scope= $self;
+	my $t;
+	do {
+		return $t if $t= $scope->_type_by_name->{$name};
 		$scope= $scope->parent;
-		--$scope_i;
-		$type_i= $scope->_type_by_name->{$name};
-	}
-	return;
+	} while $scope;
+	return undef;
 }
 
 sub define_type {
@@ -228,10 +228,15 @@ sub define_type {
 	my $type_idx= @{ $self->_types };
 	$base= $self->find_type($base) || Userp::Error::NotInScope->throw({ message => "No type '$base' in current scope" })
 		unless ref $base && $base->can('subtype');
-	my $type= $base->subtype(($attrs? %$attrs : ()), table_idx => $type_idx, name => $name);
+	my $type= $base->subtype(
+		($attrs? %$attrs : ()),
+		name => $name,
+		scope_idx => $self->scope_idx,
+		table_idx => $type_idx,
+	);
 	$type->set_meta($meta)
 		if defined $meta;
-	$type->register_symbols($self);
+	$type->_register_symbols($self);
 	push @{ $self->_types }, $type;
 	$self->_type_by_name->{$name}= $type
 		if defined $name;
@@ -273,12 +278,12 @@ A Record type of undeclared fields.
 
 =cut
 
-has type_Any     => ( is => 'lazy', default => sub { shift->scope_stack->[0]->_types->[1] } );
-has type_Integer => ( is => 'lazy', default => sub { shift->scope_stack->[0]->_types->[2] } );
-has type_Symbol  => ( is => 'lazy', default => sub { shift->scope_stack->[0]->_types->[3] } );
-has type_Choice  => ( is => 'lazy', default => sub { shift->scope_stack->[0]->_types->[4] } );
-has type_Array   => ( is => 'lazy', default => sub { shift->scope_stack->[0]->_types->[5] } );
-has type_Record  => ( is => 'lazy', default => sub { shift->scope_stack->[0]->_types->[6] } );
+has type_Any     => ( is => 'lazy', default => sub { shift->scope_stack->[0]->_types->[0] } );
+has type_Integer => ( is => 'lazy', default => sub { shift->scope_stack->[0]->_types->[1] } );
+has type_Symbol  => ( is => 'lazy', default => sub { shift->scope_stack->[0]->_types->[2] } );
+has type_Choice  => ( is => 'lazy', default => sub { shift->scope_stack->[0]->_types->[3] } );
+has type_Array   => ( is => 'lazy', default => sub { shift->scope_stack->[0]->_types->[4] } );
+has type_Record  => ( is => 'lazy', default => sub { shift->scope_stack->[0]->_types->[5] } );
 
 sub BUILD {
 	my $self= shift;
@@ -286,12 +291,12 @@ sub BUILD {
 	if (!$self->parent) {
 		my $table= $self->_types;
 		push @$table,
-			Userp::Type::Any    ->new(scope => $self, table_idx => 0, name => 'Any'),
-			Userp::Type::Integer->new(scope => $self, table_idx => 1, name => 'Integer'),
-			Userp::Type::Symbol ->new(scope => $self, table_idx => 2, name => 'Symbol'),
-			Userp::Type::Choice ->new(scope => $self, table_idx => 3, name => 'Choice', options => []),
-			Userp::Type::Array  ->new(scope => $self, table_idx => 4, name => 'Array'),
-			Userp::Type::Record ->new(scope => $self, table_idx => 5, name => 'Record')
+			Userp::Type::Any    ->new(scope_idx => 1, table_idx => 0, name => 'Any'),
+			Userp::Type::Integer->new(scope_idx => 1, table_idx => 1, name => 'Integer'),
+			Userp::Type::Symbol ->new(scope_idx => 1, table_idx => 2, name => 'Symbol'),
+			Userp::Type::Choice ->new(scope_idx => 1, table_idx => 3, name => 'Choice', options => []),
+			Userp::Type::Array  ->new(scope_idx => 1, table_idx => 4, name => 'Array'),
+			Userp::Type::Record ->new(scope_idx => 1, table_idx => 5, name => 'Record')
 			;
 		for (@$table) {
 			$_->_register_symbols($self);
