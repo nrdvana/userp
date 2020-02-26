@@ -6,36 +6,25 @@ use Userp::Bits;
 
 @Userp::Buffer::BE::ISA= ( __PACKAGE__ );
 
-sub new {
-	my $class= shift;
-	my $self= [ undef, 0, 0, 0 ];
-	if (@_) {
-		my $opts= @_ == 1 && ref $_[0] eq 'HASH'? $_[0] : { @_ };
-		$self->[0]= $opts->{bufref};
-		$self->[1]= $opts->{alignment};
-		$class .= '::BE' if $opts->{bigendian};
-	}
-	$self->[0] ||= \(my $X= '');
-	bless $self, $class;
-}
-
 sub new_le {
-	my $class= shift;
-	bless [ $_[0] || \(my $x=''), $_[1] || 0, 0, 0 ], $class;
+	bless [ $_[1] || \(my $x=''), $_[2] || 0, 0, 0 ], 'Userp::Buffer';
 }
 
 sub new_be {
-	my $class= shift;
-	$class .= '::BE';
-	bless [ $_[0] || \(my $x=''), $_[1] || 0, 0, 0 ], $class;
+	bless [ $_[1] || \(my $x=''), $_[2] || 0, 0, 0 ], 'Userp::Buffer::BE';
 }
 
-sub bufref :lvalue { $_[0][0] }
-sub alignment      { $_[0][1] }
-sub _bitpos        { $_[0][2] }
-sub _readpos       { $_[0][3] }
-sub bigendian      { 0 }
-sub length         { length ${$_[0][0]} }
+sub new_same {
+	my $class= ref $_[0] || $_[0];
+	bless [ $_[1] || \(my $x= ''), $_[2] || 0, 0, 0 ], $class;
+}
+
+sub bufref :lvalue    { $_[0][0] }
+sub alignment :lvalue { $_[0][1] }
+sub _bitpos           { $_[0][2] }
+sub _readpos          { $_[0][3] }
+sub bigendian         { 0 }
+sub length            { length ${$_[0][0]} }
 sub Userp::Buffer::BE::bigendian { 1 }
 
 *Userp::Buffer::encode_int= *Userp::Bits::encode_int_le;

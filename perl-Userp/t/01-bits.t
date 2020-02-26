@@ -217,7 +217,7 @@ sub test_ints {
 		my ($list, $le, $be)= @$_;
 		my $test_str= stringify_testvals($list);
 		subtest $test_str => sub {
-			my ($buf_le, $buf_be)= (Userp::Buffer->new, Userp::Buffer->new);
+			my ($buf_le, $buf_be)= (Userp::Buffer->new_le, Userp::Buffer->new_be);
 			for (@$list) {
 				$enc_int_le->($buf_le, @$_);
 				$enc_int_be->($buf_be, @$_);
