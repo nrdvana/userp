@@ -102,7 +102,8 @@ An arrayref of C<< [ $name, $type ] >>. Adds or updates a field with C<Optional>
 has fields           => ( is => 'lazy', init_arg => undef );
 sub _build_fields { [ @{ $_[0]->_static_fields }, @{ $_[0]->_seq_fields }, @{ $_[0]->_opt_fields } ] }
 has static_bits      => ( is => 'ro' );
-has adhoc_fields     => ( is => 'ro' );
+has adhoc_fields     => ( is => 'ro', default => 1 );
+has align            => ( is => 'ro' );
 
 has _static_fields   => ( is => 'rw' );
 has _seq_fields      => ( is => 'rw' );
@@ -118,8 +119,8 @@ sub field {
 	$_[0]->_field_by_name->{$_[1]} or croak "No field '$_[1]' in Record type '".$_[0]->name."'";
 }
 
+has effective_align       => ( is => 'rwp' );
 has effective_static_bits => ( is => 'rwp' );
-has effective_bits        => ( is => 'rwp' );
 
 sub BUILD {
 	my ($self, $args)= @_;
@@ -133,9 +134,9 @@ sub BUILD {
 		defined $placement && $placement >= OPTIONAL
 			or croak "Invalid placement '$placement' for field ".$self->name.".$name";
 		if ($placement >= 0) {
-			defined $type->effective_bits
+			defined $type->bitlen
 				or croak "Record field ".$self->name.".$name cannot have static placement with dynamic-length type ".$type->name; 
-			!defined $self->static_bits || $placement + $type->effective_bits <= $self->static_bits
+			!defined $self->static_bits || $placement + $type->bitlen <= $self->static_bits
 				or croak "Record field ".$self->name.".$name exceeds static_bits of ".$self->static_bits; 
 		}
 		if (defined (my $prev= $by_name{$name})) {
@@ -180,7 +181,7 @@ sub BUILD {
 	
 	# calculate static_bits
 	my $static_bits= $self->static_bits;
-	$static_bits= max 0, map $_->placement + $_->type->effective_bits, @static_f
+	$static_bits= max 0, map $_->placement + $_->type->bitlen, @static_f
 		unless defined $static_bits;
 	
 	# The alignment of the record is 0 if it has any dynamic fields

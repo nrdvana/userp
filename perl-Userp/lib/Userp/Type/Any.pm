@@ -9,8 +9,7 @@ it automatically grows as new types are defined, as opposed to a Choice type whe
 of the set (and selector within the protocol) is a constant.  Also, values of Any are always
 encoded as a variable quantity with some special cases.
 
-Type Any can be subclassed, but the only attributes to override are the L</align>ment and
-L</metadata>.
+Type Any can be subclassed, but the only attribute to override is L<Userp::Type/metadata>.
 
 =head1 ATTRIBUTES
 
@@ -19,12 +18,5 @@ See attributes of L<Userp::Type>.
 =cut
 
 sub isa_Any { 1 }
-
-sub BUILD {
-	my $self= shift;
-	my $align= $self->align;
-	$align= 0 unless $align && $align > 0;
-	$self->_set_effective_align($align);
-}
 
 1;

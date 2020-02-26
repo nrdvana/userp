@@ -15,25 +15,8 @@ You can declare types that are an enumeration of symbols.  These differ from an 
 with named values in that the symbols have no implied numeric value visible through the API
 (though of course they are encoded as integers)
 
-=head1 SPECIFICATION
-
-A symbol type is either the set of all symbols, a list of specific symbols, or a subset of
-symbols by prefix (namespace).  The namespace doesn't actually have any effect on the encoding,
-but can make the API more convenient and help with integrating with the host language.
-
-  (values=(EPERM ENOENT ESRCH EINTR))
-
-  (prefix=POSIX.libc. values=(EPERM ENOENT ESRCH EINTR))
-
 =cut
 
 sub isa_Symbol { 1 }
-
-sub BUILD {
-	my $self= shift;
-	my $align= $self->align;
-	$align= 0 unless $align && $align > 0;
-	$self->_set_effective_align($align);
-}
 
 1;

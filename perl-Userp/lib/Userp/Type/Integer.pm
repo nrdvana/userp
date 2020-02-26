@@ -63,12 +63,14 @@ has min   => ( is => 'ro' );
 has max   => ( is => 'ro' );
 has bits  => ( is => 'ro' );
 has names => ( is => 'ro' );
+has align => ( is => 'ro' );
 
 sub isa_Integer { 1 }
 
 has effective_min   => ( is => 'rwp' );
 has effective_max   => ( is => 'rwp' );
 sub effective_bits { shift->bitlen }
+has effective_align => ( is => 'rwp' );
 
 has _name_by_val => ( is => 'lazy' );
 has _val_by_name => ( is => 'lazy' );
@@ -110,6 +112,7 @@ sub _check_min_max_bits {
 sub _merge_self_into_attrs {
 	my ($self, $attrs)= @_;
 	$self->next::method($attrs);
+	$attrs->{align}= $self->align unless exists $attrs->{align};
 	# If bits are given, it takes priority.  Min and max only preserved if they make sense.
 	if ($attrs->{bits}) {
 		$attrs->{min}= $self->min

@@ -45,6 +45,9 @@ See L<Userp::Type/align>
 has elem_type => ( is => 'ro' );
 has dim_type  => ( is => 'ro' );
 has dim       => ( is => 'ro' );
+has align     => ( is => 'ro' );
+
+has effective_align => ( is => 'rwp' );
 
 sub isa_Array { 1 }
 
@@ -54,6 +57,7 @@ sub _merge_self_into_attrs {
 	$attrs->{elem_type}= $self->elem_type unless exists $attrs->{elem_type};
 	$attrs->{dim_type}= $self->dim_type unless exists $attrs->{dim_type};
 	$attrs->{dim}= $self->dim unless exists $attrs->{dim};
+	$attrs->{align}= $self->align unless exists $attrs->{align};
 }
 
 sub BUILD {

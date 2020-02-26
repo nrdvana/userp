@@ -49,10 +49,10 @@ has name       => ( is => 'ro' );
 has scope_idx  => ( is => 'rwp' );
 has table_idx  => ( is => 'rwp' );
 has spec       => ( is => 'lazy' );
-has align      => ( is => 'ro' );
+sub align         { 0 }
 has metadata   => ( is => 'ro' );
 
-has effective_align => ( is => 'rwp' );
+sub effective_align { 0 }
 has bitlen          => ( is => 'rwp' );
 
 sub isa_Any     { 0 }
@@ -85,7 +85,6 @@ sub subtype {
 # This gets overridden in subclasses
 sub _merge_self_into_attrs {
 	my ($self, $attrs)= @_;
-	$attrs->{align}= $self->align unless defined $attrs->{align};
 	if ($self->metadata && %{$self->metadata}) {
 		my %merged= ( %{$self->metadata}, ($attrs->{metadata}? %{$attrs->{metadata}} : ()) );
 		$attrs->{metadata}= \%merged;
