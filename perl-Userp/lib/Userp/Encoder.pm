@@ -165,40 +165,6 @@ has _bitpos      => ( is => 'rw' );
 has _enc_stack   => ( is => 'rw', default => sub { [] } );
 has _sel_paths   => ( is => 'rw', default => sub { [] } );
 
-sub _align {
-	my ($self, $new_align)= @_;
-	if ($new_align < 3) {
-		# bit-packing.  If starting, _bitpos needs initialized.
-		if ($self->_cur_align >= 3) {
-			$self->{_bitpos}= 0;
-		}
-		# Else it is already initialized and needs aligned if > 0
-		elsif ($new_align > 0) {
-			my $mask= (1 << $new_align) - 1;
-			$self->{_bitpos}= ($self->{_bitpos} + $mask) & ~$mask;
-		}
-	}
-	elsif ($new_align > 3) {
-		my $mul= 1 << ($new_align-3);
-		my $remainder= length(${$self->buffer_ref}) & ($mul-1);
-		${$self->buffer_ref} .= "\0" x ($mul-$remainder) if $remainder;
-	}
-	$self->_cur_align($new_align);
-	$self;
-}
-
-sub _vtable_for {
-	my ($self, $type)= @_;
-	$self->_type_vtable->{$type->id} ||= (
-		$type->isa_Integer? $self->_gen_Integer_encoder($type)
-		: $type->isa_Symbol? $self->_gen_Symbol_encoder($type)
-		: $type->isa_Choice? $self->_gen_Choice_encoder($type)
-		: $type->isa_Array? $self->_gen_Array_encoder($type)
-		: $type->isa_Record? $self->_gen_Record_encoder($type)
-		: $self->_gen_Any_encoder($type) # $type->isa_Any
-	);
-}
-
 =head1 METHODS
 
 =head2 sel
@@ -619,8 +585,63 @@ sub _encode_initial_scalar {
 	return $self;
 }
 
+# Update the buffer to meet the desired alignment, possibly adding
+# a new buffer to the list.
+sub _align {
+	my ($self, $new_align)= @_;
+	my $buf= $self->buffers->[-1];
+	# If the desired alignment is less than the buffer, just add padding
+	if ($new_align < $buf->alignment && $new_align > -3) {
+		$buf->pad_to_alignment($new_align);
+	}
+	# Else need to create a new higher-aligned buffer.  The previous one will
+	# get padded up to this alignment when it is time to get written.
+	elsif ($new_align > $buf->alignment) {
+		# If the buffer was not used yet, just change its declared alignment
+		if (!$buf->length) {
+			$buf->alignment= $new_align;
+		} else {
+			push @{ $self->buffers }, $buf->new_same(undef, $new_align);
+		}
+	}
+	$self;
+}
+
+# Encode a reference to a symbol or type from a scope's table
+sub _get_table_ref_int {
+	my ($self, $scope_idx, $elem_idx)= @_;
+	die "BUG: scope_idx=$scope_idx elem_idx=$elem_idx"
+		unless defined $elem_idx && defined $scope_idx;
+	# scope_idx[-1] is encoded as a shift of 0
+	# scope_idx[0] is encoded as a shift of 1
+	# scope_idx[-2] is encoded as a shift of 2
+	# scope_idx[1] is encoded as a shift of 3
+	# and so on.
+	my $scope_max= $self->scope->scope_idx;
+	my $shift= $scope_idx > $scope_max/2? 2 * ($scope_max - $scope_idx) : 1 + 2 * $scope_idx;
+	return (($elem_idx << 1) + 1) << $shift;
+}
+
+sub _encode_type_ref {
+	my ($self, $type)= @_;
+	$self->buffers->[-1]->encode_int(
+		!defined $type? 0
+		: $self->_get_table_ref_int($type->scope_idx, $type->table_idx)
+	);
+}
+
+sub _encode_symbol_ref {
+	my ($self, $sym)= @_;
+	$self->buffers->[-1]->encode_int(
+		!defined $sym? 0
+		: $self->_get_table_ref_int($self->scope->find_symbol($sym))
+	);
+}
+
+# Encode the symbol table and type table at the start of a block
 sub _encode_block_tables {
 	my $self= shift;
+	$self->scope->final(1);
 	my $buf= $self->buffers->[-1];
 	croak "Type stack is not empty"
 		if @{ $self->_enc_stack };
@@ -646,13 +667,130 @@ sub _encode_block_tables {
 		croak "Incomplete type encoding"
 			if defined $self->current_type || @{ $self->_enc_stack };
 	}
-	for (@types) {
-		# Type "Choice" can include literal values, which can't be processed
-		# until all types have been loaded by the decoder.
-		$_->_encode_constants($self);
-	}
 	# Tables are complete
 	return $self;
+}
+
+# Encode type definition for Any
+sub Userp::Type::Any::_encode_definition {
+	my ($type, $self)= @_;
+	# Encode type name, or null reference
+	$self->_encode_symbol_ref($type->name);
+	# Encode reference to parent type
+	$self->_encode_type_ref($type->parent);
+	# There is only one field for Type::Any.  If it is not used, then the "no attributes" case
+	# can be optimized as a single NUL byte.
+	my $meta= $type->metadata;
+	if ($meta && keys %$meta) {
+		$self->_push_temporary_state('Userp.Typedef.Any');
+		$self->begin_record('metadata');
+		$self->_encode_typedef_metadata($meta);
+		$self->end_record;
+	} else {
+		$self->buffers->[-1]->encode_int(0, 1);
+	}
+}
+
+sub _same { !(defined $_[0] xor defined $_[0]) and (!defined $_[0] or $_[0] eq $_[1]) }
+
+sub Userp::Type::Integer::_encode_definition {
+	my ($type, $self)= @_;
+	# Encode type name, or null reference
+	$self->_encode_symbol_ref($type->name);
+	# Encode reference to parent type
+	$self->_encode_type_ref(my $parent= $type->parent);
+	# Make a list of the attributes changed from parent
+	my @changes= grep !_same($type->$_, $parent->$_), qw( min max bits align );
+	my $names= $type->names;
+	$names= undef unless $names && @$names;
+	# TODO: decide whether to encode entire list of names, or diff from parent.
+	my $meta= $type->metadata;
+	$meta= undef unless $meta && keys %$meta;
+	# In the case of no changes, optimize by encoding the NUL byte directly
+	if (@changes || $names || $meta) {
+		$self->_push_temporary_state('Userp.Typedef.Integer');
+		$self->begin_record(@changes, ($names? ('names'):()), ($meta? ('metadata'):()));
+		$self->encode($type->$_) for @changes;
+		if ($names) {
+			die "Unimplemented: encoding of Integer names attribute";
+		}
+		$self->_encode_typedef_metadata($meta) if $meta;
+		$self->end_record;
+	} else {
+		$self->buffers->[-1]->encode_int(0, 5);
+	}
+}
+
+sub Userp::Type::Choice::_encode_definition {
+	my ($type, $self)= @_;
+	# Encode type name, or null reference
+	$self->_encode_symbol_ref($type->name);
+	# Encode reference to parent type
+	$self->_encode_type_ref(my $parent= $type->parent);
+	# Make a list of the attributes changed from parent
+	my $spec_attrs= $type->get_spec_attrs;
+	
+}
+
+sub _encode_typedef_metadata {
+	my ($self, $meta)= @_;
+	# Metadata is tricky, because it is written as an array of bytes which happens to contain
+	# an encoded record.  However, the alignment of that encoding needs to be relative to
+	# the overall stream.
+	# Start a new buffer marked as byte-align.  If the encoding of the metadata needs greater
+	# alignment, it will create additional buffers.
+	my $buf_idx= $#{ $self->buffers };
+	my $buf= $self->buffers->[-1];
+	push @{ $self->buffers }, $buf->new_same(undef, 0);
+	# Encode the metadata as a generic record
+	$enc->_push_temporary_state($self->scope->type_Record);
+	$enc->encode($meta);
+	# If every new buffer has alignment less than the current, collapse them
+	# back to a single buffer.  (alignment will only increase among @new_bufs)
+	if ($self->buffers->[-1]->alignment <= $buf->alignment) {
+		# Note that the most likely scenario here is that metadata only had strings
+		# or variable ints in it, so it only needed byte alignment, so it all went
+		# into a single buffer.  So... optimize that case.
+		my @new_bufs= splice @{$self->buffers}, $buf_idx+1;
+		if (@new_bufs == 1 and $new_bufs[0]->alignment == 0) {
+			$buf->encode_int($len)->encode_bytes(${ $new_bufs[0]->bufref });
+		}
+		else {
+			my $buf_pos= $buf->length;
+			# Sum it up assuming best alignment padding, then append a length int.
+			my $len= 0;
+			$len += $_->length for @new_bufs;
+			$buf->encode_int($len);
+			# Now calculate the real length with alignment
+			{
+				my $real_len= $buf->length << 3;
+				for (@new_bufs) {
+					$real_len= Userp::Bits::roundup_bits_to_alignment($real_len, $_->alignment);
+					$real_len += $_->length << 3;
+				}
+				$real_len= (($real_len + 7) >> 3) - $buf->length;
+				if ($real_len != $len) {
+					my $buf_len= $buf->length;
+					# remove the length previously written
+					substr(${$buf->bufref}, $buf_pos)= '';
+					$buf->encode_int($real_len);
+					# and then re-calculate the length-with-alignment if the int changed length
+					redo if $buf_len != $buf->length;
+				}
+			}
+			# Then concatenate (with padding) all the new buffers
+			$buf->append_buffer($_) for @new_bufs;
+		}
+	}
+	# Else the length can't be known until there is more alignment available,
+	# so add a placeholder.
+	else {
+		die "Unimplemented: large alignment in metadata";
+		splice @{ $self->buffers }, $buf_idx+1, 0,
+			Userp::LazyLength->new($#{ $self->buffers } - $buf_idx);
+	}
+	# New state is that we have finished the "meta" field, and move to the next field.
+	$self->_next;
 }
 
 1;

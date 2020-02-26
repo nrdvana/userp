@@ -45,6 +45,7 @@ A number of bits used to encode this type, or C<undef> if the encoding has a var
 
 =cut
 
+has parent     => ( is => 'ro' );
 has name       => ( is => 'ro' );
 has scope_idx  => ( is => 'rwp' );
 has table_idx  => ( is => 'rwp' );
@@ -79,6 +80,7 @@ sub subtype {
 	my ($self, %attrs)= @_ == 2? ($_[0], %{$_[0]}) : @_;
 	my $class= ref($self) || $self;
 	$self->_merge_self_into_attrs(\%attrs) if ref $self;
+	$attrs{parent}= $self;
 	return $class->new(\%attrs);
 }
 
