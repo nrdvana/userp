@@ -40,4 +40,20 @@ sub is_valid_symbol {
 	!!( $_[0] =~ /^[^\0-\x1F]+$/ )
 }
 
+sub _deep_cmp {
+	defined $_[0] cmp defined $_[1]
+	or ref $_[0] cmp ref $_[1]
+	or (!ref $_[0]? $_[0] cmp $_[1]
+		: ref $_[0] eq 'ARRAY'? (
+			$#{$_[0]} cmp $#{$_[1]}
+			or do { my $x; ($x= _deep_cmp($_[0][$_], $_[1][$_])) && return $x for 0..$#{$_[0]}; 0 }
+		)
+		: ref $_[0] eq 'HASH'? (
+			scalar keys %{$_[0]} cmp scalar keys %{$_[1]}
+			or do { my $x; ($x= !exists $_[1]{$_} || _deep_cmp($_[0]{$_}, $_[1]{$_})) && return $x for sort keys %{$_[0]}; 0 }
+		}
+		: $_[0] <=> $_[1]
+	);
+}
+
 1;

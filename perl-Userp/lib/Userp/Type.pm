@@ -50,7 +50,7 @@ has name       => ( is => 'ro' );
 has scope_idx  => ( is => 'rwp' );
 has table_idx  => ( is => 'rwp' );
 has spec       => ( is => 'lazy' );
-sub align         { 0 }
+sub align         { undef; }
 has metadata   => ( is => 'ro' );
 
 sub effective_align { 0 }
@@ -77,7 +77,7 @@ attribute from the parent.
 =cut
 
 sub subtype {
-	my ($self, %attrs)= @_ == 2? ($_[0], %{$_[0]}) : @_;
+	my ($self, %attrs)= @_ == 2? ($_[0], %{$_[1]}) : @_;
 	my $class= ref($self) || $self;
 	$self->_merge_self_into_attrs(\%attrs) if ref $self;
 	$attrs{parent}= $self;
@@ -91,6 +91,33 @@ sub _merge_self_into_attrs {
 		my %merged= ( %{$self->metadata}, ($attrs->{metadata}? %{$attrs->{metadata}} : ()) );
 		$attrs->{metadata}= \%merged;
 	}
+}
+
+=head2 get_definition
+
+  my $attrs= $type->get_definition_attributes;
+  # {
+  #   foo => 1,
+  #   ...
+  # }
+
+Returns a hashref of the arguments which shold be passed to C<< parent->subtype(...) >>
+in order to re-create this type.  This is basically just returning the differences between
+this type and the parent, but may employ special attributes like "add_X" to avoid
+re-declaring all of attribute X.
+
+The results of this function might not be consistent across library versions, but the type
+created by passing them to C<subtype> should always be identical.
+
+=cut
+
+sub get_definition_attributes {
+	my ($self, $attrs)= @_;
+	$attrs ||= {};
+	$attrs->{name}= $self->name; # name always gets re-specified, and may be undef.
+	$attrs->{parent}= $self->parent; # ignored by ->subtype, but added for completeness
+	$attrs->{align}= $self->align if Userp::Bits::_deep_cmp($self->align, $parent->align);
+	$self->_get_definition_attributes($attrs);
 }
 
 sub _register_symbols {

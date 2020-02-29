@@ -60,6 +60,17 @@ sub _merge_self_into_attrs {
 	$attrs->{align}= $self->align unless exists $attrs->{align};
 }
 
+sub _get_definition_attributes {
+	my ($self, $attrs)= @_;
+	if (my $parent= $self->parent) {
+		$attrs->{elem_type}= $self->elem_type if Userp::Bits::_deep_cmp($self->elem_type, $parent->elem_type);
+		$attrs->{dim_type}= $self->dim_type if Userp::Bits::_deep_cmp($self->dim_type, $parent->dim_type);
+		$attrs->{dim}= $self->dim if Userp::Bits::_deep_cmp($self->dim, $parent->dim);
+		# align handled by parent
+	}
+	$attrs;
+}
+
 sub BUILD {
 	my $self= shift;
 	my $align= $self->align;

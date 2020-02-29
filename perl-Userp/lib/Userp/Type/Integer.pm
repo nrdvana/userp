@@ -71,6 +71,7 @@ has effective_min   => ( is => 'rwp' );
 has effective_max   => ( is => 'rwp' );
 sub effective_bits { shift->bitlen }
 has effective_align => ( is => 'rwp' );
+has name_count      => ( is => 'lazy', default => sub { scalar @{shift->names || []} } );
 
 has _name_by_val => ( is => 'lazy' );
 has _val_by_name => ( is => 'lazy' );
@@ -181,6 +182,113 @@ sub BUILD {
 	$self->_set_effective_max($max);
 	$self->_set_effective_align($align);
 	$self->_set_bitlen($bits);
+}
+
+sub _get_definition_attributes {
+	my ($self, $attrs)= @_;
+	if (my $parent= $self->parent) {
+		$attrs->{min}= $self->min if Userp::Bits::_deep_cmp($self->min, $parent->min);
+		$attrs->{max}= $self->max if Userp::Bits::_deep_cmp($self->max, $parent->max);
+		$attrs->{bits}= $self->bits if Userp::Bits::_deep_cmp($self->bits, $parent->bits);
+		# names can either be emitted as the complete list, or an "add_names" to the parent's list
+		if (Userp::Bits::_deep_cmp($self->names, $parent->names)) {
+			my ($changes, $diff)= (0);
+			# If entire list is changing,
+			# Compare lists if they both have elements
+			if ($self->name_count && $self->parent_count) {
+				$diff= $self->_build_name_diff;
+				$changes= @{$diff->{add_names}} + @{$diff->{del_names}};
+			}
+			# If adds + removes are more than 1/2 the list, just re-encode the whole thing
+			if ($diff && $changes < $self->name_count / 2) {
+				$attrs->{add_names}= $self->_simplify_enum_spec($diff->{add_names}) if @{ $diff->{add_names} };
+				$attrs->{del_names}= $diff->{del_names} if @{ $diff->{del_names} };
+			} else {
+				$attrs->{names}= $self->_simplify_enum_spec($self->names);
+			}
+		}
+	}
+}
+
+sub _build_name_diff {
+	my ($self)= @_;
+	my $parent_val_by_name= $self->parent->_val_by_name;
+	my $self_val_by_name= $self->_val_by_name;
+	# compare lists
+	my (@old, @new, @del, @add);
+	@new= sort keys %$self_val_by_name;
+	@old= sort keys %$parent_val_by_name;
+	while (@old && @new) {
+		my $name= $new[0];
+		my $cmp= $old[0] cmp $name;
+		if (!$cmp) {
+			# Make sure they have the same value
+			my ($oldval, $newval)= ($parent_val_by_name->{$name}, $self_val_by_name->{$name});
+			if ($oldval != $newval) {
+				push @del, $name;
+				push @add, [ $name, $newval ];
+			}
+			shift @old;
+			shift @new;
+		}
+		elsif ($cmp > 0) {
+			push @del, shift @old;
+		}
+		else {
+			push @add, [ shift @new, $self_val_by_name->{$name} ];
+		}
+	}
+	push @add, map [ $_ => $self_val_by_name->{$_} ], @new;
+	push @del, @old;
+	return {
+		add_names => \@add,
+		del_names => \@del
+	};
+}
+
+# Convert a list of enum [$name,$value] or bare $name (where a bare name implies value is previous plus one)
+# to a list generally in the same order with a maximal number of implied values.
+sub _simplify_enum_spec {
+	my ($self, $names)= @_;
+	my $val_by_name= $self->_val_by_name;
+	push @add, map [ $_, $self->_val_by_name->{$_} ], @new;
+	push @del, @old;
+	
+	# Convert the "add" list to simplest form (where consecutive integers are just names)
+	my (%range_by_nextval, @ranges);
+	for (@$names) {
+		# If the current element begins a new range, check to see if it could be appended
+		# to the current range, or any other range.
+		if (ref $_ eq 'ARRAY') {
+			my $val= $_->[1];
+			# Is it a continuation of the final range of the result?
+			if (@ranges && $rages[-1][0][1] + @{$ranges[-1]} == $val) {
+				push @{$ranges[-1]}, $_->[0];
+			}
+			# or can it continue any previous range?
+			elsif ($range_by_nextval{$val}) {
+				my $r= delete $range_by_nextval{$val};
+				push @$r, $_->[0];
+				$range_by_nextval{$val+1}= $r;
+			}
+			# it is a new range.  Record the end of the previous range for future lookup
+			else {
+				my $prev_nextval= $rages[-1][0][1] + @{$ranges[-1]}
+				$range_by_nextval{$prev_nextval}= $ranges[-1];
+				push @ranges, [ $_ ];
+			}
+		}
+		# name without value is automatically a continuation
+		else {
+			# If it is the first element overall, the value defaults to 0
+			if (!@ranges) {
+				push @ranges, [ [ $_, 0 ] ];
+			} else {
+				push @{ $ranges[-1] }, $_;
+			}
+		}
+	}
+	return [ map @$_, @ranges ];
 }
 
 sub _register_symbols {
