@@ -3,9 +3,9 @@ use Userp::Type::Integer;
 use Userp::Type::Array;
 
 my %types;
-my $int2= Userp::Type::Integer->new(name => 'Int2', bits => 2);
-my $int8= Userp::Type::Integer->new(name => 'Int8', bits => 8);
-my $int32= Userp::Type::Integer->new(name => 'Int32', bits => 32);
+my $int2= Userp::Type::Integer->new(name => 'Int2', bits => 2, align => -2);
+my $int8= Userp::Type::Integer->new(name => 'Int8', bits => 8, align => 0);
+my $int32= Userp::Type::Integer->new(name => 'Int32', bits => 32, align => 2);
 
 my @tests= (
 	[

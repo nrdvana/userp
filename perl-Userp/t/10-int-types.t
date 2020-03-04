@@ -18,26 +18,25 @@ my @tests= (
 	],
 	[
 		{ name => 'int8', parent => 'Int', bits => 8 },
-		undef, -128,      undef, 127,     8, 8,               undef, 0,
+		undef, -128,      undef, 127,     8, 8,               undef, -3,
 	],
 	[
-		{ name => 'bit', bits => 1, min => 0 },
+		{ name => 'bit', parent => 'Int', bits => 1, min => 0 },
 		0, 0,             undef, 1,       1, 1,               undef, -3,
 	],
 	[
 		{ name => 'int0_FF', parent => 'Int', min => 0, max => 0xFF },
-		0, 0,             0xFF, 0xFF,     undef, 8,           undef, 0,
+		0, 0,             0xFF, 0xFF,     undef, 8,           undef, -3,
 	],
 	[
 		{ name => 'int8u', parent => 'Int', bits => 8, min => 0 },
-		0, 0,             undef, 0xFF,    8, 8,               undef, 0,
+		0, 0,             undef, 0xFF,    8, 8,               undef, -3,
+	],
+	[
+		{ name => 'int8u', parent => 'int8', min => 0 },
+		0, 0,             undef, 0xFF,    8, 8,               undef, -3,
 	],
 	# TODO: test errors in specifications
-	#[
-	#	# max conflicts with bits of parent.  bits should become unset but min should be preserved.
-	#	{ name => 'max1000', parent => 'int8u', max => 1000 },
-	#	0, 0,             1000, 1000,     undef, 10,          undef, 0,
-	#],
 );
 
 my %types;

@@ -51,7 +51,7 @@ sub _deep_cmp {
 		: ref $_[0] eq 'HASH'? (
 			scalar keys %{$_[0]} cmp scalar keys %{$_[1]}
 			or do { my $x; ($x= !exists $_[1]{$_} || _deep_cmp($_[0]{$_}, $_[1]{$_})) && return $x for sort keys %{$_[0]}; 0 }
-		}
+		)
 		: $_[0] <=> $_[1]
 	);
 }

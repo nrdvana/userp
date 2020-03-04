@@ -80,6 +80,7 @@ sub subtype {
 	my ($self, %attrs)= @_ == 2? ($_[0], %{$_[1]}) : @_;
 	my $class= ref($self) || $self;
 	$self->_merge_self_into_attrs(\%attrs) if ref $self;
+	$attrs{align}= $self->align if defined $self->align && !exists $attrs{align};
 	$attrs{parent}= $self;
 	return $class->new(\%attrs);
 }
@@ -115,8 +116,8 @@ sub get_definition_attributes {
 	my ($self, $attrs)= @_;
 	$attrs ||= {};
 	$attrs->{name}= $self->name; # name always gets re-specified, and may be undef.
-	$attrs->{parent}= $self->parent; # ignored by ->subtype, but added for completeness
-	$attrs->{align}= $self->align if Userp::Bits::_deep_cmp($self->align, $parent->align);
+	my $p= $attrs->{parent}= $self->parent; # ignored by ->subtype, but added for completeness
+	$attrs->{align}= $self->align if $p && Userp::Bits::_deep_cmp($self->align, $p->align);
 	$self->_get_definition_attributes($attrs);
 }
 

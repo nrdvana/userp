@@ -3,66 +3,78 @@ use Carp;
 use Userp::Error;
 use Userp::Bits;
 use Moo;
+use Const::Fast;
 extends 'Userp::Type';
 
 =head1 DESCRIPTION
 
 The Integer type can represent an infinite range of integers, a half-infinite range, or a
-finite range.  As a special case, it can be encoded in 2's complement. (the normal encoding of
-a double-infinite range uses a sign bit, and magnitude)
+finite range.  It can also specify a number of bits to allow for 2's complement encoding.
 
-An Integer type can also have named values.  When decoded, the value will be both an integer
-and a symbol.  This allows for the typical style of C enumeration, but to make a pure
-enumeration of symbols (with no integer value), just add lots of Symbol values to a Choice
-type.
+An Integer type can also have named values.  When encoding, you can specify a symbol value
+and it will encode the related integer.  During decoding, the value can be read as either
+a symbol or an integer, though it will decode as an integer by default.
 
-=head1 SPECIFICATION
-
-To specify an integer type as TypeSpec text, use either min/max notation:
-
-  (min=#-8000 max=#7FFF)
-
-or 2's complement bits notation:
-
-  (bits=32)
-
-To specify enumeration names for integer values, specify a list where the first element is the
-starting numeric value, and then a list of identifiers which will receive increasing values.
-
-  (bits=32 names=(Null Primary Secondary (Other -1)))
+(For a true Enumeration, with no user-visible integer, just add Symbol values to a Choice type.)
 
 =head1 ATTRIBUTES
 
 =head2 min
 
-The lower end of the integer range, or undef to extend infinitely in the negative direction.
+If specified, the integer will be encoded as an unsigned offset from this value.
+
+Note that this is specific to the encoding, and not meant as a general-purpose type constraint.
 
 =head2 max
 
-The upper end of the integer range, or undef to extend infinitely in the positive direction.
+If C<max> is specified and C<min> is not, the integer will be encoded as an unsigned offset
+in the negative direction from this value.  If both C<min> and C<max> are specified, the value
+is encoded increasing from C<min> and C<max> simply limits the overall domain of the integer
+type.  (so that it may efficiently be inlined into a Choice type)
+
+Note that this is specific to the encoding, and not meant as a general-purpose type constraint.
 
 =head2 bits
 
-If nonzero, this is the number of bits in which the integer will be encoded.  If C<min> is set
-to a value less than zero the bits will be encoded as 2's complement, and sign-extended when
-decoded.
-
-When this attribute is set, the value is no longer considered to have an "initial scalar
-component", and cannot be inlined into a Choice.
+If specified, this is the number of bits in which the integer will be encoded.  If C<min> and
+C<max> are not specified, the value is encoded as a signed 2's complement, and sign-extended
+when decoded.  If C<min> or C<max> are specified, the encoding will be unsigned, but still
+occupy this many bits rather than being a variable-sized integer or the minimum bits to encode
+C<< max - min + 1 >>.
 
 =head2 names
 
-An arrayref of Symbol, or [Symbol, Value].  If value is omitted it is assumed to be the next
-higher value after the previous, with the default starting from zero.  There may be more than
-one name for a value.  This may be useful for encoding, but the decoder will only provide the
-first matching name.
+A hashref of C<< { $symbol => $value } >>.  There may be more than one name for a value, but
+this is discouraged.
+
+When passed to the constructor, this may be given as a short-hand arrayref:
+
+  [ [ $symbol => $value ], $symbol2, $symbol3, ... ]
+
+Where an arrayref element declares both a name and value, and any scalar element declares
+the name of the previous value plus one.  If the first element is a scalar, its value is
+assumed to be zero.
+
+Names passed to the constructor are merged with those of the parent type, with the new
+value taking precedence if any name conflicts.  It is not possible to un-declare a named
+value from the parent.
+
+All declared values must be consistent with C<min>, C<max>, and C<bits>.
+
+=head2 align
+
+Set the alignment of the encoded value.  Any variable-lengh integer must be at least
+byte-aligned ( C<< align = 0 >> ).  All other integer type default to bit alignment.
+
+The pre-defined integer types C<Userp.Int32>, C<Userp.Int64>, etc come with an alignment
+matching the C compiler defaults for that type.
 
 =cut
 
 has min   => ( is => 'ro' );
 has max   => ( is => 'ro' );
 has bits  => ( is => 'ro' );
-has names => ( is => 'ro' );
+has names => ( is => 'ro', coerce => \&_coerce_const_name_set );
 has align => ( is => 'ro' );
 
 sub isa_Integer { 1 }
@@ -71,116 +83,94 @@ has effective_min   => ( is => 'rwp' );
 has effective_max   => ( is => 'rwp' );
 sub effective_bits { shift->bitlen }
 has effective_align => ( is => 'rwp' );
-has name_count      => ( is => 'lazy', default => sub { scalar @{shift->names || []} } );
+has name_count      => ( is => 'lazy' );
 
 has _name_by_val => ( is => 'lazy' );
 has _val_by_name => ( is => 'lazy' );
 
+sub _coerce_const_name_set {
+	my $names= shift;
+	if (ref $names eq 'ARRAY') {
+		my $v= -1;
+		Const::Fast::const my %names,
+			map +(ref $_ eq 'ARRAY'? ( $_->[0], ($v=$_->[1]) )
+				: ref $_ eq 'HASH'? %$_
+				: ( $_ => ++$v )),
+				@$names;
+		$names= \%names;
+	}
+	elsif (ref $names eq 'HASH') {
+		$names= undef unless keys %$names;
+		Const::Fast::const $names, $names if $names;
+	}
+	elsif (defined $names) {
+		croak "Unknown format for Integer->names: \"$names\"";
+	}
+	return $names;
+}
+
+sub _build_name_count {
+	$_[0]->names? scalar keys %{$_[0]->names} : 0;
+}
+
 sub _build__name_by_val {
-	my $names= shift->names || [];
-	my $v= -1;
-	{ reverse map { ref $_ eq 'ARRAY'? ( $_->[0], ($v=$_->[1]) ) : ( $_ => ++$v ) } @$names }
-}
-
-sub _build__val_by_name {
-	my $names= shift->names || [];
-	my $v= -1;
-	{ map { ref $_ eq 'ARRAY'? ( $_->[0], ($v=$_->[1]) ) : ( $_ => ++$v ) } @$names }
-}
-
-sub _check_min_max_bits {
-	my ($min, $max, $bits)= @_;
-	return 1 unless (defined $min? 1 : 0) + (defined $max? 1 : 0) + (defined $bits? 1 : 0) > 1;
-	if (defined $bits) {
-		if (($min||0) < 0 || ($max||0) < 0) {
-			my ($min2s, $max2s)= Userp::Bits::twos_minmax($bits);
-			return 0 if defined $min && ($min < $min2s || $min > $max2s);
-			return 0 if defined $max && ($max < $min2s || $max > $max2s);
-			return ($min||$max) <= ($max||$min);
-		}
-		else {
-			my $unsigned_max= Userp::Bits::unsigned_max($bits);
-			return 0 if defined $max && $max > $unsigned_max;
-			return 0 if defined $min && $min > $unsigned_max;
-			return ($min||$max||0) <= ($max||$min||0);
-		}
-	}
-	else {
-		return $min <= $max;
-	}
+	{ reverse %{ shift->effective_names } }
 }
 
 sub _merge_self_into_attrs {
 	my ($self, $attrs)= @_;
 	$self->next::method($attrs);
-	$attrs->{align}= $self->align unless exists $attrs->{align};
-	# If bits are given, it takes priority.  Min and max only preserved if they make sense.
-	if ($attrs->{bits}) {
-		$attrs->{min}= $self->min
-			if !defined $attrs->{min} && defined $self->min
-			&& _check_min_max_bits($self->min, undef, $attrs->{bits});
-		$attrs->{max}= $self->max
-			if !defined $attrs->{max} && defined $self->max
-			&& _check_min_max_bits($attrs->{min}, $self->max, $attrs->{bits});
+	for (qw( min max bits )) {
+		$attrs->{$_}= $self->$_ if !defined $attrs->{$_} && defined $self->$_;
 	}
-	# Else use min and max, and only preserve bits if it still fits.
-	else {
-		$attrs->{min}= $self->min unless defined $attrs->{min};
-		$attrs->{max}= $self->max unless defined $attrs->{max};
-		$attrs->{bits}= $self->bits
-			if !defined $attrs->{bits} && defined $self->bits
-		   && _check_min_max_bits($attrs->{min}, $attrs->{max}, $self->bits);
-	}
-	if (defined $attrs->{names} && defined $self->names) {
-		$attrs->{names}= [ @{$self->names}, @{$attrs->{names}} ];
-	}
-	else {
-		$attrs->{names}= $self->names;
+	# names needs to be merged, with new names overriding the same in parent.
+	if ($self->names) {
+		# If parent has names and child doesn't, just use parent's names
+		$attrs->{names}= !$attrs->{names}? $self->names
+			# If names given as hashref, merge them with parent.  Const will be applied by coerce
+			: ref $attrs->{names} eq 'HASH'? { %{ $self->names }, %{$attrs->{names}} }
+			# If names given as arrayref, use undocumented feature that an element of the
+			# array may be a hashref; Result will get merged and const-ified in one shot.
+			: ref $attrs->{names} eq 'ARRAY'? [ $self->names, @{$attrs->{names}} ]
+			: croak "Unknown format for Integer->names: \"$attrs->{names}\"";
 	}
 }
 
 sub BUILD {
 	my $self= shift;
 	my ($min, $max, $bits, $align)= ($self->min, $self->max, $self->bits, $self->align);
+	# If bits or min+max are set, the integer is fixed-length
 	if (defined $bits) {
-		# If bits attribute is defined, value is encoded in a fixed number of bits.
-		# Those bits are 2's complement if $min is negative or not set, unsigned otherwise.
-		if (!defined $min || $min < 0) {
-			my ($min2s, $max2s)= Userp::Bits::twos_minmax($bits);
-			$min= $min2s unless defined $min;
-			$max= $max2s unless defined $max;
-			Userp::Error::Domain->assert_minmax($min, $min2s, $max, 'Integer min');
-			Userp::Error::Domain->assert_minmax($max, $min, $max2s, 'Integer max');
+		# Signed if min and max are not set, unsigned otherwise.
+		if (!defined $min && !defined $max) {
+			($min, $max)= Userp::Bits::twos_minmax($bits);
 		}
 		else {
 			my $max_unsigned= Userp::Bits::unsigned_max($bits);
-			$min= 0 unless defined $min;
-			$max= $max_unsigned unless defined $max;
-			Userp::Error::Domain->assert_minmax($min, 0, $max, 'Integer min');
-			Userp::Error::Domain->assert_minmax($max, $min, $max, 'Integer max');
+			if (defined $min) {
+				if (defined $max) {
+					Userp::Error::Domain->assert_minmax($min, $max, $min+$max_unsigned, 'Integer max');
+				} else {
+					$max= $min + $max_unsigned;
+				}
+			}
+			elsif (defined $max) {
+				$min= $max - $max_unsigned;
+			}
 		}
 	}
 	elsif (defined $min && defined $max) {
 		# If min and max are both defined, bits is derived from the largest value that can be encoded
 		Userp::Error::Domain->assert_minmax($max, $min, undef, 'Integer max');
 		$bits= Userp::Bits::bitlen($max-$min);
-		# If alignment is given and bits are not, round up to a multiple of the alignment
-		if (defined $align && $align > -3) {
-			$bits= Userp::Bits::roundup_bits_to_alignment($bits, $align);
-		}
 	}
 	else {
 		# variable-length integers are always byte-aligned or higher
 		$align= 0 unless defined $align && $align > 0;
 	}
-	# If alignment not given, determine sensible default from bits
-	if (!defined $align) {
-		$align= -3;
-		for (my $x= $bits; $x && !($x & 1); $x >>= 1, ++$align) {};
-	}
 	$self->_set_effective_min($min);
 	$self->_set_effective_max($max);
-	$self->_set_effective_align($align);
+	$self->_set_effective_align(defined $align? $align : -3);
 	$self->_set_bitlen($bits);
 }
 
@@ -190,110 +180,23 @@ sub _get_definition_attributes {
 		$attrs->{min}= $self->min if Userp::Bits::_deep_cmp($self->min, $parent->min);
 		$attrs->{max}= $self->max if Userp::Bits::_deep_cmp($self->max, $parent->max);
 		$attrs->{bits}= $self->bits if Userp::Bits::_deep_cmp($self->bits, $parent->bits);
-		# names can either be emitted as the complete list, or an "add_names" to the parent's list
+		# Names declared in this type get overlaid on parent.
+		# Make a list of every name in this type that differs or doesn't exist in parent.
 		if (Userp::Bits::_deep_cmp($self->names, $parent->names)) {
-			my ($changes, $diff)= (0);
-			# If entire list is changing,
-			# Compare lists if they both have elements
-			if ($self->name_count && $self->parent_count) {
-				$diff= $self->_build_name_diff;
-				$changes= @{$diff->{add_names}} + @{$diff->{del_names}};
+			my $parent_names= $parent->names;
+			my %diff;
+			for (keys %{ $self->names }) {
+				my $v= $self->names->{$_};
+				$diff{$_}= $v if !exists $parent_names->{$_} || ($parent_names->{$_} ne $v);
 			}
-			# If adds + removes are more than 1/2 the list, just re-encode the whole thing
-			if ($diff && $changes < $self->name_count / 2) {
-				$attrs->{add_names}= $self->_simplify_enum_spec($diff->{add_names}) if @{ $diff->{add_names} };
-				$attrs->{del_names}= $diff->{del_names} if @{ $diff->{del_names} };
-			} else {
-				$attrs->{names}= $self->_simplify_enum_spec($self->names);
-			}
+			$attrs->{names}= \%diff;
 		}
 	}
-}
-
-sub _build_name_diff {
-	my ($self)= @_;
-	my $parent_val_by_name= $self->parent->_val_by_name;
-	my $self_val_by_name= $self->_val_by_name;
-	# compare lists
-	my (@old, @new, @del, @add);
-	@new= sort keys %$self_val_by_name;
-	@old= sort keys %$parent_val_by_name;
-	while (@old && @new) {
-		my $name= $new[0];
-		my $cmp= $old[0] cmp $name;
-		if (!$cmp) {
-			# Make sure they have the same value
-			my ($oldval, $newval)= ($parent_val_by_name->{$name}, $self_val_by_name->{$name});
-			if ($oldval != $newval) {
-				push @del, $name;
-				push @add, [ $name, $newval ];
-			}
-			shift @old;
-			shift @new;
-		}
-		elsif ($cmp > 0) {
-			push @del, shift @old;
-		}
-		else {
-			push @add, [ shift @new, $self_val_by_name->{$name} ];
-		}
-	}
-	push @add, map [ $_ => $self_val_by_name->{$_} ], @new;
-	push @del, @old;
-	return {
-		add_names => \@add,
-		del_names => \@del
-	};
-}
-
-# Convert a list of enum [$name,$value] or bare $name (where a bare name implies value is previous plus one)
-# to a list generally in the same order with a maximal number of implied values.
-sub _simplify_enum_spec {
-	my ($self, $names)= @_;
-	my $val_by_name= $self->_val_by_name;
-	push @add, map [ $_, $self->_val_by_name->{$_} ], @new;
-	push @del, @old;
-	
-	# Convert the "add" list to simplest form (where consecutive integers are just names)
-	my (%range_by_nextval, @ranges);
-	for (@$names) {
-		# If the current element begins a new range, check to see if it could be appended
-		# to the current range, or any other range.
-		if (ref $_ eq 'ARRAY') {
-			my $val= $_->[1];
-			# Is it a continuation of the final range of the result?
-			if (@ranges && $rages[-1][0][1] + @{$ranges[-1]} == $val) {
-				push @{$ranges[-1]}, $_->[0];
-			}
-			# or can it continue any previous range?
-			elsif ($range_by_nextval{$val}) {
-				my $r= delete $range_by_nextval{$val};
-				push @$r, $_->[0];
-				$range_by_nextval{$val+1}= $r;
-			}
-			# it is a new range.  Record the end of the previous range for future lookup
-			else {
-				my $prev_nextval= $rages[-1][0][1] + @{$ranges[-1]}
-				$range_by_nextval{$prev_nextval}= $ranges[-1];
-				push @ranges, [ $_ ];
-			}
-		}
-		# name without value is automatically a continuation
-		else {
-			# If it is the first element overall, the value defaults to 0
-			if (!@ranges) {
-				push @ranges, [ [ $_, 0 ] ];
-			} else {
-				push @{ $ranges[-1] }, $_;
-			}
-		}
-	}
-	return [ map @$_, @ranges ];
 }
 
 sub _register_symbols {
 	my ($self, $scope)= @_;
-	$scope->add_symbols(map { ref $_ eq 'ARRAY'? $_->[0] : $_ } @{$self->names})
+	$scope->add_symbols(keys %{ $self->names })
 		if $self->names;
 	$self->next::method($scope);
 }
