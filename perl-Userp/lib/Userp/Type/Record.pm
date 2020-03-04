@@ -111,6 +111,7 @@ has _opt_fields      => ( is => 'rw' );
 has _field_by_name   => ( is => 'rw' );
 
 sub isa_Record { 1 }
+sub base_type { 'Record' }
 
 sub get_field {
 	$_[0]->_field_by_name->{$_[1]}

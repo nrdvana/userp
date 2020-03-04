@@ -243,6 +243,12 @@ sub define_type {
 	return $type;
 }
 
+sub contains_type {
+	my ($self, $type)= @_;
+	$type->scope_idx <= $self->scope_idx
+		&& $self->scope_stack->[$type->scope_idx]->_types->[$type->table_idx] == $type;
+}
+
 =head2 Type Shortcuts
 
 Several types exist in every scope.  These accessors provide slightly more efficient access

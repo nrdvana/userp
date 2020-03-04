@@ -50,6 +50,7 @@ has align     => ( is => 'ro' );
 has effective_align => ( is => 'rwp' );
 
 sub isa_Array { 1 }
+sub base_type { 'Array' }
 
 sub _merge_self_into_attrs {
 	my ($self, $attrs)= @_;

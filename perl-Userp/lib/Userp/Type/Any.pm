@@ -18,5 +18,6 @@ See attributes of L<Userp::Type>.
 =cut
 
 sub isa_Any { 1 }
+sub base_type { 'Any' }
 
 1;

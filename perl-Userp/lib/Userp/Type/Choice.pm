@@ -127,11 +127,18 @@ sub _build__option_tree {
 }
 
 sub isa_Choice { 1 }
+sub base_type { 'Choice' }
 
 sub has_scalar_component { 1 }
 
 has scalar_component_max => ( is => 'lazy' );
 sub _build_scalar_component_max { shift->option_table->[-1]{sel_max} }
+
+sub _get_definition_attributes {
+	my ($self, $attrs)= @_;
+	...;
+	$attrs;
+}
 
 sub _register_symbols {
 	my ($self, $scope)= @_;

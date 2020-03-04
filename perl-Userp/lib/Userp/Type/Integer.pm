@@ -78,6 +78,7 @@ has names => ( is => 'ro', coerce => \&_coerce_const_name_set );
 has align => ( is => 'ro' );
 
 sub isa_Integer { 1 }
+sub base_type { 'Integer' }
 
 has effective_min   => ( is => 'rwp' );
 has effective_max   => ( is => 'rwp' );

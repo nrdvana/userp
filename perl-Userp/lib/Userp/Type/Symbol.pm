@@ -18,5 +18,6 @@ with named values in that the symbols have no implied numeric value visible thro
 =cut
 
 sub isa_Symbol { 1 }
+sub base_type { 'Symbol' }
 
 1;

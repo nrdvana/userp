@@ -143,9 +143,11 @@ Arrayref of L<Userp::Buffer> objects into which the data is encoded.
 
 =head2 parent_type
 
-The type whose elements are currently being written.  When you call L</begin_array> the
-C<current_type> becomes the C<parent_type>, and the array's element type becomes the
-C<current_type>.  This does not change after calling C<sel>.
+The type whose elements are currently being written.  After you call L</begin_array> the
+C<parent_type> is the Array and the C<current_type> is the type of the array element.
+Likewise after calling L</begin_record>.
+
+This does not change after calling L</sel>.
 
 =head2 current_type
 
@@ -155,15 +157,14 @@ The type being written next.  This does change after calling C<sel>.
 
 has scope        => ( is => 'ro', required => 1 );
 has bigendian    => ( is => 'ro' );
-has buffers      => ( is => 'rw', lazy => 1, default => sub { ["",3,0] } );
-sub parent_type     { my $st= shift->_enc_stack->[-1]; $st? $st->{type} : undef }
-has current_type => ( is => 'rwp', required => 1 );
+has buffers      => ( is => 'rw', lazy => 1, builder => 1 );
+sub parent_type     { $_[0]{_parent}? $_[0]{_parent}{type} : undef }
+sub current_type    { $_[0]{_current}{type} }
 
-has _type_vtable => ( is => 'rw', default => sub { {} } );
-has _cur_align   => ( is => 'rw', default => 3 );
-has _bitpos      => ( is => 'rw' );
-has _enc_stack   => ( is => 'rw', default => sub { [] } );
-has _sel_paths   => ( is => 'rw', default => sub { [] } );
+sub _build_buffers {
+	my $self= shift;
+	[ $self->bigendian? Userp::Buffer->new_be : Userp::Buffer->new_le ]
+}
 
 =head1 METHODS
 
@@ -180,24 +181,8 @@ Returns the encoder for convenient chaining.
 =cut
 
 sub sel {
-	my ($self, $subtype, $option)= @_;
-	my $type= $self->current_type;
-	$type->isa_choice
-		or croak "Cannot select sub-type of ".$type->name;
-	# Later, can dig through sub-options for a match, but to start, only allow immediate child options.
-	my $opt_node= $type->_option_tree->{$subtype->id}
-		or croak "Type ".$subtype->name." is not a direct sub-option of ".$type->name;
-	if ($opt_node->{values} || $opt_node->{ranges} || ($opt_node->{'.'} && defined $opt_node->{'.'}{mege_ofs})) {
-		# Need to delay the encoding until the value is known
-		push @{ $self->_sel_paths }, { type => $type, opt_node => $opt_node };
-	}
-	elsif ($opt_node->{'.'}) {
-		# selection of whole type; can encode selector and forget past details
-		$self->_encode_selector($opt_node->{'.'}{sel_ofs});
-	}
-	else { croak "BUG" }
-	$self->_set_current_type($subtype);
-	$self;
+	$_[0]{_current}->sel(@_);
+	return $_[0];
 }
 
 =head2 int
@@ -211,17 +196,20 @@ stream.  Returns the encoder for convenient chaining.
 =cut
 
 sub int {
-	my ($self, $val)= @_;
-	my $type= $self->current_type;
-	if (!$type) {
-		croak "Expected end()" if @{ $self->_enc_stack || [] };
-		croak "Can't encode after end of block";
-	}
-	my $enc_fn= $self->_vtable_for($type)->{int}
-		or croak "Can't encode ".$type->name." using int() method";
-	my $err= $enc_fn->($self, $val);
-	$err->throw if defined $err;
-	$self->_next;
+	@_ == 2 or croak "Expected one argument to enc->int(\$int)";
+	$_[0]{_current}->int(@_);
+	return $_[0];
+}
+
+=head2
+
+
+=cut
+
+sub sym {
+	@_ == 2 or croak "Expected one argument to enc->sym(\$string)";
+	$_[0]{_current}->int(@_);
+	return $_[0];
 }
 
 =head2 str
@@ -236,17 +224,9 @@ Scope, else Symbol.
 =cut
 
 sub str {
-	my ($self, $str)= @_;
-	my $type= $self->current_type;
-	if (!$type) {
-		croak "Expected end()" if @{ $self->_enc_stack || [] };
-		croak "Can't encode after end of block";
-	}
-	my $enc_fn= $self->_vtable_for($type)->{str}
-		or croak "Can't encode ".$type->name." using str() method";
-	my $err= $enc_fn->($self, $str);
-	$err->throw if defined $err;
-	$self->_next;
+	@_ == 2 or croak "Expected one argument to enc->str(\$string)";
+	$_[0]{_current}->str(@_);
+	return $_[0];
 }
 
 =head2 typeref
@@ -256,262 +236,69 @@ sub str {
 =cut
 
 sub typeref {
-	my ($self, $type)= @_;
-	$self->_next;
+	@_ == 2 or croak "Expected one argument to enc->typeref(\$type)";
+	$_[0]{_current}->typeref(@_);
+	return $_[0];
 }
 
-=head2 begin
+=head2 begin_array
 
-Begin encoding the elements of a sequence.
+  $enc->begin_array(
+     $type,       # for arrays where ->elem_type is undefined 
+	 @dimensions, # for arrays where any dimension was undefined
+  );
 
-=head2 end
+Begin encoding the elements of an array.  The first argument is a type or type name
+if (and only if) the array has an undefined C<elem_type>.
 
-Finish encoding the elements of a sequence, returning to the parent type, if any.
+The remaining arguments are the dimensions of the array.  These must agree with any
+declared dimensions on the array type.
+
+=head2 end_array
+
+Finish encoding the elements of the array, returning to the parent type, if any.
 
 =cut
 
-sub begin {
-	my $self= shift;
-	my $type= $self->current_type;
-	if (!$type) {
-		croak "Expected end()" if @{ $self->_enc_stack || [] };
-		croak "Can't encode after end of block";
-	}
-	my $begin_fn= $self->_vtable_for($type)->{begin}
-		or croak "begin() is not relevant for type ".$type->name;
-	my $err= $self->$begin_fn(@_);
-	$err->throw if defined $err;
-	return $self;
+sub begin_array {
+	$_[0]{_current}->begin_array(@_);
+	return $_[0];
 }
 
-sub _next {
-	my $self= shift;
-	if ((my $context= $self->_enc_stack->[-1])) {
-		my $err= $context->{next}->($self);
-		$err->throw if defined $err;
-	}
-	else {
-		$self->_set_current_type(undef);
-	}
-	return $self;
+sub end_array {
+	@_ == 1 or croak "Extra arguments to end_array";
+	$_[0]{_parent} or croak "Can't end_array when there is no parent_type";
+	$_[0]{_parent}->end_array(@_);
+	return $_[0];
 }
 
-sub end {
-	my $self= shift;
-	my $context= $self->_enc_stack->[-1]
-		or croak "Can't call end() without begin()";
-	my $err= $context->{end}->($self);
-	$err->throw if defined $err;
-	$self->_next;
+=head2 begin_record
+
+  $enc->begin_record(@fields);
+
+Begin encoding a record.  C<@fields> is optional; if given, you may encode each field in that
+sequence without calling L</field> inbetween.  For highest efficiency, specify the list of
+fields in the same order they are defined in the type, else the later fields will be encoded
+to temporary buffers until the earlier fields are encoded.
+
+=head2 end_record
+
+Finish encoding the record and return to the parent type, if any.
+
+=cut
+
+sub begin_record {
+	$_[0]{_current}->begin_record(@_);
+	return $_[0];
 }
 
-sub _encode_typeref {
-	my ($self, $type_id)= @_;
-	$type_id= $type_id->id if ref $type_id;
-	$self->_encode_vqty($type_id);
+sub end_record {
+	$_[0]{_parent} or croak "Can't end_record when there is no parent_type";
+	$_[0]{_parent}->end_record(@_);
+	return $_[0];
 }
 
-sub _gen_Integer_encoder {
-	my ($self, $type)= @_;
-	my $min= $type->effective_min;
-	my $max= $type->effective_max;
-	my $align= $type->effective_align;
-	my $bits= $type->effective_bits;
-	my $bits_fn= Userp::Bits->can($self->bigendian? 'concat_bits_be' : 'concat_bits_le');
-	my $vqty_fn= Userp::Bits->can($self->bigendian? 'concat_vqty_be' : 'concat_vqty_le');
-	my %methods;
-	# If a type has a declared number of bits, or if it has both a min and max value,
-	# then it gets encoded as a fixed number of bits.  For the case where min and max
-	# are defined and bits are not, the value is encoded as an offset from the minimum.
-	if (defined $bits) {
-		my $base= defined $type->bits? 0 : $min;
-		$methods{int}= sub {
-			return Userp::Error::Domain->new_minmax($_[1], $min, $max, 'Type "'.$type->name.'" value')
-				if $_[1] < $min || $_[1] > $max;
-			$_[0]->_align($align);
-			$bits_fn->(${$_[0]->{buffer_ref}}, $_[0]->{_bitpos}, $bits, $_[1] - $base);
-			return;
-		};
-	}
-	# If the type is unlimited, but has a min or max, then encode as a variable quantity
-	# offset from whichever limit was given.
-	elsif (defined $min || defined $max) {
-		$methods{int}= sub {
-			return Userp::Error::Domain->new_minmax($_[1], $min, $max, 'Type "'.$type->name.'" value')
-				if defined $min && $_[1] < $min or defined $max && $_[1] > $max;
-			$_[0]->_align($align);
-			$vqty_fn->(${$_[0]->{buffer_ref}}, $_[0]->{_bitpos}, defined $min? $_[1] - $min : $max - $_[1]);
-			return;
-		};
-	}
-	# If the type is fully unbounded, encode nonnegative integers as value * 2, and negative integers
-	# as value * 2 + 1
-	else {
-		$methods{int}= sub {
-			$_[0]->_align($align);
-			$vqty_fn->(${$_[0]->{buffer_ref}}, $_[0]->{_bitpos}, $_[1] < 0? (-$_[1]<<1) | 1 : $_[1]<<1);
-			return;
-		};
-	}
-	# If a type has names, then calling $encoder->str($enum_name) needs to look up the value
-	# for that name, and throw an error if it doesn't exist.
-	if ($type->names && @{ $type->names }) {
-		my $enc_int= $methods{int};
-		$methods{str}= sub {
-			my $val= $type->_val_by_name->{$_[1]};
-			return Userp::Error::Domain->new(valtype => 'Type "'.$type->name.'" enum', value => $_[1])
-				unless defined $val;
-			$enc_int->($_[0], $val);
-			return;
-		};
-	}
-	return \%methods;
-}
-
-sub _gen_Choice_encoder {
-	my ($self, $type)= @_;
-	my $sel_fn= sub {
-		
-	};
-	...
-}
-
-sub _gen_Array_encoder {
-	my ($self, $array)= @_;
-	my $vqty_fn= Userp::Bits->can($self->bigendian? 'concat_vqty_be' : 'concat_vqty_le');
-	my $dim_type= $array->dim_type;
-	my $dim_type_enc= $dim_type? $self->_vtable_for($dim_type)->{int}
-		: sub { $vqty_fn->(${$_[0]{buffer_ref}}, $_[0]{_bitpos}, $_[1]) };
-	my ($next_fn, $end_fn);
-	my $begin_fn= sub {
-		my $self= shift;
-		my $elem_type= $array->elem_type;
-		if (!$elem_type) {
-			$elem_type= shift;
-			if (ref($elem_type) && ref($elem_type)->isa('Userp::Type')) {
-				$self->scope->type_by_id($elem_type->id) == $elem_type
-					or croak "Type '".$elem_type->name."' is not in the current scope";
-			}
-			else {
-				my $t= $self->scope->type_by_name($elem_type)
-					or croak "No such type '$elem_type' (expected element type as first argument to begin()";
-				$elem_type= $t;
-			}
-		}
-		my @dim= @_;
-		my @typedim= $array->dim? @{$array->dim} : ();
-		# If the type specifies some dimensions, make sure they agree with supplied dimensions
-		if (@typedim) {
-			croak "Supplied ".@dim." dimensions for type ".$array->name." which defines ".@typedim." dimensions"
-				unless @dim <= @typedim;
-			# The dimensions given must match or fill-in spots in the type-declared dimensions
-			for (my $i= 0; $i < @typedim; $i++) {
-				$dim[$i]= $typedim[$i] unless defined $dim[$i];
-				croak "Require dimension $i for type ".$array->name
-					unless defined $dim[$i];
-				croak "Dimension $i of array disagrees with type ".$array->name
-					if defined $typedim[$i] && $dim[$i] != $typedim[$i];
-			}
-		}
-		
-		push @{ $self->_enc_stack }, {
-			type => $array,
-			dim => \@dim,
-			elem_type => $elem_type,
-			i => 0,
-			n => scalar @dim,
-			next => $next_fn,
-			end => $end_fn,
-		};
-		
-		$self->_align($array->align);
-		# Encode the elem_type unless part of the array type
-		$vqty_fn->(${$self->{buffer_ref}}, $self->{_bitpos}, $elem_type->id) unless $array->elem_type;
-		# Encode the number of dimensions unless part of the array type
-		$vqty_fn->(${$self->{buffer_ref}}, $self->{_bitpos}, scalar @dim) unless @typedim;
-		# Encode the list of dimensions, for each that wasn't part of the array type
-		my $n= 1;
-		for (0..$#dim) {
-			$n *= $dim[$_]; # TODO: check overflow
-			next if $typedim[$_];
-			$self->$dim_type_enc($dim[$_]);
-		}
-		
-		$self->_enc_stack->[-1]{n}= $n; # now store actual number of array elements pending
-		$self->_set_current_type($n? $elem_type : undef);
-		return;
-	};
-	$next_fn= sub {
-		my $self= shift;
-		my $context= $self->_enc_stack->[-1];
-		if (++$context->{i} < $context->{n}) {
-			$self->_set_current_type($context->{elem_type});
-		} else {
-			$self->_set_current_type(undef);
-		}
-		return;
-	};
-	$end_fn= sub {
-		my $self= shift;
-		my $context= $self->_enc_stack->[-1];
-		my $remain= $context->{n} - $context->{i};
-		croak "Expected $remain more elements before end()" if $remain;
-		pop @{ $self->_enc_stack };
-		return;
-	};
-	return { begin => $begin_fn, end => $end_fn, next => $next_fn };
-}
-
-sub _gen_Record_encoder {
-	my ($self, $record)= @_;
-	my $vqty_fn= Userp::Bits->can($self->bigendian? 'concat_vqty_be' : 'concat_vqty_le');
-	my $begin_fn= sub {
-		my $self= shift;
-		push @{ $self->_enc_stack }, { type => $record, pending => {} };
-		return;
-	};
-	my $end_fn= sub {
-		my $self= shift;
-		...;
-		return;
-	};
-	my $field_fn= sub {
-		my ($self, $name)= @_;
-		...;
-		return;
-	};
-	my $next_fn= sub {
-		...;
-		return;
-	};
-	return { begin => $begin_fn, field => $field_fn, end => $end_fn, next => $next_fn };
-}
-
-sub _gen_Symbol_encoder {
-	my ($self, $type)= @_;
-	my $vqty_fn= Userp::Bits->can($self->bigendian? 'concat_vqty_be' : 'concat_vqty_le');
-	my $str_fn= sub {
-		my ($self, $val)= @_;
-		if (my $sym_id= $self->scope->symbol_id($val)) {
-			$vqty_fn->(${$_[0]{buffer_ref}}, $_[0]{_bitpos}, $sym_id << 1);
-		}
-		elsif (my ($prefix, $prefix_id)= $self->scope->find_symbol_prefix($val)) {
-			$vqty_fn->(${$_[0]{buffer_ref}}, $_[0]{_bitpos}, ($prefix_id << 1) | 1);
-			$val= substr($val, length $prefix);
-			utf8::encode($val);
-			$vqty_fn->(${$_[0]{buffer_ref}}, $_[0]{_bitpos}, length $val);
-			${$self->buffer_ref} .= $val;
-		}
-		else {
-			utf8::encode($val);
-			$vqty_fn->(${$_[0]{buffer_ref}}, $_[0]{_bitpos}, 1);
-			$vqty_fn->(${$_[0]{buffer_ref}}, $_[0]{_bitpos}, length $val);
-			${$self->buffer_ref} .= $val;
-		}
-		return;
-	};
-	return { str => $str_fn };
-}
+#=============================================================================
 
 sub _gen_Any_encoder {
 	my ($self, $type)= @_;
@@ -607,6 +394,21 @@ sub _align {
 	$self;
 }
 
+sub _push_state {
+	my ($self, $type)= @_;
+	$type= $self->scope->find_type($type) || croak "No type in scope: '$type'"
+		unless ref $type;
+	push @{ $self->_enc_stack }, ($type->{_encoder_cache} || $self->_encoder_for_type($type))->new($type, $self);
+}
+
+sub _encoder_for_type {
+	my ($self, $type)= @_;
+	$type->{_encoder_cache} ||= (
+		$type->parent? $self->_encoder_for_type($type->parent)
+		: 'Userp::Encoder::_'.$type->base_type
+		)->specialize($type);
+}
+
 # Encode a reference to a symbol or type from a scope's table
 sub _get_table_ref_int {
 	my ($self, $scope_idx, $elem_idx)= @_;
@@ -659,10 +461,10 @@ sub _encode_block_tables {
 	# Number of entries in the type table
 	my @types= @{ $self->scope->_types };
 	$buf->encode_int(scalar @types);
-	my $typedef_type= $self->scope->type_Typedef;
 	for (@types) {
-		# Each type encodes itself as "Type Typedef"
-		$self->_set_current_type($typdef_type);
+		# Encode reference to parent type, which determines how fields are encoded
+		$self->_encode_type_ref($_->parent);
+		# Use class of type to delegate remainder of encoding
 		$_->_encode_definition($self);
 		croak "Incomplete type encoding"
 			if defined $self->current_type || @{ $self->_enc_stack };
@@ -671,72 +473,129 @@ sub _encode_block_tables {
 	return $self;
 }
 
-# Encode type definition for Any
-sub Userp::Type::Any::_encode_definition {
+# Encode type definition for Any, Symbol, or Type, each of which only has name/parent/metadata
+sub _encode_definition_simple {
 	my ($type, $self)= @_;
-	# Encode type name, or null reference
-	$self->_encode_symbol_ref($type->name);
-	# Encode reference to parent type
-	$self->_encode_type_ref($type->parent);
-	# There is only one field for Type::Any.  If it is not used, then the "no attributes" case
-	# can be optimized as a single NUL byte.
-	my $meta= $type->metadata;
-	if ($meta && keys %$meta) {
-		$self->_push_temporary_state('Userp.Typedef.Any');
-		$self->begin_record('metadata');
-		$self->_encode_typedef_metadata($meta);
-		$self->end_record;
-	} else {
-		$self->buffers->[-1]->encode_int(0, 1);
-	}
+	my $attrs= $type->get_definition_attributes;
+	$self->_prepare_typedef_metadata($attrs);
+	$self->_push_temporary_state('Userp.Typedef.Simple');
+	$self->encode($attrs);
 }
+*Userp::Type::Any::_encode_definition= *_encode_definition_simple;
+*Userp::Type::Symbol::_encode_definition= *_encode_definition_simple;
+*Userp::Type::Type::_encode_definition= *_encode_definition_simple;
 
-sub _same { !(defined $_[0] xor defined $_[0]) and (!defined $_[0] or $_[0] eq $_[1]) }
+# TODO: maybe optimize the _encode_definition_simple? Could be much more efficient,
+# but not 'hot' code at all...
+#
+#	$self->_encode_symbol_ref($type->name);
+#	# Encode reference to parent type
+#	$self->_encode_type_ref($type->parent);
+#	# There is only one field for Type::Any.  If it is not used, then the "no attributes" case
+#	# can be optimized as a single NUL byte.
+#	my $meta= $type->metadata;
+#	if ($meta && keys %$meta) {
+#		$self->_push_temporary_state('Userp.Typedef.Simple');
+#		$self->begin_record('metadata');
+#		$self->_encode_typedef_metadata($meta);
+#		$self->end_record;
+#	} else {
+#		$self->buffers->[-1]->encode_int(0, 1);
+#	}
+#}
 
 sub Userp::Type::Integer::_encode_definition {
 	my ($type, $self)= @_;
-	# Encode type name, or null reference
-	$self->_encode_symbol_ref($type->name);
-	# Encode reference to parent type
-	$self->_encode_type_ref(my $parent= $type->parent);
-	# Make a list of the attributes changed from parent
-	my @changes= grep !_same($type->$_, $parent->$_), qw( min max bits align );
-	my $names= $type->names;
-	$names= undef unless $names && @$names;
-	# TODO: decide whether to encode entire list of names, or diff from parent.
-	my $meta= $type->metadata;
-	$meta= undef unless $meta && keys %$meta;
-	# In the case of no changes, optimize by encoding the NUL byte directly
-	if (@changes || $names || $meta) {
-		$self->_push_temporary_state('Userp.Typedef.Integer');
-		$self->begin_record(@changes, ($names? ('names'):()), ($meta? ('metadata'):()));
-		$self->encode($type->$_) for @changes;
-		if ($names) {
-			die "Unimplemented: encoding of Integer names attribute";
-		}
-		$self->_encode_typedef_metadata($meta) if $meta;
-		$self->end_record;
-	} else {
-		$self->buffers->[-1]->encode_int(0, 5);
-	}
+	my $attrs= $type->get_definition_attributes
+	# Convert from logical "set of names" to structure used by definition
+	$self->_prepare_integer_names($attrs);
+	# Convert metadata to a buffer of bytes, or Userp::PendingAlignment
+	$self->_prepare_typedef_metadata($attrs);
+	$self->_push_temporary_state('Userp.Typedef.Integer');
+	$self->encode($attrs);
 }
 
 sub Userp::Type::Choice::_encode_definition {
 	my ($type, $self)= @_;
-	# Encode type name, or null reference
-	$self->_encode_symbol_ref($type->name);
-	# Encode reference to parent type
-	$self->_encode_type_ref(my $parent= $type->parent);
-	# Make a list of the attributes changed from parent
-	my $spec_attrs= $type->get_spec_attrs;
-	
+	my $attrs= $type->get_definition_attributes;
+	# Convert literal values to a buffer of bytes, or Userp::PendingAlignment
+	$self->_prepare_choice_options($attrs);
+	# Convert metadata to a buffer of bytes, or Userp::PendingAlignment
+	$self->_prepare_typedef_metadata($attrs);
+	$self->_push_temporary_state('Userp.Typedef.Choice');
+	$self->encode($attrs);
 }
 
-sub _encode_typedef_metadata {
-	my ($self, $meta)= @_;
-	# Metadata is tricky, because it is written as an array of bytes which happens to contain
-	# an encoded record.  However, the alignment of that encoding needs to be relative to
-	# the overall stream.
+sub Userp::Type::Array::_encode_definition {
+	my ($type, $self)= @_;
+	$self->_push_temporary_state('Userp.Typedef.Array');
+	$self->encode($type->get_definition_attributes);
+}
+
+sub Userp::Type::Record::_encode_definition {
+	my ($type, $self)= @_;
+	$self->_push_temporary_state('Userp.Typedef.Record');
+	$self->encode($type->get_definition_attributes);
+}
+
+# Convert a hash of { $name => $value } to a list of record-or-symbol:
+# [ 
+#   { name => $name, val => $val },
+#   $name,
+#   $name,
+#   ...
+#   { name => $name, val => $val },
+#   ...
+# ]
+# where each name in a group is the previous plus one.
+sub _prepare_integer_names {
+	my ($self, $attrs)= @_;
+	my $names= $attrs->{names} or return;
+	my @finished;
+	my @active; # a array of arrays where the last element is a number of what can take its place
+	# Sort list by value
+	name: for my $name (sort { $names->{$a} <=> $names->{$b} } keys %$names) {
+		my $val= $names->{$name};
+		# For each list actively being built, see if this new element fits on the end
+		for (my $i= 0; $i < @active; ++$i) {
+			if ($active[$i][-1] == $val) {
+				$active[$i][-1]= $name;
+				push @{$active[$i]}, $val+1;
+				next name;
+			}
+			# Commit any lists that ended prior to this value.
+			elsif ($active[$i][-1] < $val) {
+				push @finished, splice(@active, $i, 1);
+				--$i;
+			}
+		}
+		# No list could be appended.  Create a new one.
+		push @active, [ $name, $val+1 ];
+	}
+	push @finished, @active;
+	# Each list is a list of names followed by the next value, meaning that the value of
+	# the first element is the "next" value minus the number of names in the list.
+	my @result;
+	for (@finished) {
+		my $v= pop @$_;
+		$v -= @$_;
+		$_->[0]= { name => $_->[0], value => $v }
+			unless !@result && !$v; # very first element does not need to be a record if val is 0
+		push @result, @$_;
+	}
+	$attrs->{names}= \@result;
+}
+
+sub _prepare_choice_options {
+	my ($self, $attrs)= @_;
+	my $options= $attrs->{options} or return;
+	...;
+}
+
+# Convert metadata to a buffer of bytes, or Userp::PendingAlignment
+sub _prepare_typedef_metadata {
+	my ($self, $attrs)= @_;
+	my $meta= $attrs->{metadata} or return;
 	# Start a new buffer marked as byte-align.  If the encoding of the metadata needs greater
 	# alignment, it will create additional buffers.
 	my $buf_idx= $#{ $self->buffers };
@@ -745,52 +604,228 @@ sub _encode_typedef_metadata {
 	# Encode the metadata as a generic record
 	$enc->_push_temporary_state($self->scope->type_Record);
 	$enc->encode($meta);
-	# If every new buffer has alignment less than the current, collapse them
-	# back to a single buffer.  (alignment will only increase among @new_bufs)
-	if ($self->buffers->[-1]->alignment <= $buf->alignment) {
-		# Note that the most likely scenario here is that metadata only had strings
-		# or variable ints in it, so it only needed byte alignment, so it all went
-		# into a single buffer.  So... optimize that case.
-		my @new_bufs= splice @{$self->buffers}, $buf_idx+1;
-		if (@new_bufs == 1 and $new_bufs[0]->alignment == 0) {
-			$buf->encode_int($len)->encode_bytes(${ $new_bufs[0]->bufref });
-		}
-		else {
-			my $buf_pos= $buf->length;
-			# Sum it up assuming best alignment padding, then append a length int.
-			my $len= 0;
-			$len += $_->length for @new_bufs;
-			$buf->encode_int($len);
-			# Now calculate the real length with alignment
-			{
-				my $real_len= $buf->length << 3;
-				for (@new_bufs) {
-					$real_len= Userp::Bits::roundup_bits_to_alignment($real_len, $_->alignment);
-					$real_len += $_->length << 3;
-				}
-				$real_len= (($real_len + 7) >> 3) - $buf->length;
-				if ($real_len != $len) {
-					my $buf_len= $buf->length;
-					# remove the length previously written
-					substr(${$buf->bufref}, $buf_pos)= '';
-					$buf->encode_int($real_len);
-					# and then re-calculate the length-with-alignment if the int changed length
-					redo if $buf_len != $buf->length;
-				}
-			}
-			# Then concatenate (with padding) all the new buffers
-			$buf->append_buffer($_) for @new_bufs;
-		}
+	# Remove the temporary buffers
+	my @new_bufs= splice @{$self->buffers}, $buf_idx+1;
+	# If the overall alignment of the new buffers is still zero, then they can simply be passed
+	# to later encoding as a byte array.
+	if (@new_bufs == 1 && $new_bufs[0]->alignment == 0) {
+		$attrs->{metadata}= $new_bufs[0];
 	}
-	# Else the length can't be known until there is more alignment available,
-	# so add a placeholder.
+	# Else things get complicated because the length depends on how the
+	# buffers get padded during alignment
 	else {
-		die "Unimplemented: large alignment in metadata";
-		splice @{ $self->buffers }, $buf_idx+1, 0,
-			Userp::LazyLength->new($#{ $self->buffers } - $buf_idx);
+		$attrs->{metadata}= Userp::PendingAlignment->new(buffers => \@new_bufs);
 	}
-	# New state is that we have finished the "meta" field, and move to the next field.
-	$self->_next;
+}
+
+#sub _prepare_typedef_metadata {
+#	my ($self, $meta)= @_;
+#	# Metadata is tricky, because it is written as an array of bytes which happens to contain
+#	# an encoded record.  However, the alignment of that encoding needs to be relative to
+#	# the overall stream.
+#	# Start a new buffer marked as byte-align.  If the encoding of the metadata needs greater
+#	# alignment, it will create additional buffers.
+#	my $buf_idx= $#{ $self->buffers };
+#	my $buf= $self->buffers->[-1];
+#	push @{ $self->buffers }, $buf->new_same(undef, 0);
+#	# Encode the metadata as a generic record
+#	$enc->_push_temporary_state($self->scope->type_Record);
+#	$enc->encode($meta);
+#	# If every new buffer has alignment less than the current, collapse them
+#	# back to a single buffer.  (alignment will only increase among @new_bufs)
+#	if ($self->buffers->[-1]->alignment <= $buf->alignment) {
+#		# Note that the most likely scenario here is that metadata only had strings
+#		# or variable ints in it, so it only needed byte alignment, so it all went
+#		# into a single buffer.  So... optimize that case.
+#		my @new_bufs= splice @{$self->buffers}, $buf_idx+1;
+#		if (@new_bufs == 1 and $new_bufs[0]->alignment == 0) {
+#			$buf->encode_int($len)->encode_bytes(${ $new_bufs[0]->bufref });
+#		}
+#		else {
+#			my $buf_pos= $buf->length;
+#			# Sum it up assuming best alignment padding, then append a length int.
+#			my $len= 0;
+#			$len += $_->length for @new_bufs;
+#			$buf->encode_int($len);
+#			# Now calculate the real length with alignment
+#			{
+#				my $real_len= $buf->length << 3;
+#				for (@new_bufs) {
+#					$real_len= Userp::Bits::roundup_bits_to_alignment($real_len, $_->alignment);
+#					$real_len += $_->length << 3;
+#				}
+#				$real_len= (($real_len + 7) >> 3) - $buf->length;
+#				if ($real_len != $len) {
+#					my $buf_len= $buf->length;
+#					# remove the length previously written
+#					substr(${$buf->bufref}, $buf_pos)= '';
+#					$buf->encode_int($real_len);
+#					# and then re-calculate the length-with-alignment if the int changed length
+#					redo if $buf_len != $buf->length;
+#				}
+#			}
+#			# Then concatenate (with padding) all the new buffers
+#			$buf->append_buffer($_) for @new_bufs;
+#		}
+#	}
+#	# Else the length can't be known until there is more alignment available,
+#	# so add a placeholder.
+#	else {
+#		die "Unimplemented: large alignment in metadata";
+#		splice @{ $self->buffers }, $buf_idx+1, 0,
+#			Userp::LazyLength->new($#{ $self->buffers } - $buf_idx);
+#	}
+#	# New state is that we have finished the "meta" field, and move to the next field.
+#	$self->_next;
+#}
+
+sub _invalid_state {
+	my ($self, $method)= @_;
+	if (my $t= $self->current_type) {
+		my $name= $t->name;
+		my $type= $t->base_type;
+		croak "Can't call '$method' when encoder is expecting type ".(defined $name? "$name ($type)" : $type);
+	} else {
+		croak "Can't call '$method' after encoder reaches a final state";
+	}
+}
+
+for (qw( int str sym sel field float begin_array end_array begin_record end_record )) {
+	no strict 'refs';
+	my $m= $_;
+	*{'Userp::Encoder::_Impl::'.$m}= sub { Userp::Encoder::_invalid_state($_[1], $m) };
+}
+
+our $final_state= bless {}, 'Userp::Encoder::_Impl';
+
+sub Userp::Encoder::_Impl::specialize {
+	return $_[0];
+}
+
+# Encoder for generic Integers
+@Userp::Encoder::_Integer::ISA= ( 'Userp::Encoder::_Impl' );
+sub Userp::Encoder::_Integer::new {
+	my ($class, $type, $encoder)= @_;
+	bless { type => $type }, $class;
+}
+
+sub Userp::Encoder::_Integer::int {
+	my ($state, $self, $value)= @_;
+	my $type= $state->{type};
+	my $min= $type->effective_min;
+	my $max= $type->effective_max;
+	my $bits= $type->effective_bits;
+	die Userp::Error::Domain->new_minmax($value, $min, $max, 'Type "'.$type->name.'" value')
+		if $value < $min || $value > $max;
+	my $align= $type->align;
+	$self->_align($align) if defined $align;
+	# If a type has a declared minimum value, it is encoded as an unsigned value from that offset.
+	if (defined $min) {
+		$value += $min;
+	}
+	# If the type has a max but not a min, it is encoded as an unsigned offset in the negative direction
+	elsif (defined $max) {
+		$value= $max - $value;
+	}
+	# If the type is fully unbounded, encode nonnegative integers as value * 2, and negative integers
+	# as value * 2 + 1
+	elsif (!defined $bits) {
+		# TODO: check for overflow
+		$value= $value < 0? (-$value * 2 + 1) : ($value * 2);
+	}
+	$self->buffers->[-1]->encode_int($value, $bits);
+	$self->{_current}= $final_state;
+	$self->{_parent}->next_elem($self) if $self->{_parent};
+}
+
+sub Userp::Encoder::_Integer::sym {
+	my ($state, $self, $value)= @_;
+	my $names= $self->current_type->names;
+	defined $value or croak "Can't look up enum value for undefined symbol";
+	defined $names && exists $names->{$value}
+		or croak "Integer Type ".($self->current_type->name || '')." does not have an enumeration for $value";
+	$state->int($self, $names->{$value});
+}
+
+*Userp::Encoder::_Integer::str = *Userp::Encoder::_Integer::sym;
+
+# Encoder for generic arrays
+@Userp::Encoder::_Array::ISA= ( 'Userp::Encoder::_Impl' );
+sub Userp::Encoder::_Array::new {
+	my ($class, $type, $encoder)= @_;
+	bless { type => $type }, $class;
+}
+sub Userp::Encoder::_Array::begin_array {
+	my $state= shift;
+	my $self= shift;
+	my $array= $state->{type};
+	my $elem_type= $array->elem_type || shift;
+	my @dim= @_;
+	
+	$state->{done}
+		and croak "Expected end_array";
+	
+	if (!ref $elem_type || !ref($elem_type)->isa('Userp::Type')) {
+		defined $elem_type
+			or croak "Expected element type as first argument to begin_array";
+		$elem_type= $self->scope->find_type($elem_type)
+			|| croak "No such type '$elem_type' in current scope (first argument to begin_array must be a type or type name)";
+	} else {
+		$self->scope->contains_type($elem_type)
+			or croak "Type ".$elem_type->name." is not part of current scope";
+	}
+	my @typedim= @{$array->dim || []};
+	# If the type specifies some dimensions, make sure they agree with supplied dimensions
+	if (@typedim) {
+		croak "Supplied ".@dim." dimensions for type ".$array->name." which only defines ".@typedim." dimensions"
+			unless @dim <= @typedim;
+		# The dimensions given must match or fill-in spots in the type-declared dimensions
+		for (my $i= 0; $i < @typedim; $i++) {
+			$dim[$i]= $typedim[$i] unless defined $dim[$i];
+			croak "Require dimension $i for type ".$array->name
+				unless defined $dim[$i];
+			croak "Dimension $i of array disagrees with type ".$array->name
+				if defined $typedim[$i] && $dim[$i] != $typedim[$i];
+		}
+	}
+	$state->{elem_type}= $elem_type;
+	# Encode the elem_type unless part of the array type
+	$self->_encode_type_ref($elem_type) unless $array->elem_type;
+	# Encode the number of dimensions unless part of the array type
+	$self->buffers->[-1]->encode_int(scalar @dim) unless @typedim;
+	# Encode the list of dimensions, for each that wasn't part of the array type
+	my $array_dim_enc= $array->dim_type? $self->_encoder_for_type($array->dim_type)->new($array->dim_type) : undef;
+	my $n= 1;
+	for (0..$#dim) {
+		$n *= $dim[$_]; # TODO: check overflow
+		next if $typedim[$_];
+		$array_dim_enc? $array_dim_enc->int($dim[$_]) : $self->buffers->[-1]->encode_int($dim[$_]);
+	}
+	$state->{n}= $n; # now store actual number of array elements pending
+	$state->{elem_encoder}= $self->_encoder_for_type($elem_type);
+	$state->{_parent}= $self->{_parent};
+	$self->{_parent}= $state;
+	$self->{_current}= $state->{elem_encoder}->new($elem_type);
+}
+
+sub Userp::Encoder::_Array::next_elem {
+	my ($state, $self)= @_;
+	if (++$state->{i} < $state->{n}) {
+		$self->{_current}= $state->{elem_encoder}->new($state->{elem_type});
+	}
+	# else remain at $final_state
+}
+
+sub Userp::Encoder::_Array::end_array {
+	my ($state, $self)= @_;
+	defined $state->{i}
+		or croak "Expected begin_array before end_array";
+	my $remain= $state->{n} - $state->{i};
+	croak "Expected $remain more elements before end_array"
+		if $remain;
+	$self->{_current}= $final_state;
+	$self->{_parent}= $state->{_parent};
+	$self->{_parent}->next_elem($self) if $self->{_parent};
 }
 
 1;
