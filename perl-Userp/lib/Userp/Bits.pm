@@ -9,6 +9,7 @@ our @api= qw(
 	unsigned_max
 	roundup_bits_to_alignment
 	sign_extend
+	truncate_to_bits
 	bitlen
 	pack_bits_le
 	pack_bits_be

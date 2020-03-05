@@ -29,19 +29,21 @@ for (
 		[       127, "\x7F", "\x7F" ],
 		[      -128, "\x80", "\x80" ],
 	]],
-
 ) {
 	my ($name, $attrs, $tests)= @$_;
 	subtest $name => sub {
-		my $t= $scope->add_type($name, 'Integer', $attrs);
+		my $t= $scope->define_type($name, 'Integer', $attrs);
 		isa_ok( $t, 'Userp::Type::Integer' );
 		for (@$tests) {
 			my $enc_le= Userp::Encoder->new(scope => $scope, current_type => $t);
-			is( $enc_le->int($_->[0])->buffer, $_->[1], "encode $_->[0] little-endian" )
-				or diag "encoded as: "._dump_hex($enc_le->buffer);
+			my $str= $enc_le->int($_->[0])->buffers->to_string;
+			is( $str, $_->[1], "encode $_->[0] little-endian" )
+				or diag "encoded as: "._dump_hex($str);
+			
 			my $enc_be= Userp::Encoder->new(scope => $scope, current_type => $t, bigendian => 1);
-			is( $enc_be->int($_->[0])->buffer, $_->[2], "encode $_->[0] big-endian" )
-				or diag "encoded as: "._dump_hex($enc_be->buffer);
+			my $str= $enc_be->int($_->[0])->buffers->to_string;
+			is( $str, $_->[2], "encode $_->[0] big-endian" )
+				or diag "encoded as: "._dump_hex($str);
 		}
 	};
 }

@@ -2,6 +2,7 @@ package Userp::Encoder;
 use Moo;
 use Carp;
 use Userp::Bits;
+use Userp::MultiBuffer;
 
 =head1 SYNOPSIS
 
@@ -157,13 +158,25 @@ The type being written next.  This does change after calling C<sel>.
 
 has scope        => ( is => 'ro', required => 1 );
 has bigendian    => ( is => 'ro' );
-has buffers      => ( is => 'rw', lazy => 1, builder => 1 );
+has buffers      => ( is => 'rw' );
 sub parent_type     { $_[0]{_parent}? $_[0]{_parent}{type} : undef }
 sub current_type    { $_[0]{_current}{type} }
 
-sub _build_buffers {
-	my $self= shift;
-	[ $self->bigendian? Userp::Buffer->new_be : Userp::Buffer->new_le ]
+# After encoding an element, the _current encoder is set to this value, which has a undef $type
+our $_final_state= Userp::Encoder::_Impl->new(undef);
+
+sub BUILD {
+	my ($self, $args)= @_;
+	$self->buffers($self->bigendian? Userp::MultiBuffer->new_be : Userp::MultiBuffer->new_le)
+		unless $self->buffers;
+	if (defined (my $type= $args->{current_type})) {
+		$type= $self->scope->find_type($type) || croak "No type $type in scope"
+			unless ref $type && ref($type)->isa('Userp::Type');
+		$self->{_current}= $self->_encoder_for_type($type)->new($type, $self);
+	}
+	else {
+		$self->{_current}= $_final_state;
+	}
 }
 
 =head1 METHODS
@@ -181,6 +194,7 @@ Returns the encoder for convenient chaining.
 =cut
 
 sub sel {
+	@_ == 2 or @_ == 3 or croak 'Expected one or two arguments to enc->sel($type, $option)';
 	$_[0]{_current}->sel(@_);
 	return $_[0];
 }
@@ -196,7 +210,7 @@ stream.  Returns the encoder for convenient chaining.
 =cut
 
 sub int {
-	@_ == 2 or croak "Expected one argument to enc->int(\$int)";
+	@_ == 2 or croak 'Expected one argument to enc->int($int)';
 	$_[0]{_current}->int(@_);
 	return $_[0];
 }
@@ -207,8 +221,8 @@ sub int {
 =cut
 
 sub sym {
-	@_ == 2 or croak "Expected one argument to enc->sym(\$string)";
-	$_[0]{_current}->int(@_);
+	@_ == 2 or croak 'Expected one argument to enc->sym($string)';
+	$_[0]{_current}->sym(@_);
 	return $_[0];
 }
 
@@ -224,7 +238,7 @@ Scope, else Symbol.
 =cut
 
 sub str {
-	@_ == 2 or croak "Expected one argument to enc->str(\$string)";
+	@_ == 2 or croak 'Expected one argument to enc->str($string)';
 	$_[0]{_current}->str(@_);
 	return $_[0];
 }
@@ -236,7 +250,7 @@ sub str {
 =cut
 
 sub typeref {
-	@_ == 2 or croak "Expected one argument to enc->typeref(\$type)";
+	@_ == 2 or croak 'Expected one argument to enc->typeref($type)';
 	$_[0]{_current}->typeref(@_);
 	return $_[0];
 }
@@ -398,7 +412,9 @@ sub _push_state {
 	my ($self, $type)= @_;
 	$type= $self->scope->find_type($type) || croak "No type in scope: '$type'"
 		unless ref $type;
-	push @{ $self->_enc_stack }, ($type->{_encoder_cache} || $self->_encoder_for_type($type))->new($type, $self);
+	my $enc= ($type->{_encoder_cache} || $self->_encoder_for_type($type))->new($type, $self);
+	$self->{_parent}= Userp::Encoder::_TempState->new($type, $self);
+	$self->{_current}= $enc;
 }
 
 sub _encoder_for_type {
@@ -506,7 +522,7 @@ sub _encode_definition_simple {
 
 sub Userp::Type::Integer::_encode_definition {
 	my ($type, $self)= @_;
-	my $attrs= $type->get_definition_attributes
+	my $attrs= $type->get_definition_attributes;
 	# Convert from logical "set of names" to structure used by definition
 	$self->_prepare_integer_names($attrs);
 	# Convert metadata to a buffer of bytes, or Userp::PendingAlignment
@@ -602,8 +618,8 @@ sub _prepare_typedef_metadata {
 	my $buf= $self->buffers->[-1];
 	push @{ $self->buffers }, $buf->new_same(undef, 0);
 	# Encode the metadata as a generic record
-	$enc->_push_temporary_state($self->scope->type_Record);
-	$enc->encode($meta);
+	$self->_push_state($self->scope->type_Record);
+	$self->encode($meta);
 	# Remove the temporary buffers
 	my @new_bufs= splice @{$self->buffers}, $buf_idx+1;
 	# If the overall alignment of the new buffers is still zero, then they can simply be passed
@@ -679,35 +695,53 @@ sub _prepare_typedef_metadata {
 #	$self->_next;
 #}
 
+# specialize is a class method that returns a class name most appropriate for the given type
+sub Userp::Encoder::_Impl::specialize {
+	# my ($class, $type)= @_;
+	return $_[0];
+}
+# Create a new encoder state.  Default just captures the type, which is sufficient for most
+sub Userp::Encoder::_Impl::new {
+	my ($class, $type, $encoder)= @_;
+	bless { type => $type }, $class;
+}
+
+# Install a default "can't do that" handler for each of the user-facing methods
 sub _invalid_state {
 	my ($self, $method)= @_;
 	if (my $t= $self->current_type) {
 		my $name= $t->name;
 		my $type= $t->base_type;
 		croak "Can't call '$method' when encoder is expecting type ".(defined $name? "$name ($type)" : $type);
+	} elsif ($self->{_parent} && $self->{_parent}{type}) {
+		croak "Can't call '$method' when expecting ".($self->{_parent}{type}->isa_Array? 'end_array':'end_record');
 	} else {
 		croak "Can't call '$method' after encoder reaches a final state";
 	}
 }
-
 for (qw( int str sym sel field float begin_array end_array begin_record end_record )) {
 	no strict 'refs';
 	my $m= $_;
-	*{'Userp::Encoder::_Impl::'.$m}= sub { Userp::Encoder::_invalid_state($_[1], $m) };
+	*{'Userp::Encoder::_Impl::'.$m}= sub { _invalid_state($_[1], $m) };
 }
 
-our $final_state= bless {}, 'Userp::Encoder::_Impl';
+# Encoder for temporarily changing encoder to a new state
+@Userp::Encoder::_TempState::ISA= ( 'Userp::Encoder::_Impl' );
 
-sub Userp::Encoder::_Impl::specialize {
-	return $_[0];
+sub Userp::Encoder::_TempState::new {
+	my ($class, $type, $encoder)= @_;
+	bless { _parent => $encoder->{_parent}, _current => $encoder->{_current} }, $class;
+}
+
+sub Userp::Encoder::_TempState::next_elem {
+	my ($state, $self)= @_;
+	# Restore state captured by constructor
+	$self->{_parent}= $state->{_parent};
+	$self->{_current}= $state->{_current};
 }
 
 # Encoder for generic Integers
 @Userp::Encoder::_Integer::ISA= ( 'Userp::Encoder::_Impl' );
-sub Userp::Encoder::_Integer::new {
-	my ($class, $type, $encoder)= @_;
-	bless { type => $type }, $class;
-}
 
 sub Userp::Encoder::_Integer::int {
 	my ($state, $self, $value)= @_;
@@ -716,16 +750,19 @@ sub Userp::Encoder::_Integer::int {
 	my $max= $type->effective_max;
 	my $bits= $type->effective_bits;
 	die Userp::Error::Domain->new_minmax($value, $min, $max, 'Type "'.$type->name.'" value')
-		if $value < $min || $value > $max;
+		if (defined $min && $value < $min) || (defined $max && $value > $max);
 	my $align= $type->align;
 	$self->_align($align) if defined $align;
 	# If a type has a declared minimum value, it is encoded as an unsigned value from that offset.
-	if (defined $min) {
+	if (defined $type->min) {
 		$value += $min;
 	}
 	# If the type has a max but not a min, it is encoded as an unsigned offset in the negative direction
-	elsif (defined $max) {
+	elsif (defined $type->max) {
 		$value= $max - $value;
+	}
+	elsif (defined $type->bits) {
+		$value= Userp::Bits::truncate_to_bits($value, $bits);
 	}
 	# If the type is fully unbounded, encode nonnegative integers as value * 2, and negative integers
 	# as value * 2 + 1
@@ -734,7 +771,7 @@ sub Userp::Encoder::_Integer::int {
 		$value= $value < 0? (-$value * 2 + 1) : ($value * 2);
 	}
 	$self->buffers->[-1]->encode_int($value, $bits);
-	$self->{_current}= $final_state;
+	$self->{_current}= $_final_state;
 	$self->{_parent}->next_elem($self) if $self->{_parent};
 }
 
@@ -751,10 +788,7 @@ sub Userp::Encoder::_Integer::sym {
 
 # Encoder for generic arrays
 @Userp::Encoder::_Array::ISA= ( 'Userp::Encoder::_Impl' );
-sub Userp::Encoder::_Array::new {
-	my ($class, $type, $encoder)= @_;
-	bless { type => $type }, $class;
-}
+
 sub Userp::Encoder::_Array::begin_array {
 	my $state= shift;
 	my $self= shift;
@@ -813,7 +847,7 @@ sub Userp::Encoder::_Array::next_elem {
 	if (++$state->{i} < $state->{n}) {
 		$self->{_current}= $state->{elem_encoder}->new($state->{elem_type});
 	}
-	# else remain at $final_state
+	# else remain at $_final_state
 }
 
 sub Userp::Encoder::_Array::end_array {
@@ -823,7 +857,7 @@ sub Userp::Encoder::_Array::end_array {
 	my $remain= $state->{n} - $state->{i};
 	croak "Expected $remain more elements before end_array"
 		if $remain;
-	$self->{_current}= $final_state;
+	$self->{_current}= $_final_state;
 	$self->{_parent}= $state->{_parent};
 	$self->{_parent}->next_elem($self) if $self->{_parent};
 }

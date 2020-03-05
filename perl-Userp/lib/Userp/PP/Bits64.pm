@@ -33,6 +33,15 @@ sub roundup_bits_to_alignment {
 	return ($_[0] + $mask) & ~$mask;
 }
 
+sub truncate_to_bits {
+	# ($value, $bits)= @_;
+	if (ref $_[0] || $_[1] > 63) {
+		return $_[0] & Math::BigInt->bone->blsft($_[1])->bsub(1);
+	} else {
+		return $_[0] & (( 1 << $_[1] ) - 1);
+	}
+}
+
 sub sign_extend {
 	my ($n, $bits)= @_;
 	use integer;
