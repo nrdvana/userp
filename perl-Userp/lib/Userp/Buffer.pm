@@ -5,6 +5,7 @@ use Carp;
 use Userp::Bits;
 
 @Userp::Buffer::BE::ISA= ( __PACKAGE__ );
+@Userp::Buffer::IntSplice::ISA = ( __PACKAGE__ );
 
 sub new_le {
 	bless [ $_[1] || \(my $x=''), $_[2] || 0, 0, 0 ], 'Userp::Buffer';
@@ -18,14 +19,20 @@ sub new_same {
 	my $class= ref $_[0] || $_[0];
 	bless [ $_[1] || \(my $x= ''), $_[2] || 0, 0, 0 ], $class;
 }
+sub Userp::Buffer::IntSplice::new_same {
+	bless [ $_[1] || \(my $x= ''), $_[2] || 0, 0, 0 ], $_[0][4];
+}
 
 sub bufref :lvalue    { $_[0][0] }
 sub alignment :lvalue { $_[0][1] }
 sub _bitpos           { $_[0][2] }
 sub _readpos          { $_[0][3] }
+sub _orig_class       { $_[0][4] }
+sub _int_fn_0         { $_[0][5] }
 sub bigendian         { 0 }
-sub length            { length ${$_[0][0]} }
 sub Userp::Buffer::BE::bigendian { 1 }
+sub Userp::Buffer::IntSplice::bigendian { shift->_orig_class->bigendian }
+sub length            { length ${$_[0][0]} }
 
 *Userp::Buffer::encode_int= *Userp::Bits::encode_int_le;
 *Userp::Buffer::decode_int= *Userp::Bits::decode_int_le;
@@ -33,10 +40,36 @@ sub Userp::Buffer::BE::bigendian { 1 }
 *Userp::Buffer::BE::encode_int= *Userp::Bits::encode_int_be;
 *Userp::Buffer::BE::decode_int= *Userp::Bits::decode_int_be;
 
+sub intercept_next_int {
+	my ($self, $splice_fn)= @_;
+	push @$self, ref $self, $splice_fn;
+	bless $self, 'Userp::Buffer::IntSplice';
+}
+
+sub Userp::Buffer::IntSplice::intercept_next_int {
+	push @{$_[0]}, $_[1];
+	$_[0];
+}
+
+sub Userp::Buffer::IntSplice::encode_int {
+	my $self= shift;
+	my $splice_fn= pop @$self;
+	bless $self, pop @$self if @$self == 5;
+	$self->$splice_fn(@_);
+}
+
+*Userp::Buffer::IntSplice::decode_int= *Userp::Buffer::IntSplice::encode_int;
+
 sub seek {
 	$_[0][2]= $_[2] || 0;
 	$_[0][3]= $_[1];
 	$_[0]
+}
+
+sub Userp::Buffer::IntSplice::seek {
+	bless $_[0], $_[0][4];
+	splice(@{$_[0]}, 4); # remove all pending int-splices
+	$_[0]->seek(@_);
 }
 
 sub seek_to_alignment {
@@ -96,6 +129,11 @@ sub encode_bytes {
 	$_[0];
 }
 
+sub Userp::Buffer::IntSplice::encode_bytes {
+	$_[0]->encode_int(0,0); # zero bits meaning no integer-encode occurred
+	$_[0]->encode_bytes(@_); # called on new class after int-splice is complete
+}
+
 sub decode_bytes {
 	#($self, $count)
 	# Round up to the next whole byte
@@ -107,6 +145,11 @@ sub decode_bytes {
 	# Advance the new pos to the end of these bytes 
 	$_[0][3] += $_[1];
 	return substr(${$_[0][0]}, $start, $_[1]);
+}
+
+sub Userp::Buffer::IntSplice::decode_bytes {
+	$_[0]->decode_int(0); # zero bits, meaning no integer-decode occurred
+	$_[0]->decode_bytes(@_); # called on new class after int-splice is complete
 }
 
 sub append_buffer {
@@ -124,6 +167,10 @@ sub append_buffer {
 		${$self->[0]} .= ${$peer->[0]};
 		$self->[2]= $peer->[2]; # copy leftover bit count
 	}
+}
+
+sub Userp::Buffer::IntSplice::append_buffer {
+	croak "Can't append buffer while waiting to splice next integer";
 }
 
 1;

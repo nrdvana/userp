@@ -6,10 +6,9 @@ sub bigint { Math::BigInt->new(shift) }
 sub stringify_testvals { join ' ', map { ref $_ eq 'ARRAY'? '['.join(',', @$_).']' : $_ } @{$_[0]} }
 
 subtest $_ => main->can('test_'.$_)
-	for qw( bitpacking );
+	for qw( bitpacking intsplice );
 
 sub test_bitpacking {
-	my $class= shift;
 	my @tests= (
 		{
 			seq => [
@@ -95,6 +94,24 @@ sub test_bitpacking {
 				is( $ret, $op->[1], "BE $op->[0] => $op->[1]" )
 					if $op->[0] eq 'int';
 			}
+		};
+	}
+}
+
+sub test_intsplice {
+	for my $new_endian (qw( new_le new_be )) {
+		subtest $new_endian => sub {
+			my $buf= Userp::Buffer->$new_endian;
+			$buf->intercept_next_int(sub {
+				my ($self, $value, $bits)= @_;
+				$self->encode_int($value + 0x10);
+			});
+			$buf->encode_int(0x10);
+			is( length ${$buf->bufref}, 1, 'encoded to single byte' );
+			$buf->seek(0);
+			is( $buf->decode_int, 0x20, 'decode 0x20' );
+			$buf->intercept_next_int(sub { return 0x10 });
+			is( $buf->decode_int, 0x10, 'decode 0x10' );
 		};
 	}
 }
