@@ -17,6 +17,8 @@ our @api= qw(
 	encode_int_be
 	decode_int_le
 	decode_int_be
+	is_valid_symbol
+	validate_symbol
 );
 
 our $mechanism; # can be set before loading package to request specific source
@@ -35,10 +37,6 @@ elsif ($mechanism eq '64') {
 else {
 	require Userp::PP::Bits32;
 	*$_ = *{"Userp::PP::Bits32::$_"} for @api;
-}
-
-sub is_valid_symbol {
-	!!( $_[0] =~ /^[^\0-\x1F]+$/ )
 }
 
 sub _deep_cmp {

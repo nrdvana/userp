@@ -19,5 +19,6 @@ See attributes of L<Userp::Type>.
 
 sub isa_Any { 1 }
 sub base_type { 'Any' }
+sub effective_align { 0 }
 
 1;

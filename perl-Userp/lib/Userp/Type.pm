@@ -53,7 +53,7 @@ has spec       => ( is => 'lazy' );
 sub align         { undef; }
 has metadata   => ( is => 'ro' );
 
-sub effective_align { 0 }
+sub effective_align { -3 }
 has bitlen          => ( is => 'rwp' );
 
 sub isa_Any     { 0 }
@@ -77,12 +77,19 @@ attribute from the parent.
 =cut
 
 sub subtype {
-	my ($self, %attrs)= @_ == 2? ($_[0], %{$_[1]}) : @_;
+	my ($self, @attrs)= @_ == 2? ($_[0], %{$_[1]}) : @_;
 	my $class= ref($self) || $self;
-	$self->_merge_self_into_attrs(\%attrs) if ref $self;
-	$attrs{align}= $self->align if defined $self->align && !exists $attrs{align};
-	$attrs{parent}= $self;
-	return $class->new(\%attrs);
+	return $class->new(@attrs, parent => $self);
+}
+
+# Any type whose constructor is called with a parent needs to get attributes merged
+sub BUILDARGS {
+	my $class= shift;
+	my $attrs= @_ == 1 && ref $_[0] eq 'HASH'? shift : { @_ };
+	if (my $p= $attrs->{parent}) {
+		$p->_merge_self_into_attrs($attrs= { %$attrs });
+	}
+	$attrs;
 }
 
 # This gets overridden in subclasses
@@ -92,6 +99,7 @@ sub _merge_self_into_attrs {
 		my %merged= ( %{$self->metadata}, ($attrs->{metadata}? %{$attrs->{metadata}} : ()) );
 		$attrs->{metadata}= \%merged;
 	}
+	$attrs->{align}= $self->align if defined $self->align && !exists $attrs->{align};
 }
 
 =head2 get_definition
@@ -132,15 +140,5 @@ sub _register_symbols {
 		}
 	}
 }
-
-=head2 has_member_type
-
-  $bool= $type->has_member_type($other_type);
-
-This only returns true on Union types when the C<$other_type> is a member or sub-member.
-
-=cut
-
-sub has_member_type { 0 }
 
 1;

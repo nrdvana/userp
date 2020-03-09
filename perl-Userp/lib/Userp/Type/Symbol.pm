@@ -19,5 +19,6 @@ with named values in that the symbols have no implied numeric value visible thro
 
 sub isa_Symbol { 1 }
 sub base_type { 'Symbol' }
+sub effective_align { 0 }
 
 1;

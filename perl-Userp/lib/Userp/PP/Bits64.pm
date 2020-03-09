@@ -370,4 +370,13 @@ sub decode_int_be {
 	}
 }
 
+sub is_valid_symbol {
+	return scalar $_[0] =~ /^[^\0-\x20\x7F]+\z/;
+}
+
+sub validate_symbol {
+	return $_[0] if &is_valid_symbol;
+	croak "Not a valid symbol: '$_[0]'";
+}
+
 1;
