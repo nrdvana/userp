@@ -115,7 +115,7 @@ The bytes defining which fields are present in the record come before the point 
 
 has fields           => ( is => 'rwp', init_arg => undef );
 has static_bits      => ( is => 'ro' );
-has extra_field_type => ( is => 'ro', default => 1 );
+has extra_field_type => ( is => 'ro' );
 has align            => ( is => 'ro' );
 
 has _static_count   => ( is => 'rw' );
@@ -223,7 +223,7 @@ sub BUILD {
 		}
 	}
 	if (defined $args->{fields}) {
-		my $prev_placement= SELDOM;
+		my $prev_placement= ALWAYS;
 		require Userp::RootTypes;
 		my $prev_type= Userp::RootTypes::type_Any();
 		for (@{ $args->{fields} }) {
@@ -235,6 +235,8 @@ sub BUILD {
 			ref $type or croak "field type must be a type reference, not a name";
 			$placement= $prev_placement unless defined $placement;
 			$self->$add_field($name, $type, $placement);
+			$prev_type= $type;
+			$prev_placement= $placement;
 		}
 	}
 	
@@ -260,7 +262,7 @@ sub BUILD {
 	# If a record does not have static bits and the first ALWAYS field has higher alignment,
 	# then that is the effective alignment.
 	elsif (!@static_f && @always_f) {
-		my $first_align= $always_f[0]->effective_align;
+		my $first_align= $always_f[0]->type->effective_align;
 		$align= $first_align if !defined $align or $align < $first_align;
 	}
 	

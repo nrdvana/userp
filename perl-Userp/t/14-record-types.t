@@ -1,6 +1,6 @@
 use Test2::V0;
 use Userp::Type::Integer;
-use Userp::Type::Record;
+use Userp::Type::Record qw( ALWAYS OFTEN SELDOM );
 
 my %types;
 my $int2= Userp::Type::Integer->new(name => 'Int2', bits => 2);
@@ -21,10 +21,15 @@ my @tests= (
 			call fields => array {
 				item 0 => object {
 					call name => 'f1';
+					call placement => ALWAYS;
 					call idx => 0;
 				};
 				etc;
 			};
+			call align => undef;
+			call effective_align => -3;
+			call effective_static_bits => 0;
+			call bitlen => 14;
 		})
     ]
 );
