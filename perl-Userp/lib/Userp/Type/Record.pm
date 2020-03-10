@@ -229,6 +229,7 @@ sub BUILD {
 		for (@{ $args->{fields} }) {
 			my ($name, $type, $placement)= ref $_ eq 'HASH'? (@{$_}{'name','type','placement'})
 				: ref $_ eq 'ARRAY'? (@$_)
+				: !ref $_? ($_)
 				: ref($_)->can('placement')? ( $_->name, $_->type, $_->placement )
 				: croak "Unknown field specification $_";
 			$type= $prev_type unless defined $type;
@@ -240,18 +241,9 @@ sub BUILD {
 		}
 	}
 	
-	# Combine the lists
-	my @fields= ( @static_f, @always_f, @often_f, @seldom_f );
-	# Record the index of each field
-	$fields[$_]{idx}= $_ for 0 .. $#fields;
-	# Then bless them into objects
-	bless $_, 'Userp::Type::Record::Field' for @fields;
-	# Make them read-only and blessed as objects
-	Const::Fast::const my $f => \@fields;
-	
 	# calculate static_bits
 	my $static_bits= $self->static_bits;
-	$static_bits= max 0, map $_->placement + $_->type->bitlen, @static_f
+	$static_bits= max 0, map $_->{placement} + $_->{type}->bitlen, @static_f
 		unless defined $static_bits;
 	
 	# If a record has dynamic fields, then the alignment (which applies to the static bits or first
@@ -262,7 +254,7 @@ sub BUILD {
 	# If a record does not have static bits and the first ALWAYS field has higher alignment,
 	# then that is the effective alignment.
 	elsif (!@static_f && @always_f) {
-		my $first_align= $always_f[0]->type->effective_align;
+		my $first_align= $always_f[0]{type}->effective_align;
 		$align= $first_align if !defined $align or $align < $first_align;
 	}
 	
@@ -273,9 +265,9 @@ sub BUILD {
 		# ALWAYS field is only fixed-length if its alignment is <= the record's own alignment
 		# and if it has a constant length
 		for (@always_f) {
-			if ($_->type->effective_align <= $align && defined $_->type->bitlen) {
-				$bits= Userp::Bits::roundup_bits_to_alignment($bits, $_->type->effective_align)
-					+ $_->type->bitlen;
+			if ($_->{type}->effective_align <= $align && defined $_->{type}->bitlen) {
+				$bits= Userp::Bits::roundup_bits_to_alignment($bits, $_->{type}->effective_align)
+					+ $_->{type}->bitlen;
 			} else {
 				$bits= undef;
 				last;
@@ -283,7 +275,16 @@ sub BUILD {
 		}
 	}
 
-	$self->_set_fields(\@fields);
+	# Combine the lists
+	my @fields= ( @static_f, @always_f, @often_f, @seldom_f );
+	# Record the index of each field
+	$fields[$_]{idx}= $_ for 0 .. $#fields;
+	# Then bless them into objects
+	bless $_, 'Userp::Type::Record::Field' for @fields;
+	# Make them read-only and blessed as objects
+	Const::Fast::const my $f => \@fields;
+	
+	$self->_set_fields($f);
 	$self->_field_by_name(\%by_name);
 	$self->_set_effective_static_bits($static_bits);
 	$self->_set_effective_align($align);
