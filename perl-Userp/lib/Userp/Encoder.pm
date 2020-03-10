@@ -19,9 +19,9 @@ use Userp::MultiBuffer;
   $enc->begin_array(3)->int(1)->int(2)->int(3)->end_array;
   
   # Encode records
-  $enc->begin_record->field('foo')->int(6)->field('bar')->int(2)->end_record;
+  $enc->begin_record(qw/ foo bar /)->int(6)->int(2)->end_record;
   
-  # Encode records with known order of fields
+  # Encode records with pre-known order of fields
   $enc->sel($my_rec_type)->begin_record->int(6)->int(2)->end_record;
   
   # Encode any type with a known optimized conversion from float
@@ -738,6 +738,36 @@ sub Userp::Encoder::_TempState::next_elem {
 	# Restore state captured by constructor
 	$self->{_parent}= $state->{_parent};
 	$self->{_current}= $state->{_current};
+}
+
+# Encoder for symbol references
+@Userp::Encoder::_Symbol::ISA= ( 'Userp::Encoder::_Impl' );
+
+sub Userp::Encoder::_Symbol::sym {
+	my ($state, $self, $value)= @_;
+	my ($scope_idx, $table_idx)= $self->scope->find_symbol($value)
+		or croak "Symbol '$value' is not in scope";
+	$self->buffers->[-1]->encode_int($self->_get_table_ref_int($scope_idx, $table_idx));
+	$self->{_current}= $_final_state;
+	$self->{_parent}->next_elem($self) if $self->{_parent};
+}
+
+*Userp::Encoder::_Symbol::str= *Userp::Encoder::_Symbol::sym;
+
+# Encoder for type references
+@Userp::Encoer::_Type::ISA= ( 'Userp::Encoder::_Impl' );
+
+sub Userp::Encoder::_Type::typeref {
+	my ($state, $self, $value)= @_;
+	if (!ref $value) {
+		$value= $self->scope->find_type($value)
+			or croak "Type '$value' is not in scope";
+	}
+	$self->scope->contains_type($value)
+		or croak "Type '$value' is not in scope";
+	$self->buffers->[-1]->encode_int($self->_get_table_ref_int($value->scope_idx, $value->table_idx));
+	$self->{_current}= $_final_state;
+	$self->{_parent}->next_elem($self) if $self->{_parent};
 }
 
 # Encoder for generic Integers
