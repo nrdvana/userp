@@ -8,12 +8,17 @@ use Userp::Type::Integer;
 use Userp::Type::Choice;
 use Userp::Type::Array;
 use Userp::Type::Record qw/ ALWAYS OFTEN SELDOM /;
+use Exporter 'import';
+our @EXPORT_OK= qw(
+	type_Any type_Symbol type_Type type_Int type_IntU type_Array type_Record type_Matrix
+	type_Byte type_ByteArray type_String
+);
 
 our @TABLE;
 BEGIN {
 	my $add= sub {
-		my $name= shift;
 		my $class= shift;
+		my $name= shift;
 		my $type= "Userp::Type::$class"->new(
 			scope_idx => 0,
 			table_idx => scalar @TABLE,
@@ -27,10 +32,21 @@ BEGIN {
 	$add->(Any     => 'Any');
 	$add->(Symbol  => 'Symbol');
 	$add->(Type    => 'Type');
-	$add->(Int     => 'Integer');
-	$add->(IntU    => 'Integer', min => 0);
+	$add->(Integer => 'Int');
+	$add->(Integer => 'IntU', min => 0);
+	$add->(Array   => 'Matrix');
 	$add->(Array   => 'Array', dim => [ undef ]);
-	$add->(Record  => 'Record', extra_field_type => $TABLE[0]);
+	$add->(Record  => 'Record', extra_field_type => type_Any());
+	$add->(Integer => 'Bit', min => 0, bits => 1);
+	$add->(Integer => 'Byte', min => 0, bits => 8);
+	$add->(Array   => 'ByteArray', elem_type => type_Byte(), dim => [ undef ]);
+	$add->(Array   => 'String', elem_type => type_Byte(), dim => [ undef ], metadata => { charset => 'utf-8' } );
+	$add->(Integer => 'Int16',  bits => 16, align => 1);
+	$add->(Integer => 'Int16U', bits => 16, align => 1, min => 0);
+	$add->(Integer => 'Int32',  bits => 32, align => 2);
+	$add->(Integer => 'Int32U', bits => 32, align => 2, min => 0);
+	$add->(Integer => 'Int64',  bits => 64, align => 3);
+	$add->(Integer => 'Int64U', bits => 64, align => 3, min => 0);
 }
 
 our (

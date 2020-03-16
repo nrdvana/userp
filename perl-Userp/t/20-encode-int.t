@@ -32,7 +32,7 @@ for (
 ) {
 	my ($name, $attrs, $tests)= @$_;
 	subtest $name => sub {
-		my $t= $scope->define_type($name, 'Integer', $attrs);
+		my $t= $scope->define_type('Integer', $name, $attrs);
 		isa_ok( $t, 'Userp::Type::Integer' );
 		for (@$tests) {
 			my $enc_le= Userp::Encoder->new(scope => $scope, current_type => $t);

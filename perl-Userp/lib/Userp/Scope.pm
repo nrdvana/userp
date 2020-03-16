@@ -3,11 +3,13 @@ use Moo;
 use Carp;
 use Userp::Error;
 use Userp::Type::Any;
-use Userp::Type::Integer;
 use Userp::Type::Symbol;
+use Userp::Type::Type;
+use Userp::Type::Integer;
 use Userp::Type::Choice;
 use Userp::Type::Array;
 use Userp::Type::Record;
+use Userp::RootTypes qw( type_Any type_Symbol type_Type type_Int type_Array type_Record );
 
 =head1 SYNOPSIS
 
@@ -222,20 +224,29 @@ sub find_type {
 }
 
 sub define_type {
-	my ($self, $name, $base, $attrs, $meta)= @_;
+	my ($self, $base, $name, @attrs)= @_;
 	Userp::Error::Readonly->throw({ message => 'Cannot alter type table of a finalized scope' })
 		if $self->final;
-	my $type_idx= @{ $self->_types };
-	$base= $self->find_type($base) || Userp::Error::NotInScope->throw({ message => "No type '$base' in current scope" })
-		unless ref $base && $base->can('subtype');
-	my $type= $base->subtype(
-		($attrs? %$attrs : ()),
-		name => $name,
-		scope_idx => $self->scope_idx,
-		table_idx => $type_idx,
-	);
-	$type->set_meta($meta)
-		if defined $meta;
+	if (@attrs & 1) {
+		@attrs= (ref $attrs[0] eq 'HASH')? %{$attrs[0]} : @{$attrs[0]}
+			if @attrs == 1 && ref $attrs[0];
+		croak "Expected even number of key/val arguments" if @attrs & 1;
+	}
+	push @attrs, name => $name, scope_idx => $self->scope_idx, table_idx => $self->type_count;
+	my $type;
+	# First argument is either a type object, type name in current scope, or a class name in Userp::Type::
+	if (ref $base && ref($base)->can('subtype')) {
+		$type= $base->subtype(@attrs);
+	}
+	elsif (($type= $self->find_type($base))) {
+		$type= $type->subtype(@attrs);
+	}
+	elsif ("Userp::Type::$base"->can('new')) {
+		$type= "Userp::Type::$base"->new(@attrs);
+	}
+	else {
+		Userp::Error::NotInScope->throw({ message => "No type '$base' in current scope" });
+	}
 	$type->_register_symbols($self);
 	push @{ $self->_types }, $type;
 	$self->_type_by_name->{$name}= $type
@@ -268,13 +279,9 @@ The type of all Integers
 
 The type of all Symbols in scope
 
-=item type_Choice
-
-The Choice of nothing. (mainly used as a parent for derived types)
-
 =item type_Array
 
-An Array type of undeclared dimensions with element type of Any.
+An Array type of one dimension with element type of Any.
 
 =item type_Record
 
@@ -284,29 +291,15 @@ A Record type of undeclared fields.
 
 =cut
 
-has type_Any     => ( is => 'lazy', default => sub { shift->scope_stack->[0]->_types->[0] } );
-has type_Integer => ( is => 'lazy', default => sub { shift->scope_stack->[0]->_types->[1] } );
-has type_Symbol  => ( is => 'lazy', default => sub { shift->scope_stack->[0]->_types->[2] } );
-has type_Choice  => ( is => 'lazy', default => sub { shift->scope_stack->[0]->_types->[3] } );
-has type_Array   => ( is => 'lazy', default => sub { shift->scope_stack->[0]->_types->[4] } );
-has type_Record  => ( is => 'lazy', default => sub { shift->scope_stack->[0]->_types->[5] } );
-
 sub BUILD {
 	my $self= shift;
 	# If this is the root scope, initialize the type table with protocol defaults
 	if (!$self->parent) {
 		my $table= $self->_types;
-		push @$table,
-			Userp::Type::Any    ->new(scope_idx => 1, table_idx => 0, name => 'Any'),
-			Userp::Type::Integer->new(scope_idx => 1, table_idx => 1, name => 'Integer'),
-			Userp::Type::Symbol ->new(scope_idx => 1, table_idx => 2, name => 'Symbol'),
-			Userp::Type::Choice ->new(scope_idx => 1, table_idx => 3, name => 'Choice', options => []),
-			Userp::Type::Array  ->new(scope_idx => 1, table_idx => 4, name => 'Array'),
-			Userp::Type::Record ->new(scope_idx => 1, table_idx => 5, name => 'Record')
-			;
+		push @$table, @Userp::RootTypes::TABLE;
 		for (@$table) {
 			$_->_register_symbols($self);
-			$self->_type_by_name->{$_->name}= $_;
+			$self->_type_by_name->{$_->name}= $_ if defined $_->name;
 		}
 	}
 }

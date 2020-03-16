@@ -46,7 +46,7 @@ subtest declare_types => sub {
 	my $parent= Userp::Scope->new(parent => $root);
 	my $scope= Userp::Scope->new(parent => $parent);
 	
-	my $foo= $parent->define_type(Foo => $root->type_Any);
+	my $foo= $parent->define_type(Any => 'Foo');
 	is( $foo, object {
 		call isa_Any => T;
 		call name => 'Foo';
