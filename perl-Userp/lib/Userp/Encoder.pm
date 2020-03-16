@@ -755,7 +755,7 @@ sub Userp::Encoder::_Symbol::sym {
 *Userp::Encoder::_Symbol::str= *Userp::Encoder::_Symbol::sym;
 
 # Encoder for type references
-@Userp::Encoer::_Type::ISA= ( 'Userp::Encoder::_Impl' );
+@Userp::Encoder::_Type::ISA= ( 'Userp::Encoder::_Impl' );
 
 sub Userp::Encoder::_Type::typeref {
 	my ($state, $self, $value)= @_;
@@ -866,6 +866,7 @@ sub Userp::Encoder::_Array::begin_array {
 		$array_dim_enc? $array_dim_enc->int($dim[$_]) : $self->buffers->[-1]->encode_int($dim[$_]);
 	}
 	$state->{n}= $n; # now store actual number of array elements pending
+	$state->{i}= 0;
 	$state->{elem_encoder}= $self->_encoder_for_type($elem_type);
 	$state->{_parent}= $self->{_parent};
 	$self->{_parent}= $state;
