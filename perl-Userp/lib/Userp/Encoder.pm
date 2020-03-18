@@ -904,13 +904,6 @@ sub Userp::Encoder::_Array::end_array {
 @Userp::Encoder::_RecordUndeclared::ISA= ( 'Userp::Encoder::_Record' );
 @Userp::Encoder::_RecordDeclared::ISA= ( 'Userp::Encoder::_Record' );
 
-for (grep $_ ne 'end_record' && $_ ne 'field', @PUBLIC_STATE_CHANGE_METHODS) {
-	my $m= $_;
-	no strict 'refs';
-	*{'Userp::Encoder::_RecordUndeclaredField::'.$m}= sub { 'No declared field, specify one with ->field($name)' };
-}
-my $_undeclared_field= bless {}, 'Userp::Encoder::_RecordUndeclaredField';
-
 sub Userp::Encoder::_Record::begin_record {
 	my ($state, $self, @fields)= @_;
 	# If user supplies list of fields, they intend to encode the fields in that order.
@@ -929,9 +922,9 @@ sub Userp::Encoder::_Record::begin_record {
 	# list of fixed-order fields, must be written before any dynamic fields.
 	my @pending_ordered= $t->_ordered_field_list;
 	if (@fields) {
-		@fields= map +($f_by_name->{$_} || $_), @fields;
 		$seen{$_}++ && croak "Record field '$_' specified more than once"
 			for @fields;
+		@fields= map +($f_by_name->{$_} || $_), @fields;
 		# Reduce the fixed-order fields to only the ones seen
 		@pending_ordered= grep {
 				$seen{$_->name} or $_->placement == OFTEN
@@ -942,7 +935,7 @@ sub Userp::Encoder::_Record::begin_record {
 	# If there are OFTEN fields, then initialize the bit mask
 	Scalar::Util::weaken($state);
 	my $queue_next_field= sub {
-		my $f= $_[0];
+		defined( my $f= $_[0] ) or croak "Field ref or name required";
 		$f= $f_by_name->{$f} unless ref $f;
 		my $name= $f? $f->name : $_[0];
 		!$seen{$name}++ or croak "Record field '$name' specified more than once";
@@ -970,7 +963,7 @@ sub Userp::Encoder::_Record::begin_record {
 		# If a declared field is OFTEN, set the bit in the mask
 		elsif ($f->placement == OFTEN) {
 			my $is_next= @pending_ordered && $f == $pending_ordered[0];
-			shift @pending_ordered while @pending_ordered && $seen{$pending_ordered[0]->name};
+			shift @pending_ordered if $is_next; #while @pending_ordered && $seen{$pending_ordered[0]->name};
 			my $bit= $f->idx - $t->_often_ofs;
 			$t->_often_count > 31? (vec($often_field_mask, $bit, 1)= 1) : ($often_field_mask |= 1 << $bit);
 			# ( name, type, is_discontinuity )
@@ -980,7 +973,7 @@ sub Userp::Encoder::_Record::begin_record {
 		# If a declared field is ALWAYS, it gets cached if it wasn't in order
 		elsif ($f->placement == ALWAYS) {
 			my $is_next= @pending_ordered && $f == $pending_ordered[0];
-			shift @pending_ordered while @pending_ordered && $seen{$pending_ordered[0]->name};
+			shift @pending_ordered if $is_next; #while @pending_ordered && $seen{$pending_ordered[0]->name};
 			# ( name, type, is_discontinuity )
 			# It's a discontinuity if is_next is false
 			return ($f->name, $f->type, !$is_next);
@@ -1034,9 +1027,10 @@ sub Userp::Encoder::_Record::_flush_fields {
 		$state->{encoded_field}{$state->{field}}= pop @{ $self->buffers }
 	} elsif (keys %{$state->{encoded_field}}) {
 		# ensure all previous out_of_order which should follow this one are written
-		for (@{ $state->{pending_ordered} }) {
-			my $buf= $state->{encoded_field}{$state->{pending_ordered}[0]->name}
+		while (@{ $state->{pending_ordered} }) {
+			my $buf= delete $state->{encoded_field}{$state->{pending_ordered}[0]->name}
 				or last;
+			shift @{ $state->{pending_ordered} };
 			push @{ $self->buffers }, $buf;
 		}
 		# If wrote all of the pending_ordered, then start writing the dynamic ones too, until caught up
@@ -1052,7 +1046,7 @@ sub Userp::Encoder::_Record::_flush_fields {
 
 sub Userp::Encoder::_RecordDeclared::next_elem {
 	my ($state, $self)= @_;
-	$state->_flush_fields;
+	$state->_flush_fields($self);
 	# See if there is another field to prepare
 	if (($state->{field}, my $type, $state->{out_of_order})= splice(@{$state->{queue}}, 0, 3)) {
 		$self->{_current}= $self->_encoder_for_type($type)->new($type);
@@ -1067,22 +1061,50 @@ sub Userp::Encoder::_RecordDeclared::next_elem {
 	}
 }
 
+sub Userp::Encoder::_RecordDeclared::field {
+	my ($state, $self, $name)= @_;
+	croak "Field '$name' is not the next field (as declared during begin_record)"
+		unless defined $state->{field} && $name eq $state->{field};
+}
+
 sub Userp::Encoder::_RecordUndeclared::next_elem {
 	my ($state, $self)= @_;
-	$state->_flush_fields;
+	$state->_flush_fields($self);
 	$state->{field}= undef;
 	# RecordUndeclared can be used as its own sentinel to emit "no declared field" errors.
-	$self->{_current}= $_undeclared_field;
+	# or to automatically select the next required field.
+	$self->{_current}= $state;
 }
 
 sub Userp::Encoder::_RecordUndeclared::field {
 	my ($state, $self, $name)= @_;
 	croak "Can't declare next field until ".$state->{field}." is written"
-		if $state->{field};
+		if defined $state->{field};
 	($state->{field}, my $type, $state->{out_of_order})= $state->{queue_next}->($name);
 	$self->{_current}= $self->_encoder_for_type($type)->new($type);
 	push @{ $self->buffers }, $self->buffers->[-1]->new_same(undef, -3)
 		if $state->{out_of_order};
+}
+
+# If user didn't declare fields and calls any encoder method,
+# default the current field to the next ALWAYS field (if any)
+# else throw an error.
+for (grep $_ ne 'end_record' && $_ ne 'field', @PUBLIC_STATE_CHANGE_METHODS) {
+	my $m= $_;
+	my $fn= sub {
+		my ($state, $self)= @_;
+		if (@{$state->{pending_ordered}}) {
+			$state->field($self, $state->{pending_ordered}[0]->name);
+			# trampoline to new handler
+			shift;
+			$self->{_current}->$m(@_);
+		}
+		else {
+			croak 'No declared field; specify one with ->field($name)';
+		}
+	};
+	no strict 'refs';
+	*{'Userp::Encoder::_RecordUndeclared::'.$_}= $fn;
 }
 
 sub Userp::Encoder::_RecordDeclared::end_record {
@@ -1090,6 +1112,7 @@ sub Userp::Encoder::_RecordDeclared::end_record {
 	if (@{$state->{queue}}) {
 		croak "Expected field '$state->{queue}[0]' before end_record";
 	}
+	keys %{$state->{encoded_field}} and die "Bug: leftover fields unwritten";
 	$self->{_current}= $_final_state;
 	$self->{_parent}= $state->{_parent};
 	$self->{_parent}->next_elem($self) if $self->{_parent};
@@ -1098,11 +1121,17 @@ sub Userp::Encoder::_RecordDeclared::end_record {
 sub Userp::Encoder::_RecordUndeclared::end_record {
 	my ($state, $self)= @_;
 	croak "Can't end_record until field '".$state->{field}."' is written"
-		if $state->{field};
+		if defined $state->{field};
 	if (my @always= grep $_->placement == ALWAYS, @{$state->{pending_ordered}}) {
 		croak "The following required fields were not provided: ".join(', ', map $_->name, @always);
 	}
 	$state->_write_record_intro();
+	$state->{out_of_order}= 0;
+	$state->_flush_fields($self);
+	keys %{$state->{encoded_field}} and die "Bug: leftover fields unwritten";
+	$self->{_current}= $_final_state;
+	$self->{_parent}= $state->{_parent};
+	$self->{_parent}->next_elem($self) if $self->{_parent};
 }
 
 1;
