@@ -9,7 +9,7 @@ use Userp::Type::Integer;
 use Userp::Type::Choice;
 use Userp::Type::Array;
 use Userp::Type::Record;
-use Userp::RootTypes qw( type_Any type_Symbol type_Type type_Int type_Array type_Record );
+use Userp::RootTypes qw( type_Any type_Symbol type_Type type_Int type_IntU type_Array type_Record );
 
 =head1 SYNOPSIS
 

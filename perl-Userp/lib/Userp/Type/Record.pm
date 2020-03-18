@@ -119,11 +119,14 @@ has extra_field_type => ( is => 'ro' );
 has align            => ( is => 'ro' );
 
 has _static_count   => ( is => 'rw' );
-sub _always_ofs { shift->_static_count }
+sub _always_ofs        { shift->_static_count }
 has _always_count   => ( is => 'rw' );
-sub _often_ofs  { $_[0]->_static_count + $_[0]->_always_count }
+sub _always_field_list { my $ofs= $_[0]->_always_ofs; @{$_[0]->fields}[ $ofs .. $ofs-1+$_[0]->_always_count ] }
+sub _often_ofs         { $_[0]->_static_count + $_[0]->_always_count }
 has _often_count    => ( is => 'rw' );
-sub _seldom_ofs { $_[0]->_static_count + $_[0]->_always_count + $_[0]->_often_count }
+sub _often_field_list  { my $ofs= $_[0]->_often_ofs;  @{$_[0]->fields}[ $ofs .. $ofs-1+$_[0]->_often_count ] }
+sub _ordered_field_list{ my $ofs= $_[0]->_always_ofs; @{$_[0]->fields}[ $ofs .. $ofs-1+$_[0]->_always_count+$_[0]->_often_count ] }
+sub _seldom_ofs        { $_[0]->_static_count + $_[0]->_always_count + $_[0]->_often_count }
 has _seldom_count   => ( is => 'rw' );
 
 has _field_by_name   => ( is => 'rw' );
@@ -277,6 +280,10 @@ sub BUILD {
 
 	# Combine the lists
 	my @fields= ( @static_f, @always_f, @often_f, @seldom_f );
+	$self->_static_count(scalar @static_f);
+	$self->_always_count(scalar @always_f);
+	$self->_often_count(scalar @often_f);
+	$self->_seldom_count(scalar @seldom_f);
 	# Record the index of each field
 	$fields[$_]{idx}= $_ for 0 .. $#fields;
 	# Then bless them into objects
