@@ -914,7 +914,7 @@ sub Userp::Encoder::_Record::begin_record {
 	my $t= $state->{type};
 	my $f_by_name= $t->_field_by_name;
 	my $f_extra_type= $t->extra_field_type;
-	my $often_field_mask;
+	my $often_field_mask= 0;
 	my @often_field_list;
 	my @dyn_field_list;
 	my @dyn_field_codes;
@@ -927,8 +927,8 @@ sub Userp::Encoder::_Record::begin_record {
 		@fields= map +($f_by_name->{$_} || $_), @fields;
 		# Reduce the fixed-order fields to only the ones seen
 		@pending_ordered= grep {
-				$seen{$_->name} or $_->placement == OFTEN
-					or croak "Must specify required field '".$_->name."'"
+				$seen{$_->name}
+				or $_->placement == ALWAYS && croak "Must specify required field '".$_->name."'"
 			} @pending_ordered;
 		%seen= (); # reset to track which fields came first
 	}
@@ -965,7 +965,7 @@ sub Userp::Encoder::_Record::begin_record {
 			my $is_next= @pending_ordered && $f == $pending_ordered[0];
 			shift @pending_ordered if $is_next; #while @pending_ordered && $seen{$pending_ordered[0]->name};
 			my $bit= $f->idx - $t->_often_ofs;
-			$t->_often_count > 31? (vec($often_field_mask, $bit, 1)= 1) : ($often_field_mask |= 1 << $bit);
+			$often_field_mask |= ($bit > 31? Math::BigInt->bone->blsft($bit) : 1 << $bit);
 			# ( name, type, is_discontinuity )
 			# It's a discontinuity if is_next is false
 			return ($name, $f->type, !$is_next);
@@ -1008,15 +1008,16 @@ sub Userp::Encoder::_Record::_write_record_intro {
 	my ($state, $self)= @_;
 	my $buf= $state->{first_buf};
 	my $t= $state->{type};
-	if ($t->_often_count > 31) {
-		$buf->encode_bytes(${$state->{often_field_mask_ref}});
-	} elsif ($t->_often_count) {
-		$buf->encode_int(${$state->{often_field_mask_ref}}, $t->_often_count);
-	}
+	# If there are SELDOM or EXTRA fields, write the count of them
+	# followed by the code for each.
 	if (my $dyn_fields= $state->{dyn_field_codes}) {
 		$buf->encode_int(scalar @$dyn_fields);
 		$buf->encode_int($_) for @$dyn_fields;
 	}
+	# If there are OFTEN fields, write out a bit vector (as an int)
+	# indicating presence or absence of each.
+	$buf->encode_int(${$state->{often_field_mask_ref}}, $t->_often_count)
+		if $t->_often_count;
 }
 
 sub Userp::Encoder::_Record::_flush_fields {

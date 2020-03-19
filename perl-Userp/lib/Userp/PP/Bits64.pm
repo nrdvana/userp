@@ -3,7 +3,7 @@ use Config;
 use strict;
 use warnings;
 no warnings 'portable';
-use Math::BigInt;
+use Math::BigInt 1.999807; # version that added to_bytes
 use Carp;
 use Userp::Error;
 BEGIN { eval "pack('Q<',1)" or die "pack('Q') not supported on this perl.  Use Bits32.pm instead." }
@@ -168,9 +168,9 @@ sub encode_int_be {
 	else {
 		# If remainder bits in buffer, merge final byte of buffer into $value
 		if (my $remainder_bits= $buf->[2]) {
-			my $prev= ord substr(${$buf->[0]}, -1);
+			my $prev= ord(substr(${$buf->[0]}, -1)) >> (8 - $remainder_bits);
 			$prev= Math::BigInt->new($prev) if $bits+$remainder_bits > 64;
-			$prev <<= $bits - (8-$remainder_bits);
+			$prev <<= $bits;
 			$prev |= $value;
 			$value= $prev;
 			substr(${$buf->[0]}, -1)= ''; # remove partial byte form end
