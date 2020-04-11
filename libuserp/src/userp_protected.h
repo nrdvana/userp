@@ -1,14 +1,43 @@
 #ifndef USERP_PROTECTED_H
 #define USERP_PROTECTED_H
 #include <stdint.h>
+#include <stdbool.h>
+#include "userp.h"
+
+struct userp_env {
+	userp_alloc_fp alloc;
+	userp_diag_fp diag;
+	int run_with_scissors: 1,
+		jump_on_landmine: 1,
+	
+	/* Storage for error conditions */
+	int error_code;
+	char *error_tpl;
+	int error_align;
+};
 
 struct userp_buffer {
-	char *buf;
-	size_t bitpos, bitlen;
-	int align_pow2;
 	const struct userp_buffer_vtable *vtable;
+	userp_env_t *env;
+	char *buf;
+	size_t len, bitpos;
+	int bigendian:1,
+		buf_ptr_ofs: USERP_ALIGN_MAX,
+		align_pow2: USERP_ALIGN_MAX_LOG2,
+		mem_owner: 1;
 };
-typedef struct userp_buffer_t;
+typedef struct userp_buffer userp_buffer_t;
+
+struct userp_buffer_vtable {
+	bool (*decode_long)(userp_buffer_t *buf, long *value_p, int bits);
+	bool (*encode_long)(userp_buffer_t *buf, long value, int bits);
+	bool (*encode_bytes_zerocopy)(userp_buffer_t *buf, char **bytes_p, size_t count);
+	bool (*decode_bytes_zerocopy)(userp_buffer_t *buf, char **bytes_p, size_t count);
+	bool (*seek)(userp_buffer_t *buf, size_t bitpos);
+	bool (*append_buf)(userp_buffer_t *buf, userp_buffer_t *buf2);
+};
+
+static bool buf_init(void *buffer, size_t size, bool bigendian, int alignment);
 
 static inline bool buf_encode_int(userp_buffer_t *buf, long value, int bits) {
 	return buf->vtable->encode_long(buf, value, bits);
@@ -37,12 +66,16 @@ static inline bool buf_decode_bytes(userp_buffer_t *buf, char *dest, size_t coun
 	return true;
 }
 
-struct userp_buffer_vtable {
-	bool (*decode_long)(userp_buffer_t *buf, long *value_p, int bits);
-	bool (*encode_long)(userp_buffer_t *buf, long value, int bits);
-	bool (*encode_bytes_zerocopy)(userp_buffer_t *buf, char **bytes_p, size_t count);
-	bool (*decode_bytes_zerocopy)(userp_buffer_t *buf, char **bytes_p, size_t count);
-};
+static inline bool buf_seek_to_align(userp_buffer_t *buf, int pow2) {
+	size_t mask= (1<<pow2)-1;
+	return buf->vtable->seek(buf, (buf->bitpos + mask) & ~mask);
+}
+static inline bool buf_seek(userp_buffer_t *buf, size_t bitpos) {
+	return buf->vtable->seek(buf, bitpos);
+}
 
+static inline bool buf_append_buf(userp_buffer_t *buf, userp_buffer_t *buf2) {
+	return buf->vtable->append_buf(buf2);
+}
 
 #endif
