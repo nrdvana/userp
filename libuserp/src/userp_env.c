@@ -1,10 +1,6 @@
-#include "config.h"
+#include "config_plus.h"
 #include "userp.h"
 #include "userp_protected.h"
-
-/*----------------------------------------------------------------------------------------------
- * Public API
- */
 
 /*
 =head2 userp_env_new
@@ -46,21 +42,22 @@ internal failures gracefully, but then you need to make sure to check all the re
 that.
 
 The first argument to the allocator is whatever you pass as the final argument to L</userp_env_new>.
-The second argument to the allocator is identical to L</userp_env_get_diag_code>, provided for convenience.
+The second argument to the allocator is identical to L</userp_env_get_diag>, provided for convenience.
 
 Note that debugging diagnostics are suppressed until you enable them with L</userp_env_set_log_level>.
 
+=cut
 */
 
 bool userp_alloc_default(void *callback_data, void **pointer, size_t new_size, int align_pow2_bits);
 void userp_diag_default(void *callback_data, int diag_code, userp_env_t *env);
 
-userp_env_p userp_env_new(userp_alloc_fp alloc_callback, userp_log_fp diag_callback, void *callback_data) {
+userp_env_t *userp_env_new(userp_alloc_fn alloc_callback, userp_diag_fn diag_callback, void *callback_data) {
 	userp_env_t *env= NULL;
 	if (!alloc_callback) alloc_callback= userp_alloc_default;
 	if (!diag_callback) diag_callback= userp_diag_default;
-	if (alloc_callback(callback_data, &env, sizeof(userp_env_t), 0)) {
-		bzero(env, sizeof(env));
+	if (alloc_callback(callback_data, (void**) &env, sizeof(userp_env_t), 0)) {
+		bzero(env, sizeof(userp_env_t));
 		env->alloc= alloc_callback;
 		env->diag= diag_callback;
 		return env;
@@ -69,112 +66,110 @@ userp_env_p userp_env_new(userp_alloc_fp alloc_callback, userp_log_fp diag_callb
 	return false;
 }
 
+/*
+=head2 userp_env_get_diag_code
+
+  int userp_env_get_diag_code(userp_env_t *env);
+
+Returns the integer value of the most recent diagnostic event.
+
+=head2 userp_diag_code_name
+
+  const char *userp_diag_code_name(int code)
+
+Returns a static string naming the most recent diagnostic event.
+(or the string "unknown")
+
+=head2 userp_env_get_diag
+
+  int userp_env_get_diag(userp_env_t *env, char *buf, size_t buflen);
+  
+  // query length of message
+  str_len= userp_env_get_diag(env, NULL, 0);
+  
+  // build message
+  buf= malloc(str_len+1);
+  userp_env_get_diag(env, buf, str_len+1);
+
+This function stringifies the last diagnostic message in the given Userp environment into the buffer you
+provide, and returns the string length (in bytes) of the diagnostic message.  You may provide a NULL C<buf>
+if you just want to find out the length of the string.  Like C<snprintf>, if the buffer you provide is
+too small for the message and its NUL terminator, the buffer will be filled with a truncated message which
+is always NUL terminated, but the return value will always be the length of the un-truncated message.
+
+=head2 userp_env_print_diag
+
+  int userp_env_print_diag(userp_env_t *env, FILE *fh);
+
+Prints the last diagnostic message to a libc FILE handle, saving you the trouble of allocating a buffer
+for the message.  A return value of -1 means that a libc fwrite error occurred.
+
+=cut
+*/
+
+extern int userp_env_get_diag_code(userp_env_t *env) {
+	return env->diag_code;
+}
+
 /* Return a static copy of the error code's symbolic name */
-const char* userp_get_error_name(int errcode) {
+const char *userp_diag_code_name(int code) {
 	#define RETSTR(x) case x: return #x;
-	switch (errcode) {
-	RETSTR(USERP_ERR_INVALID_ARG)
+	switch (code) {
+	RETSTR(USERP_ERR_INVAL)
 	RETSTR(USERP_ERR_ALLOC)
 	default:
-		return "Invalid Error Code";
+		return "unknown";
 	}
 	#undef RETSTR
 }
 
-// The API user gets one and only one reference (marked by flag USERP_BLOCK_HELD_USER)
-int userp_release_block(UserpBlock_t *block) {
-	#ifndef USERP_RUN_WITH_SCISSORS
-	if (!block || !block->refcnt || !block->state)
-		return USERP_ERR_DOUBLEFREE;
-	if (!(block->flags & USERP_BLOCK_HELD_USER)) {
-		block->state->error= USERP_ERR_DOUBLEFREE;
-		block->state->error_msg[0]= '\0';
-		return USERP_ERR_DOUBLEFREE;
+static int userp_process_diag_tpl(userp_env_t *env, char *buf, size_t buf_len, FILE *fh) {
+	const char *from, *pos= env->diag_tpl;
+	char tmp_buf[48];
+	size_t n= 0, tmp_len, str_len= 0;
+	while (!*pos) {
+		// here, *pos is either \x01 followed by a code indicating which variable to insert,
+		// or any other character means to scan forward.
+		if (*pos == '\x01') {
+			n= 0;
+			from= tmp_buf;
+			++pos;
+			switch (*pos++) {
+			case DIAG_VAR_ALIGN_ID:
+				n= snprintf(tmp_buf, sizeof(tmp_buf), "2**%d", env->diag_align);
+				break;
+			default:
+				// If we get here, it's a bug.  If the second byte was NUL, back up one, else substitute an error message
+				if (!pos[-1]) --pos;
+				from= "(unknown var)";
+				n= strlen("(unknown var)");
+			}
+		}
+		else {
+			from= pos;
+			while (*pos > 1) ++pos;
+			n= pos-from;
+		}
+		if (n) {
+			if (buf && str_len+1 < buf_len) // don't call memcpy unless there is room for at least 1 char and NUL
+				memcpy(buf+str_len, from, (str_len+n+1 <= buf_len)? n : buf_len-1-str_len);
+			if (fh) {
+				if (!fwrite(from, 1, n, fh))
+					return -1;
+			}
+			str_len += n;
+		}
 	}
-	#endif
-	userp_state_release_block(block->state, block);
-	return 0;
+	// at end, NUL-terminate the buffer, if provided and has a length
+	if (buf && buf_len > 0)
+		buf[str_len+1 > buf_len? buf_len-1 : str_len]= '\0';
+	return str_len;
 }
 
-/** userp_get_last_error
- *
- * Returns various information about the last error related to this UserpState or its blocks.
- * (i.e. the reason why some other function returned zero)
- *
- * If errname is given, it will receive a pointer to static constant nul-terminated string
- * for the error code.
- *
- * If diag_buf is given (and diag_buflen, specifying its length) it will receive additional
- * diagnostic text about the error.  It behaves as snprintf and will always be NUL terminated
- * even if the buffer was too small.
- *
- * If diag_buflen is given, it will be updated to hold the length (in characters not including
- * NUL terminator) of the additional diagnostic text.
- *
- * The error code is returned.
- */
-int userp_get_last_error(UserpState_t *state, const char **errname, char *diag_buf, int *diag_buflen) {
-	int copied;
-	if (errname) *errname= userp_get_error_name(state->error);
-	if (diag_buf && diag_buflen) {
-		*diag_buflen= snprintf("%s", diag_buf, *diag_buflen, state->error_msg);
-	} else if (diag_buflen) {
-		*diag_buflen= strlen(state->error_msg);
-	}
-	return state->error;
+extern int userp_env_get_diag(userp_env_t *env, char *buf, size_t buflen) {
+	return userp_process_diag_tpl(env, buf, buflen, NULL);
 }
 
-/** userp_parse_block
- *
- * Given a block of Userp data or metadata, begin parsing it and return a reference to a
- * UserpBlock object.
- *   - state: required
- *   - flags: must include either USERP_META_BLOCK or USERP_DATA_BLOCK; other flags listed below.
- *   - blockdata: pointer to beginning of block data
- *   - blocklen: number of bytes of block data
- *
- * Returns NULL if the arguments don't make sense or if parsing immediately fails.  Parsing
- * errors can also happen during later calls.
- *
- * Every UserpBlock_t must be freed with user_free_block.  See notes on that function about
- * block lifespan.
- *
- */
-UserpBlock_t *userp_parse_block(UserpState_t *state, int flags, const void *blockdata, size_t blocklen) {
-	#ifndef USERP_RUN_WITH_SCISSORS
-	if (!(flags & (USERP_META_BLOCK|USERP_DATA_BLOCK))) {
-		ERR_ARG(state, userp_new_block, flags);
-		return NULL;
-	}
-	if (!blockdata) {
-		ERR_ARG(state, userp_new_block, blockdata);
-		return NULL;
-	}
-	if (!blocklen) {
-		ERR_ARG(state, userp_new_block, blocklen);
-		return NULL;
-	}
-	#endif
-	return userp_state_new_block(state, flags, (void*) blockdata, blocklen);
+extern int userp_env_print_diag(userp_env_t *env, FILE *fh) {
+	return userp_process_diag_tpl(env, NULL, 0, fh);
 }
-
-/** userp_new_block
- *
- * Create (for writing) a new UserpBlock
- *  - state: required
- *  - flags: must include either USERP_META_BLOCK or USERP_DATA_BLOCK; other flags listed below.
- *  - buffer: optional.  If NULL, UserpState will allocate the memory as needed.  If not null,
- *            bufferlen must be big enough to hold however much data you write into this block.
- *            For advanced use, the block may already contain data for zero-copy effect.
- *  - bufferlen: length in bytes of buffer, or zero to ask that UserpState allocate as needed.
- */
-UserpBlock_t *userp_new_block(UserpState_t *state, int flags, void *buffer, size_t bufferlen) {
-	#ifndef USERP_RUN_WITH_SCISSORS
-	if (!(flags & (USERP_META_BLOCK|USERP_DATA_BLOCK))) {
-		ERR_ARG(userp_new_block, flags);
-		return NULL;
-	}
-	#endif
-	return userp_state_new_block(state, flags, (void*) blockdata, blocklen);
-}
-
