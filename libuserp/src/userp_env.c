@@ -1,11 +1,10 @@
-#include "config_plus.h"
-#include "userp.h"
+#include "local.h"
 #include "userp_protected.h"
 
 /*
 =head2 userp_env_new
 
-  bool my_alloc(void *callback_data, void **pointer, size_t new_size, int align_pow2_bits);
+  bool my_alloc(void *callback_data, void **pointer, size_t new_size, int flags);
   bool my_diag(void *callback_data, int diag_code, userp_env_t *env);
   
   // normal environment:
@@ -49,11 +48,10 @@ Note that debugging diagnostics are suppressed until you enable them with L</use
 =cut
 */
 
-bool userp_alloc_default(void *callback_data, void **pointer, size_t new_size, int align_pow2_bits);
-void userp_diag_default(void *callback_data, int diag_code, userp_env_t *env);
-
 userp_env_t *userp_env_new(userp_alloc_fn alloc_callback, userp_diag_fn diag_callback, void *callback_data) {
 	userp_env_t *env= NULL;
+	void *alloc_callback_data= callback_data;
+	void *diag_callback_data= callback_data;
 	if (!alloc_callback) alloc_callback= userp_alloc_default;
 	if (!diag_callback) diag_callback= userp_diag_default;
 	if (alloc_callback(callback_data, (void**) &env, sizeof(userp_env_t), 0)) {
@@ -64,6 +62,34 @@ userp_env_t *userp_env_new(userp_alloc_fn alloc_callback, userp_diag_fn diag_cal
 	}
 	diag_callback(callback_data, USERP_ERR_ALLOC, NULL);
 	return false;
+}
+
+bool userp_alloc_default(void *callback_data, void **pointer, size_t new_size, int flags) {
+	void *re;
+	if (new_size) {
+		if (!(re= realloc(*pointer, new_size)))
+			return false;
+		*pointer= re;
+	}
+	else if (*pointer) {
+		free(*pointer);
+	}
+	return true;
+}
+
+void userp_diag_default(void *callback_data, int diag_code, userp_env_t *env) {
+	if (USERP_IS_ERR(diag_code)) {
+		fprintf(stderr, "error: ");
+		userp_env_print_diag(env, stderr);
+		fputc('\n', stderr);
+		fflush(stderr);
+		abort();
+	}
+	else if (USERP_IS_WARN(diag_code)) {
+		fprintf(stderr, "warning: ");
+		userp_env_print_diag(env, stderr);
+		fputc('\n', stderr);
+	}
 }
 
 /*

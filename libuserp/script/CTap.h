@@ -20,7 +20,7 @@ bool TAP_diag(TAP_state_t *state, const char *fmt, ...);
 bool TAP_note(TAP_state_t *state, const char *fmt, ...);
 void TAP_reseed(TAP_state_t *state);
 
-#define SUBTEST(x) void test_##x (TAP_state_t *state)
+#define SUBTEST(x...) void test_##x (TAP_state_t *state)
 #define TAP_OK(expression, name...) TAP_ok(state, expression, #expression, name)
 #define TAP_NOTE(fmt...) TAP_note(state, fmt)
 #define TAP_DIAG(fmt...) TAP_diag(state, fmt)

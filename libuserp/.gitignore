@@ -1,13 +1,1 @@
 /build
-/automake/config.*
-/automake/configure
-/automake/m4
-/automake/missing
-/automake/autom4te.cache/
-/automake/Makefile.in
-/automake/aclocal.m4
-/automake/ar-lib
-/automake/compile
-/automake/depcomp
-/automake/install-sh
-/automake/ltmain.sh

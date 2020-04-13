@@ -8,7 +8,7 @@ typedef struct userp_type userp_type_t, *userp_type_p;
 typedef struct userp_enc userp_enc_t, *userp_enc_p;
 typedef struct userp_dec userp_dec_t, *userp_dec_p;
 
-typedef bool userp_alloc_fn(void *callback_data, void **pointer, size_t new_size, int align_pow2_bits);
+typedef bool userp_alloc_fn(void *callback_data, void **pointer, size_t new_size, int flags);
 typedef void userp_diag_fn(void *callback_data, int diag_code, userp_env_t *env);
 extern userp_env_p userp_env_new(userp_alloc_fn alloc_callback, userp_diag_fn diag_callback, void *callback_data);
 

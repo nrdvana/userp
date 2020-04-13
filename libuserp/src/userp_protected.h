@@ -1,7 +1,5 @@
 #ifndef USERP_PROTECTED_H
 #define USERP_PROTECTED_H
-#include <stdint.h>
-#include <stdbool.h>
 #include "userp.h"
 
 struct userp_env {
@@ -18,6 +16,9 @@ struct userp_env {
 
 #define DIAG_VAR_ALIGN_ID 0x01
 #define DIAG_VAR_ALIGN "\x01\x01"
+
+extern bool userp_alloc_default(void *callback_data, void **pointer, size_t new_size, int align_pow2_bits);
+extern void userp_diag_default(void *callback_data, int diag_code, userp_env_t *env);
 
 struct userp_buffer {
 	const struct userp_buffer_vtable *vtable;

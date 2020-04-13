@@ -1,6 +1,6 @@
 AC_PREREQ([2.68])
 AC_INIT([userp], [0.1], [mike@nrdvana.net])
-AM_INIT_AUTOMAKE([-Wall -Werror foreign])
+AM_INIT_AUTOMAKE([-Wall foreign])
 AC_CONFIG_HEADERS([config.h])
 
 AC_ARG_ENABLE(debug,  AS_HELP_STRING([--enable-debug], [enable assertions and debug symbols]),
