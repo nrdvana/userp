@@ -45,22 +45,43 @@ The second argument to the allocator is identical to L</userp_env_get_diag>, pro
 
 Note that debugging diagnostics are suppressed until you enable them with L</userp_env_set_log_level>.
 
+=head1 userp_env_free
+
+  bool userp_env_free(userp_env_t *env);
+
+This frees all resources used by the environment and invalidates every pointer that refers to resources
+of this environment.  If there are reference-counted objects still in use, this will raise a fatal error.
+If you trap the fatal error, it will return C<false>, and you may try freeing it again later.
+Otherwise, this always returns true.
+
 =cut
 */
 
 userp_env_t *userp_env_new(userp_alloc_fn alloc_callback, userp_diag_fn diag_callback, void *callback_data) {
 	userp_env_t *env= NULL;
-	void *alloc_callback_data= callback_data;
-	void *diag_callback_data= callback_data;
+	void *alloc_callback_data= alloc_callback? callback_data : NULL;
+	void *diag_callback_data= diag_callback? callback_data : NULL;
 	if (!alloc_callback) alloc_callback= userp_alloc_default;
 	if (!diag_callback) diag_callback= userp_diag_default;
 	if (alloc_callback(callback_data, (void**) &env, sizeof(userp_env_t), 0)) {
 		bzero(env, sizeof(userp_env_t));
 		env->alloc= alloc_callback;
+		env->alloc_cb_data= alloc_callback_data;
 		env->diag= diag_callback;
+		env->diag_cb_data= diag_callback_data;
 		return env;
 	}
-	diag_callback(callback_data, USERP_ERR_ALLOC, NULL);
+	diag_callback(callback_data, USERP_EALLOC, NULL);
+	return false;
+}
+
+bool userp_env_free(userp_env_t *env) {
+	// release memory
+	if (env->alloc(env->alloc_cb_data, (void**)&env, 0, 0)) return true;
+	// if that failed, report the error (fatal) or return false
+	env->diag_code= USERP_EALLOC;
+	env->diag_tpl= "Failed to free userp_env";
+	env->diag(env->diag_cb_data, USERP_EALLOC, env);
 	return false;
 }
 
@@ -73,17 +94,18 @@ bool userp_alloc_default(void *callback_data, void **pointer, size_t new_size, i
 	}
 	else if (*pointer) {
 		free(*pointer);
+		*pointer= NULL;
 	}
 	return true;
 }
 
 void userp_diag_default(void *callback_data, int diag_code, userp_env_t *env) {
-	if (USERP_IS_ERR(diag_code)) {
+	if (USERP_IS_ERROR(diag_code) || USERP_IS_FATAL(diag_code)) {
 		fprintf(stderr, "error: ");
 		userp_env_print_diag(env, stderr);
 		fputc('\n', stderr);
 		fflush(stderr);
-		abort();
+		if (USERP_IS_FATAL(diag_code)) abort();
 	}
 	else if (USERP_IS_WARN(diag_code)) {
 		fprintf(stderr, "warning: ");
@@ -141,8 +163,11 @@ extern int userp_env_get_diag_code(userp_env_t *env) {
 const char *userp_diag_code_name(int code) {
 	#define RETSTR(x) case x: return #x;
 	switch (code) {
-	RETSTR(USERP_ERR_INVAL)
-	RETSTR(USERP_ERR_ALLOC)
+	RETSTR(USERP_EALLOC)
+	RETSTR(USERP_EINVAL)
+	RETSTR(USERP_EEOF)
+	RETSTR(USERP_ELIMIT)
+	RETSTR(USERP_WLARGEMETA)
 	default:
 		return "unknown";
 	}
@@ -153,7 +178,7 @@ static int userp_process_diag_tpl(userp_env_t *env, char *buf, size_t buf_len, F
 	const char *from, *pos= env->diag_tpl;
 	char tmp_buf[48];
 	size_t n= 0, tmp_len, str_len= 0;
-	while (!*pos) {
+	while (*pos) {
 		// here, *pos is either \x01 followed by a code indicating which variable to insert,
 		// or any other character means to scan forward.
 		if (*pos == '\x01') {

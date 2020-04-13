@@ -56,6 +56,7 @@ sub include {
 		while (<$fh>) {
 			if ($_ =~ /^SUBTEST\((.*)\)/) {
 				my ($fn, $plan)= split /,/, $1;
+				$plan= undef if defined $plan && $plan eq '?';
 				push @{ $self->subtests }, { name => $fn, plan => $plan };
 			}
 			$src .= $_;

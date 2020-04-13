@@ -12,15 +12,18 @@ typedef bool userp_alloc_fn(void *callback_data, void **pointer, size_t new_size
 typedef void userp_diag_fn(void *callback_data, int diag_code, userp_env_t *env);
 extern userp_env_p userp_env_new(userp_alloc_fn alloc_callback, userp_diag_fn diag_callback, void *callback_data);
 
-#define USERP_IS_ERR(code)  (!(code>>14))
-#define USERP_IS_WARN(code) ((code>>13) == 2)
-#define USERP_IS_DEBUG(code) ((code>>13) == 3)
+#define USERP_IS_FATAL(code) ((code>>13) == 3)
+#define USERP_IS_ERROR(code) ((code>>13) == 2)
+#define USERP_IS_WARN(code)  ((code>>13) == 1)
+#define USERP_IS_DEBUG(code) ((code>>13) == 0)
 
-#define USERP_ERR_MAJOR(code) (code & 0x3F00)
-#define USERP_ERR_OS          0x0100
-#define USERP_ERR_ALLOC       0x0101
-#define USERP_ERR_EOF         0x0200
-#define USERP_ERR_INVAL       0x0300
+#define USERP_EALLOC       0x6001 /* failure to alloc or realloc or free */
+#define USERP_EINVAL       0x6002 /* invalid argument given to API */
+#define USERP_EEOF         0x4002 /* unexpected end of input */
+#define USERP_ELIMIT       0x4003 /* decoded data exceeds a constraint */
+#define USERP_WLARGEMETA   0x2001 /* encoded or decoded metadata is suspiciously large */
+
+#define USERP_WARN_EOF
 /* TODO */
 
 extern int userp_env_get_diag_code(userp_env_t *env);

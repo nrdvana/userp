@@ -14,7 +14,15 @@ PROVE=prove
 # with a blank file when distributed.
 include dev_rules.mak
 
-.c.t:
+# needed for default automake rule when processing test/ files
+$(tests): .deps/test
+
+include .deps/test/*.Po
+
+.deps/test:
+	mkdir -p .deps/test
+
+.o.t:
 	$(COMPILE) -o $@ $<
 
 test: $(tests)

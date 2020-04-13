@@ -4,7 +4,9 @@
 
 struct userp_env {
 	userp_alloc_fn *alloc;
+	void *alloc_cb_data;
 	userp_diag_fn *diag;
+	void *diag_cb_data;
 	int run_with_scissors: 1,
 		jump_on_landmine: 1;
 	
