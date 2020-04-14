@@ -175,9 +175,10 @@ const char *userp_diag_code_name(int code) {
 }
 
 static int userp_process_diag_tpl(userp_env_t *env, char *buf, size_t buf_len, FILE *fh) {
-	const char *from, *pos= env->diag_tpl;
-	char tmp_buf[48];
+	const char *from, *pos= env->diag_tpl, *p1, *p2;
+	char tmp_buf[48], id;
 	size_t n= 0, tmp_len, str_len= 0;
+	int i;
 	while (*pos) {
 		// here, *pos is either \x01 followed by a code indicating which variable to insert,
 		// or any other character means to scan forward.
@@ -185,9 +186,31 @@ static int userp_process_diag_tpl(userp_env_t *env, char *buf, size_t buf_len, F
 			n= 0;
 			from= tmp_buf;
 			++pos;
-			switch (*pos++) {
+			switch (id= *pos++) {
 			case DIAG_VAR_ALIGN_ID:
 				n= snprintf(tmp_buf, sizeof(tmp_buf), "2**%d", env->diag_align);
+				break;
+			case DIAG_VAR_BUFADDR_ID:
+				n= snprintf(tmp_buf, sizeof(tmp_buf), "%p", env->diag_buf);
+				break;
+			case DIAG_VAR_BUFHEX_ID:
+				p1= ((char*)env->diag_buf) + env->diag_pos;
+				p2= p1 + (env->diag_len - env->diag_pos);
+				for (n= 0; (n+1)*3 < sizeof(tmp_buf) && p1 < p2; p1++) {
+					tmp_buf[n++]= "0123456789ABCDEF"[(*p1>>4) & 0xF];
+					tmp_buf[n++]= "0123456789ABCDEF"[*p1 & 0xF];
+					tmp_buf[n++]= ' ';
+				}
+				if (n) --n;
+				tmp_buf[n]= '\0';
+				break;
+			// Generic integer fields
+			case DIAG_VAR_POS_ID:
+				i= env->diag_pos; if (0)
+			case DIAG_VAR_LEN_ID:
+				i= env->diag_len;
+			
+				n= snprintf(tmp_buf, sizeof(tmp_buf), "%d", i);
 				break;
 			default:
 				// If we get here, it's a bug.  If the second byte was NUL, back up one, else substitute an error message

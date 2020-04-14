@@ -2,6 +2,8 @@
 #define USERP_PROTECTED_H
 #include "userp.h"
 
+// -------------------------- userp_env.c ---------------------------
+
 struct userp_env {
 	userp_alloc_fn *alloc;
 	void *alloc_cb_data;
@@ -13,14 +15,25 @@ struct userp_env {
 	/* Storage for error conditions */
 	int diag_code;
 	char *diag_tpl;
-	int diag_align;
+	void *diag_buf;
+	int diag_align, diag_pos, diag_len;
 };
 
-#define DIAG_VAR_ALIGN_ID 0x01
-#define DIAG_VAR_ALIGN "\x01\x01"
+#define DIAG_VAR_ALIGN_ID         0x01
+#define DIAG_VAR_ALIGN       "\x01\x01"
+#define DIAG_VAR_POS_ID           0x02
+#define DIAG_VAR_POS         "\x01\x02"
+#define DIAG_VAR_LEN_ID           0x03
+#define DIAG_VAR_LEN         "\x01\x03"
+#define DIAG_VAR_BUFADDR_ID       0x04
+#define DIAG_VAR_BUFADDR     "\x01\x04"
+#define DIAG_VAR_BUFHEX_ID        0x05
+#define DIAG_VAR_BUFHEX      "\x01\x05"
 
 extern bool userp_alloc_default(void *callback_data, void **pointer, size_t new_size, int align_pow2_bits);
 extern void userp_diag_default(void *callback_data, int diag_code, userp_env_t *env);
+
+// -------------------------- userp_buffer.c ------------------------
 
 struct userp_buffer {
 	const struct userp_buffer_vtable *vtable;
