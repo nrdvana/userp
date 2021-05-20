@@ -2,19 +2,20 @@ Universal Serialization Protocol
 ================================
 
 Userp is a "wire protocol" for efficiently exchanging data, similar in purpose to ASN.1, CBOR,
-or Google Protocol Buffers.  The primary design goal is to allow the writer to embed type
-definitions within the data such that the data can be written compactly and efficiently, while
-still allowing any reader to decode the data without any prior knowledge of the schema.
-This allows performance equal or better than ASN.1 or Protocol Buffers, while allowing the
-flexibility of CBOR or JSON, and potentially as much utility for type introspection as Json
-Schema.
+or Google Protocol Buffers.  Its primary differentiating feature is that it can also encode
+type definitions which define the structure of its data, eliminating the need for an
+out-of-band data specification to be pre-processed by compiler tools, while also allowing for
+more efficient encodings than would be possible with a protocol of more generic structures.
+
+In short, it gives the data flexibility of JSON with the encoding efficiency of ASN.1
 
 The Userp library is also meant to be a data-coding toolkit rather than just a reader/writer of
 streams.  While the normal protocol is a self-contained stream of metadata and blocks of data,
-you could also store protocol fragments in a database or exchange protocol fragments over UDP
-that depend on pre-negotiated metadata shared between writer and reader.
+you might also want to store protocol fragments in a database or exchange protocol fragments
+over UDP that depend on pre-negotiated metadata shared between writer and reader.  The Userp
+library makes all of this possible.
 
-Userp contains many design considerations to make it suitable for any of the following:
+Userp's design makes it appropriate for any of the following:
 
   * Small / Tightly packed data
   * Massive data (the protocol has no upper limits)
@@ -23,19 +24,10 @@ Userp contains many design considerations to make it suitable for any of the fol
   * Encoding and decoding in constrained environments, like Microcontrollers
   * Zero-copy exchange of data (memory mapping)
   * Efficiently storing data with repetitive content
-  * Types that can translate to and from other popular formats like JSON
+  * Mapping to and from other popular formats like JSON
 
 In other words, Userp is equally usable for microcontroller bus messages, audio/video container
 formats, database row storage, or giant trees of structured application data.
-
-Obviously many of these are at odds with eachother, and so applying Userp to one of these
-purposes requires thoughtful definition of the data types.  Planning of the types
-should also include consideration for the capabilities of the target; whie the protocol is
-un-bounded, implementations can choose sensible maximums, so for example it is a bad idea to
-use 65-bit integers if you expect an application without BigInt support to be able to read them.
-For embedded applications, if you know that the decoder only has 4K of RAM to work with then it
-obviously can't handle 10K of symbol-table from your Record and Enum definitions unless they
-are identical to the ones stored on ROM.
 
 Structure
 ---------
@@ -64,7 +56,7 @@ the details of the type system.
 Following the type table, the block can declare additional arbitrary metadata that the reader
 might find useful.  For instance, it can annotate the type definitions to declare character
 encodings, indicate versions, or recommend code modules to be used for the decoding.
-Applications could also use this for declaring more compreensive schema information than the
+Applications could also use this for declaring more comprehensive schema information than the
 type system permits.
 
 Within a direct data payload, the data is arranged into a tree of elements encoded end-to-end
@@ -72,7 +64,8 @@ Within a direct data payload, the data is arranged into a tree of elements encod
 without parsing it, though the length of elements can often be known such that the reader
 doesn't need to inspect a majority of the bytes.  For instance, strings are declared with a
 byte count, so the reader can skip across strings without scanning for a terminating character
-or escape sequences.
+or escape sequences.  Another example, if a record type has a fixed length, then an array of
+those records can be accessed by index without needing to parse every record.
 
 Type System
 -----------
@@ -97,8 +90,9 @@ During encoding/decoding, the API allows you to "begin" and "end" the elements o
 record, and to write/read each element as Integer or Symbol.  You may also select a sub-type
 for types of "Choice" for any case where "begin", "int" or "symbol" would be ambiguous.
 This basic API can handle all cases of Userp data, but common API extensions will handle
-native-language conversions like mapping String to an array of integer, mapping float to a
-tuple of (sign,exponent,mantissa), and so on, which would be rather inefficient otherwise.
+native-language conversions like mapping native "String" to Userp array of integer, mapping
+native "float" to a Userp record of (sign,exponent,mantissa), and so on, which would be rather
+inefficient otherwise.
 
 ### Standard Attributes
 
@@ -117,15 +111,15 @@ direction.  Integer can be limited by the following attributes:
   * max - the maximum value allowed
   * bits - forces encoding of the type to N bits
   * names - a dictionary of symbol/value pairs
+  * bswap - an instruction for how to swap bytes when reading or writing this type
 
 Any infinite integer type will be encoded as a variable-length quantity.  When 'min' is given,
-the variable quantity counts upward from 'min'.  If 'max' is given, it counts downward from
-'max'.  If neither are given, the low bit acts as a sign bit.
-
-Finite integer types result from declaring any two of 'bits', 'min' or 'max'.  'bits' alone
-results in standard 2's complement encoding, where specifying either 'min' or 'max' causes
-unsigned encoding offset from that value.  Fixed-bit-width values can be encoded little-endian
-or big-endian based on a flag in the stream header.
+the variable quantity counts upward from `min`.  If `max` is given, it counts downward from
+`max`.  If neither are given, the low bit acts as a sign bit.  If both are given, or if `bits`
+are given, the integer becomes a finite-range type.  `bits` alone results in standard 2's
+complement encoding, where specifying `bits` with either `min` or `max` will be encoded as an
+unsigned offset in N bits from that value.  Finite-range integers may also have a byte-swap
+applied to them, for compatibility with pre-existing protocols.
 
 When names are given, the resulting integer type can be encoded with the API encode_int *or*
 encode_str.  Specifying a symbol that does not exist in `names` is an error.
@@ -135,7 +129,10 @@ encode_str.  Specifying a symbol that does not exist in `names` is an error.
 Symbols in Userp are Unicode strings with some character restrictions which act much like the
 symbols in Ruby or the `String.intern()` of Java.  These are meant to represent concepts
 with no particular integer value.  Symbols are written into the symbol table, and then any time
-they are used in the data they are encoded as a small integer.
+they are used in the data they are encoded as a small integer which may vary by context of
+the data block.  This is what sets them apart from "named integers" (above) which always have
+the same integer value, and where the symbol is merely convenience to help select or diagnose
+the integer.
 
 ### Choice
 
@@ -145,7 +142,7 @@ comes next.
 
 The main purpose of a choice type is to reduce the size of the type-selector, but it can also
 help constrain data for application purposes, or provide data compression by pre-defining
-common values.  It can also be used to declare non-integer symbolic enums or subsets of enums.
+common values.  It can also be used to declare symbolic enumerations.
 
   * `options` - an array of the Choice's options
 
@@ -180,51 +177,60 @@ An array is a sequence of values defined by an element type and a list of dimens
   * `dim_type` - (optional) the Integer data type to be used to encode Null dimensions
 
 If `elem_type` is Null, it means the element type will be specified in the data at the start
-of each value of this type.  If a dimention is Null it likewise means that the element-count
-of that dimension will be encoded within the value of this type.  If the length of the `dim`
-array is itself 0, that means the number of dimensions will be encoded per-value.
+of each array.  If a dimension is Null it likewise means that the element-count of that
+dimension will be encoded within each array.  If the length of the `dim` array is itself 0,
+that means the number of dimensions will be encoded per-array.
 
-Specifying `dim_type` allows you to control the width of the integers that specify the Null
-dimensions.  This allows you to use somehting like Int16u and then have that match a C struct:
+Specifying `dim_type` allows you to control the width of the integers that encode the per-array
+dimensions.  This allows you to use somehting like `Int16u` and then have that match a C struct:
 ```
 struct { uint16_t len; char bytes[]; }
 ```
 
-Because the initial Scope gives you a type for Array with all fields Null, this means you can
-write arrays of any other type with arbitrary dimensions without needing to declare
-array-of-my-type as a distinct type, in much the same way that C lets you declare an array of
-any type by adding one or more `[]` suffixes.
+Because the initial Scope gives you a type for Array with all fields unspecified, this means
+you can write arrays of any other type with arbitrary dimensions without needing to declare
+array-of-my-type as a distinct type, in much the same way that C lets you declare array
+variables of any type by adding one or more `[]` suffixes.
 
 ### Record
 
 A record is a sequence of elements keyed by name.  Records can have fixed and dynamic elements,
 to accommodate both C-style structs or JSON-style objects, or even a mix of the two.
 A record is defined using a sequence of fields.  Each field has a name, type, and Placement.
-A Placement is either a numeric offset, `SEQUENCE`, or `OPTIONAL`.  Fields with numeric
-placement appear at that bit-offset from the start of the record.  Fields with `SEQUENCE`
-placement follow the static portion of the record, end-to-end.  Fields with `OPTIONAL`
-placement can be appended to the record as `(key,value)` pairs (but where `key` is a known
-symbol, not an encoded string).
-
-A record may then be followed by "ad-hoc" fields, where the name/value are arbitrary, like in
-JSON.  Ad-hoc fields encode the field name as a byte array, and are not bound by the
-restrictions of being Symbol-friendly unicode.
+A Placement is either a numeric bit offset, `ALWAYS`, `OFTEN` or `SELDOM`.  Fields with numeric
+placement appear at that bit-offset from the start of the record.  Fields with `ALWAYS`
+placement follow the static portion of the record, end-to-end.  If there are fields with
+`OFTEN` placement, a bit field indicates the presence or absence of those fields, which are
+then encoded end-to-end following the `ALWAYS` fields.  Fields with `SELDOM` placement can then
+follow as `(field_id,encoding)` pairs.  A record type may also allow "other" fields which were
+not declared ahead of time.
 
   * fields - a list of field definitions, each composed of `(Symbol, Type, Placement)`.
   * static_bits - optional declaration of total "static" space in record
-  * adhoc - `NONE`, `SYMBOL`, or `STRING`
+  * other_field_type - `Type` (default to "Any") or Null (no other fields allowed)
 
 If `static_bits` is given, there will always be this many bits reserved for the static portion
 of the record even if no field occupies it.  This allows for "reserved" fields without needing
 to give them a name or spend time decoding them.  Encoders must fill all unused bits with
 zeroes.
 
-If `adhoc` is `NONE`, the record doesn't need to include a counter for number of adhoc fields.
-If `adhoc` is `SYMBOL`, the keys of the adhoc fields come from the symbol table.  If `adhoc`
-is `STRING`, each field name is encoded as an array of bytes, with the data following it.
-The bytes *should* be UTF-8, but no guarantees are made and the decoder should use caution
-on what it does with these values.  (for instance, they could duplicate another field name,
-which is conceptually an error, but not one the library will check for)
+If the record definition specifies a non-null `other_field_type`, the sequence of encoded
+`SELDOM` fields may contain references to any symbol in the symbol table.  These symbols must
+be distinct from the symbols of any other field in that encoded record.
+
+The record is encoded as minimally as possible, using the information provided in the field
+definitions.  If all fields have placement in the static portion, the record has a fixed length
+and the static portion will be the only thing written.  The record has a known fixed length
+in this case.  If the record consists only of static and `ALWAYS` fields, then the static
+portion will be written followed end-to-end by the encodings of the `ALWAYS` fields (in
+field-declaration order).  The record wil be fixed length if all the `ALWAYS` fields are also
+fixed-length.  If the record contains any `OFTEN`, `SELDOM`, or "other" fields, then there is
+an additional flag to indicate which `OFTEN` fields are present, and how many `SELDOM` or
+"other" fields are present.  This flag contains one bit for each `SELDOM` field indicating
+presence or absence; all present fields will be encoded end-to-end according to their declared
+type.  The remaining bits of the flag are then used as a count for the number of dynamic fields
+to read.  Each field is encoded as a reference to the field list or symbol table, and then a
+type encoded either according to the type of the field or the `other_field_typ`.
 
 Userp Stream Protocol 1
 -----------------------
@@ -235,7 +241,7 @@ Userp can be used in various contexts, one of which is a stream of blocks.  This
 Component       |  Encoding
 ----------------|--------------------------------------------------------------
 Stream          | Header Block [Block...]
-Header          | "UserpS1<" (or "UserpS1>") Int8u WriterID
+Header          | "UserpS1\x00" Int16u WriterID
 WriterID        | WriterName \x00 [EnvStr...]
 EnvStr          | /[^=]+(=.*)/ \x00
 Block           | ControlCode BlockLen? Meta? Data?
@@ -244,18 +250,13 @@ Data            | Encoded per the block-root-type
 
 ### Header
 
-Stream mode begins with a magic number identifying the protocol version and endian-ness.
+Stream mode begins with a magic number identifying the protocol version.
 The major version is tied to any change that would break an older implementation's ability to
 read the stream.
 
-A stream can be big-endian (Integers written most significant byte first) or litle-endian
-(Integers written least significant byte first).  This is meant to facilitate C-struct
-compatibility without placing extra burden on writers.  The flag is part of the header and
-applies to the entire stream.
-
 To help identify bugs that might have come from a particular implementation, there is WriterID
 that follows, where a library or application can write identifying information about itself.
-The length of the WriterID is a single byte (not variable quantity) to make it easy to parse
+The length of the WriterID is a 16-bit int (not variable quantity) to make it easy to parse
 by tools that don't have full Userp support (like the 'file' command).  The WriterID must be
 UTF-8 and include a NUL terminator.  After the NUL, it may include additional NUL-terminated
 strings of the form ``NAME=VALUE``.  The total ID is capped at 255 bytes (including NULs) so
@@ -263,28 +264,36 @@ any metadata of a larger nature should be encoded as normal Userp metadata on th
 
 ### Block
 
-The rest of the stream is a series of Blocks prefixed by control codes.  The control code
-indicates the nature of the next block: Meta+Data, Meta, Data, Meta+ScopeStart, ScopeEnd.
-If the control code is not ScopeEnd, the next value will be the total number of bytes to
-reach the next block.
+The rest of the stream is a series of Blocks.  A Block is a record pre-defined by the protocol,
+or a compatible user-defined record.  The record has one field `data` which exposed to the user
+as the official data of the stream, and any number of other fields carrying metadata.  Every field of the block must either be a
+fixed-length, array of fixed-length elements, or flagged as `length_delim` so that it can be
+skipped.  This allows a parser to always know how many bytes it needs to continue decoding.
+A block may declare a type table to define new types, and it may begin a scope in which the
+blocks are encoded using a different record definition.
 
-A block can have a metadata section and/or a data payload.  If a block is marked ScopeStart,
-the reader and writer will retain a reference to it so that the symbols and types are
-available for future blocks.  ScopeEnd releases one reference from the stack.
+The pre-defined fields of a Block are:
 
-### Block Metadata
-
-The metadata of a block starts with a symbol table, followed by a type table, followed by any
-number of ad-hoc fields.
+  - id: type=unsigned, placement=often
+  - scope: type=BlockScope, placement=often, length_delim=true
+    - symbol_table: type=SymbolTable, placement=often
+    - type_table: type=TypeTable, placement=often
+    - type_meta: type=TypeMeta, placement=seldom
+    - block_type: type=typeref, placement=seldom
+  - data: type=Any, placement=often, length_delim=true
+  - block_index: type=array of blockpointer, placement=often
 
 #### Symbol Table
 
-The symbol table is an array of strings.  They are delimited by length, but also include a
-trailing NUL character for convenience to C programs.  Each symbol must be valid UTF-8 with
-some further restrictions.  The symbol table occupies the first N symbol IDs of the new scope,
-and the previous scope can be accessed starting at IDs above that.  This allows the newest
-symbols to be (in all likelihood) encoded as a single byte.  The symbol table may re-declare
-symbols that were already in scope.
+The symbol table holds a collection of identifiers to be used in the type definitions, data,
+or future blocks.  The symbol table may duplicate symbols seen in earlier blocks, but may not
+contain duplicates within itself.  The symbol table is encoded as a count of symbols followed
+by NUL-terminated strings end-to-end.  The reader must therefore scan the entire string
+counting NULs and marking the starts of strings, but this work likely needs performed
+regardless (to validate the UTF-8 correctness, and build a hash table) and allows for a very
+compact representation.
+
+The pre-defined type SymbolTable is declared as a simple array of bytes.
 
 #### Type Table
 
@@ -292,6 +301,10 @@ The type table defines a list of types which will be appended to the stack of ex
 Only the name and structure of the types are declared here; any other per-type metadata gets
 encoded later.  The decoder must fully process the table before any further decoding on this
 block, or later blocks if this block begins a Scope.
+
+The pre-defined type TypeTable is an array of TypeDefinition, which is a choice of each of the
+records that could define a type.  The types should be processed immediately, and will be
+available for use in subsequent attributes of the parent block record.
 
 #### Ad-hoc Fields
 
