@@ -47,7 +47,7 @@ struct userp_env {
 	>> sizeof(size_t)*4 )
 
 extern bool userp_alloc(userp_env env, void **pointer, size_t elem_size, size_t count, int flags, const char * elem_name);
-#define USERP_ALLOC(env, ptr, count, flags) userp_alloc(env, (void**) ptr, 1, count, flags #ptr + 1)
+#define USERP_ALLOC(env, ptr, count, flags) userp_alloc(env, (void**) ptr, 1, count, flags, #ptr + 1)
 #define USERP_ALLOC_ARRAY(env, ptr, elemtype, count, flags) userp_alloc(env, (void**) ptr, sizeof(elemtype), count, flags, #elemtype)
 #define USERP_FREE(env, ptr) userp_alloc(env, (void**) ptr, 0, 0, 0, NULL);
 
@@ -156,6 +156,8 @@ struct userp_scope {
 	type_table typetable, *typetable_stack;
 	size_t typetable_count;
 };
+
+userp_symbol userp_scope_add_symbol(userp_scope scope, const char *name);
 
 // -------------------------- userp_dec.c ---------------------------
 
