@@ -29,6 +29,7 @@ typedef bool userp_alloc_fn(void *callback_data, void **pointer, size_t new_size
 #define USERP_ETYPESCOPE    0x6005 /* userp_type is not available in the current scope */
 #define USERP_EEOF          0x4002 /* unexpected end of input */
 #define USERP_ELIMIT        0x4003 /* decoded data exceeds a constraint */
+#define USERP_ESYMBOL       0x4004 /* symbol table entry is not valid */
 #define USERP_WLARGEMETA    0x2001 /* encoded or decoded metadata is suspiciously large */
 
 #define USERP_WARN_EOF
@@ -103,7 +104,7 @@ struct userp_buffer {
 };
 
 extern userp_buffer userp_new_buffer(userp_env env, void *data, size_t alloc_len);
-extern userp_buffer userp_grab_buffer(userp_buffer buf);
+extern bool userp_grab_buffer(userp_buffer buf);
 extern void userp_drop_buffer(userp_buffer buf);
 
 struct userp_bstring {
@@ -119,6 +120,7 @@ struct userp_bstrings {
 	struct userp_bstring parts[];
 };
 
+extern bool userp_bstring_grow(userp_env env, struct userp_bstring *bstr, size_t new_len, const void* src);
 extern userp_bstrings userp_bstrings_new(userp_env env, int part_alloc_count);
 extern userp_bstrings userp_bstrings_append_part(userp_bstrings str, userp_buffer buf, uint8_t *start, size_t len);
 extern userp_bstrings userp_bstrings_append(userp_bstrings dest, userp_bstrings tail);

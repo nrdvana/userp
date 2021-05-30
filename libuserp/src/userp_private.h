@@ -14,7 +14,7 @@ struct userp_env {
 	
 	/* Storage for error conditions */
 	int diag_code;
-	char *diag_tpl;
+	const char *diag_tpl;
 	void *diag_buf;
 	int diag_align;
 	size_t diag_pos, diag_len, diag_size, diag_count;
@@ -135,13 +135,13 @@ struct userp_type_record {
 struct symbol_table {
 	int count, n_alloc;
 	struct userp_bstring symbol_text;
-	size_t symbol_ofs[];
+	size_t symbol_end[];
 };
 typedef struct symbol_table *symbol_table;
 
 struct type_table {
 	int count, n_alloc;
-	userp_type *types[];
+	userp_type types[];
 };
 typedef struct type_table *type_table;
 
@@ -171,5 +171,6 @@ struct userp_dec {
 	void * reader_cb_data;
 };
 
+#define CATCH(label) if (0) label : 
 
 #endif
