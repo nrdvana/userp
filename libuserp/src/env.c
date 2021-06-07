@@ -57,31 +57,76 @@ Otherwise, this always returns true.
 =cut
 */
 
-userp_env_t *userp_env_new(userp_alloc_fn alloc_callback, userp_diag_fn diag_callback, void *callback_data) {
-	userp_env_t *env= NULL;
+userp_env userp_new_env(userp_alloc_fn alloc_callback, userp_diag_fn diag_callback, void *callback_data, int flags) {
+	userp_env env= NULL;
 	void *alloc_callback_data= alloc_callback? callback_data : NULL;
 	void *diag_callback_data= diag_callback? callback_data : NULL;
 	if (!alloc_callback) alloc_callback= userp_alloc_default;
-	if (!diag_callback) diag_callback= userp_diag_default;
-	if (alloc_callback(callback_data, (void**) &env, sizeof(userp_env_t), 0)) {
+	//if (!diag_callback) diag_callback= userp_diag_default;
+	if (alloc_callback(callback_data, (void**) &env, sizeof(struct userp_env), USERP_HINT_STATIC)) {
 		bzero(env, sizeof(userp_env_t));
 		env->alloc= alloc_callback;
-		env->alloc_cb_data= alloc_callback_data;
+		env->alloc_cb_data= (alloc_callback == userp_alloc_default)? env : alloc_callback_data;
 		env->diag= diag_callback;
 		env->diag_cb_data= diag_callback_data;
+		env->refcnt= 1;
+		env->log_warn= 1;
 		return env;
 	}
 	diag_callback(callback_data, USERP_EALLOC, NULL);
 	return false;
 }
 
-bool userp_env_free(userp_env_t *env) {
+static void userp_free_env(userp_env env) {
 	// release memory
-	if (env->alloc(env->alloc_cb_data, (void**)&env, 0, 0)) return true;
-	// if that failed, report the error (fatal) or return false
-	env->diag_code= USERP_EALLOC;
-	env->diag_tpl= "Failed to free userp_env";
-	env->diag(env->diag_cb_data, USERP_EALLOC, env);
+	if (!env->alloc(env->alloc_cb_data, (void**)&env, 0, 0))
+		// if that failed, report the error (fatal)
+		userp_env_set_error(env, USERP_EALLOC, "Failed to free userp_env");
+}
+
+void userp_grab_env(userp_env env) {
+	assert(env != NULL);
+	assert(env->refcnt > 0 && env->refcnt+1 > 0);
+	if (!++env->refcnt) {
+		userp_env_set_error(env, USERP_EDOINGITWRONG, "Reference count exceeds size_t");
+		--env->refcnt;
+	}
+}
+
+void userp_drop_env(userp_env env) {
+	assert(env != NULL);
+	assert(env->refcnt > 0);
+	// This will probably crash, since env is probably freed, but better to find those bugs sooner?
+	if (!env->refcnt) {
+		userp_env_set_error(env, USERP_EASSERT, "Called userp_drop_env when refcnt already 0");
+		return;
+	}
+	if (!--env->refcnt)
+		userp_free_env(env);
+}
+
+bool userp_alloc(userp_env env, void **pointer, size_t elem_size, size_t count, const char * elem_name) {
+	size_t n= elem_size * count;
+	// check overflow
+	if (!env->enable_landmines && SIZET_MUL_CAN_OVERFLOW(elem_size, count)) {
+		env->diag_code= USERP_ELIMIT;
+		env->diag_size= elem_size;
+		env->diag_count= count;
+		env->diag_tpl= "Allocation size (" USERP_DIAG_SIZE "x" USERP_DIAG_COUNT "exceeds size_t";
+		return false;
+	}
+	if (env->alloc(env->alloc_cb_data, pointer, n, 0))
+		return true;
+	if (count) {
+		env->diag_code= USERP_EALLOC;
+		env->diag_size= n;
+		env->diag_count= count;
+		env->diag_buf= elem_name;
+		env->diag_tpl= "Unable to allocate " USERP_DIAG_SIZE " bytes for " USERP_DIAG_BUFSTR " x" USERP_DIAG_COUNT;
+	} else {
+		env->diag_buf= *pointer;
+		env->diag_tpl= "Unable to free pointer " USERP_DIAG_BUFADDR;
+	}
 	return false;
 }
 
@@ -99,18 +144,36 @@ bool userp_alloc_default(void *callback_data, void **pointer, size_t new_size, i
 	return true;
 }
 
-void userp_diag_default(void *callback_data, int diag_code, userp_env_t *env) {
+static void userp_diag_to_file(void *callback_data, int diag_code, userp_env_t *env) {
+	FILE *dest= (FILE*) callback_data;
 	if (USERP_IS_ERROR(diag_code) || USERP_IS_FATAL(diag_code)) {
-		fprintf(stderr, "error: ");
-		userp_env_print_diag(env, stderr);
-		fputc('\n', stderr);
-		fflush(stderr);
+		fprintf(dest, "error: ");
+		userp_env_print_diag(env, dest);
+		fputc('\n', dest);
+		fflush(dest);
 		if (USERP_IS_FATAL(diag_code)) abort();
 	}
 	else if (USERP_IS_WARN(diag_code)) {
-		fprintf(stderr, "warning: ");
-		userp_env_print_diag(env, stderr);
-		fputc('\n', stderr);
+		fprintf(dest, "warning: ");
+		userp_env_print_diag(env, dest);
+		fputc('\n', dest);
+	}
+}
+
+void userp_env_set_file_logger(userp_env env, FILE *dest) {
+	userp_env_set_logger(env, userp_diag_to_file, dest);
+}
+
+void userp_env_set_logger(userp_env env, userp_diag_fn diag_callback, void *callback_data) {
+	
+}
+
+void userp_env_set_error(userp_env env, int code, const chart *tpl) {
+	if (env) {
+		env->diag_code= code;
+		env->diag_tpl= tpl;
+		if (env->diag)
+			env->diag(env->diag_cb_data, env->diag_code, env);
 	}
 }
 
@@ -176,7 +239,7 @@ const char *userp_diag_code_name(int code) {
 
 static int userp_process_diag_tpl(userp_env_t *env, char *buf, size_t buf_len, FILE *fh) {
 	const char *from, *pos= env->diag_tpl, *p1, *p2;
-	char tmp_buf[48], id;
+	char tmp_buf[64], id;
 	size_t n= 0, tmp_len, str_len= 0;
 	int i;
 	while (*pos) {
@@ -187,12 +250,11 @@ static int userp_process_diag_tpl(userp_env_t *env, char *buf, size_t buf_len, F
 			from= tmp_buf;
 			++pos;
 			switch (id= *pos++) {
-			case DIAG_VAR_ALIGN_ID:
-				n= snprintf(tmp_buf, sizeof(tmp_buf), "2**%d", env->diag_align);
-				break;
-			case DIAG_VAR_BUFADDR_ID:
+			// Buffer, displayed as a pointer address
+			case USERP_DIAG_BUFADDR_ID:
 				n= snprintf(tmp_buf, sizeof(tmp_buf), "%p", env->diag_buf);
 				break;
+			// Buffer, hexdump the contents
 			case DIAG_VAR_BUFHEX_ID:
 				p1= ((char*)env->diag_buf) + env->diag_pos;
 				p2= p1 + (env->diag_len - env->diag_pos);
@@ -204,19 +266,31 @@ static int userp_process_diag_tpl(userp_env_t *env, char *buf, size_t buf_len, F
 				if (n) --n;
 				tmp_buf[n]= '\0';
 				break;
+			// integer with "power of 2" notation
+			case USERP_DIAG_ALIGN_ID:
+				n= snprintf(tmp_buf, sizeof(tmp_buf), "2**%d", env->diag_align);
+				break;
 			// Generic integer fields
-			case DIAG_VAR_POS_ID:
-				i= env->diag_pos; if (0)
-			case DIAG_VAR_LEN_ID:
-				i= env->diag_len;
-			
-				n= snprintf(tmp_buf, sizeof(tmp_buf), "%d", i);
+			case USERP_DIAG_POS_ID:
+				n= env->diag_pos; if (0)
+			case USERP_DIAG_LEN_ID:
+				n= env->diag_len; if (0)
+			case USERP_DIAG_SIZE_ID:
+				n= env->diag_size; if (0)
+			case USERP_DIAG_COUNT_ID:
+				n= env->diag_count;
+				n= snprintf(tmp_buf, sizeof(tmp_buf), "%ld", n);
 				break;
 			default:
 				// If we get here, it's a bug.  If the second byte was NUL, back up one, else substitute an error message
 				if (!pos[-1]) --pos;
 				from= "(unknown var)";
-				n= strlen("(unknown var)");
+				if (0)
+			// Buffer, printed as a string
+			case DIAG_VAR_BUFSTRZ_ID:
+				from= env->diag_buf;
+				n= strlen(from);
+				break;
 			}
 		}
 		else {
@@ -247,3 +321,30 @@ extern int userp_env_get_diag(userp_env_t *env, char *buf, size_t buflen) {
 extern int userp_env_print_diag(userp_env_t *env, FILE *fh) {
 	return userp_process_diag_tpl(env, NULL, 0, fh);
 }
+
+#ifdef WITH_UNIT_TESTS
+
+static bool logging_alloc(void *callback_data, void **pointer, size_t new_size, int flags) {
+	userp_env env= (userp_env) callback_data;
+	
+}
+static void stdout_logger(void *callback_data, int diag_code, userp_env_t *env) {
+	if (USERP_IS_ERROR(diag_code) || USERP_IS_FATAL(diag_code)) {
+		fprintf(stderr, "error: ");
+		userp_env_print_diag(env, stderr);
+		fputc('\n', stderr);
+		fflush(stderr);
+		if (USERP_IS_FATAL(diag_code)) abort();
+	}
+	else if (USERP_IS_WARN(diag_code)) {
+		fprintf(stderr, "warning: ");
+		userp_env_print_diag(env, stderr);
+		fputc('\n', stderr);
+	}
+}
+
+UNIT_TEST(test_userp_env_new_free) {
+	userp_new_env(NULL, NULL, NULL, 0);
+}
+
+#endif

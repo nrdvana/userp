@@ -4,22 +4,13 @@
 
 // -------------------------- userp_env.c ---------------------------
 
-struct userp_env {
-	userp_alloc_fn *alloc;
-	void *alloc_cb_data;
-	userp_diag_fn *diag;
-	void *diag_cb_data;
-	int run_with_scissors: 1,
-		enable_landmines: 1;
-	
-	/* Storage for error conditions */
-	int diag_code;
-	const char *diag_tpl;
-	void *diag_buf;
-	int diag_align;
-	size_t diag_pos, diag_len, diag_size, diag_count;
+struct userp_diag {
+	int code;
+	const char *tpl, *cstr1, *cstr2;
+	userp_buffer buf;
+	int align;
+	size_t pos, len, size, count;
 };
-
 #define USERP_DIAG_ALIGN_ID         0x01
 #define USERP_DIAG_ALIGN       "\x01\x01"
 #define USERP_DIAG_POS_ID           0x02
@@ -37,7 +28,28 @@ struct userp_env {
 #define USERP_DIAG_BUFSTRZ_ID       0x08
 #define USERP_DIAG_BUFSTRZ     "\x01\x08"
 
+struct userp_env {
+	userp_alloc_fn *alloc;
+	void *alloc_cb_data;
+	userp_diag_fn *diag;
+	void *diag_cb_data;
+	size_t refcnt;
+	int run_with_scissors: 1,
+		measure_twice: 1,
+		log_warn: 1,
+		log_debug: 1,
+		log_trace: 1;
+	
+	/* Storage for error conditions */
+	struct userp_diag err, // Most recent error
+		warn,              // Most recent warning
+		msg;               // Current message of less severity than error
+};
+
+void userp_env_diag(userp_env, int code, const char *tpl, userp_buffer buf);
+
 #define ENV_SET_DIAG_EOF(env) (do { env->diag_code= USERP_EEOF; env->diag_tpl= "End of input"; }while(0))
+void fatal_ref_overflow(userp_env env, const char *objtype);
 
 #define SIZET_MUL_CAN_OVERFLOW(a, b) ( \
 	( \
@@ -48,8 +60,16 @@ struct userp_env {
 
 extern bool userp_alloc(userp_env env, void **pointer, size_t elem_size, size_t count, int flags, const char * elem_name);
 #define USERP_ALLOC(env, ptr, count, flags) userp_alloc(env, (void**) ptr, 1, count, flags, #ptr + 1)
+#define USERP_ALLOC_STRUCT(env, ptr) userp_alloc(env, (void**) ptr, sizeof(*ptr), 1, USERP_HINT_STATIC, #ptr)
 #define USERP_ALLOC_ARRAY(env, ptr, elemtype, count, flags) userp_alloc(env, (void**) ptr, sizeof(elemtype), count, flags, #elemtype)
 #define USERP_FREE(env, ptr) userp_alloc(env, (void**) ptr, 0, 0, 0, NULL);
+
+#ifndef USERP_BSTR_PART_ALLOC_ROUND
+#define USERP_BSTR_PART_ALLOC_ROUND(x) (((x) + 8 + 15) & 15)
+#endif
+#ifndef USERP_BUFFER_DATA_ALLOC_ROUND
+#define USERP_BUFFER_PART_ALLOC_ROUND(x) (((x) + 4095) & 4095)
+#endif
 
 extern bool userp_alloc_default(void *callback_data, void **pointer, size_t new_size, int flags);
 extern void userp_diag_default(void *callback_data, int diag_code, userp_env env);
@@ -148,7 +168,7 @@ typedef struct type_table *type_table;
 struct userp_scope {
 	userp_env env;
 	userp_scope parent;
-	unsigned level, refcnt;
+	size_t level, refcnt;
 	bool is_final;
 
 	symbol_table symtable, *symtable_stack;
@@ -171,6 +191,6 @@ struct userp_dec {
 	void * reader_cb_data;
 };
 
-#define CATCH(label) if (0) label : 
+#define CATCH(label) if (0) label: 
 
-#endif
+#endif /* USERP_PROTECTED_H */

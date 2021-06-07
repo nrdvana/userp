@@ -8,6 +8,11 @@ static bool alloc_typetable(userp_env env, type_table *typetable, size_t count, 
 static void free_typetable(userp_env env, type_table *typetable);
 static void free_type(userp_env env, userp_type t);
 
+static void unimplemented(const char* msg) {
+	fprintf(stderr, "Unimplemented: %s", msg);
+	abort();
+}
+
 userp_scope userp_new_scope(userp_env env, userp_scope parent) {
 	size_t num_sym_tables, num_type_tables, size;
 	userp_scope scope;
@@ -355,9 +360,44 @@ void free_typetable(userp_env env, type_table *tt_p) {
 	if (*tt_p) {
 		for (i= 0; i < (*tt_p)->count; i++)
 			free_type(env, (*tt_p)->types[i]);
+		TRACE("free type_table %p\n", *tt_p);
 		USERP_FREE(env, tt_p);
 	}
 }
 
 void free_type(userp_env env, userp_type t) {
+	unimplemented("free_type");
 }
+
+#ifdef WITH_UNIT_TESTS
+
+UNIT_TEST(test_userp_scope_parse_symtable) {
+	int i, ofs;
+	userp_env env= userp_new_env(NULL,NULL,NULL);
+	userp_scope scope= userp_new_scope(env, NULL);
+	struct userp_bstring str= { .start= argv[0], .len= strlen(argv[0])+1
+	bool ret= userp_scope_parse_symtable(scope, argv[0], );
+	printf("return: %d\n", ret);
+	if (ret) {
+		printf("symtable: %p\n", scope->symtable);
+		printf("symtable->count: %d\n", scope->symtable->count);
+		printf("symtable->n_alloc: %d\n", scope->symtable->n_alloc);
+		printf("symtable->symbol_text.start: %p\n", scope->symtable->symbol_text.start);
+		printf("symtable->symbol_text.len: %d\n", scope->symtable->symbol_text.len);
+		fflush(stdout);
+		for (i= 0; i < scope->symtable->count; i++) {
+			ofs= (i == 0? 0 : scope->symtable->symbol_end[i-1]+1);
+			printf("symbol %d: %d %s\n", i,
+				scope->symtable->symbol_end[i] - ofs,
+				scope->symtable->symbol_text.start + ofs
+			);
+		}
+		fflush(stdout);
+	}
+	else {
+		userp_env_print_diag(env, stdout);
+	}
+	return ret? 0 : 2;
+}
+
+#endif

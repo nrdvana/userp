@@ -8,12 +8,14 @@ typedef struct userp_type *userp_type;
 typedef struct userp_enc *userp_enc;
 typedef struct userp_dec *userp_dec;
 typedef struct userp_buffer *userp_buffer;
-typedef struct userp_bstrings *userp_bstrings;
+typedef struct userp_bstr *userp_bstr;
 
-#define USERP_HINT_STATIC  1
-#define USERP_HINT_DYNAMIC 2
-#define USERP_HINT_BRIEF   4
-#define USERP_HINT_PERSIST 8
+#define USERP_HINT_STATIC             0x0001
+#define USERP_HINT_DYNAMIC            0x0002
+#define USERP_HINT_BRIEF              0x0004
+#define USERP_HINT_PERSIST            0x0008
+#define USERP_POINTER_IS_BUFFER_DATA  0x0100
+#define USERP_ALLOC_FLAG_BITS         0x010F
 
 typedef bool userp_alloc_fn(void *callback_data, void **pointer, size_t new_size, int flags);
 
@@ -25,8 +27,10 @@ typedef bool userp_alloc_fn(void *callback_data, void **pointer, size_t new_size
 #define USERP_EALLOC        0x6001 /* failure to alloc or realloc or free */
 #define USERP_EINVAL        0x6002 /* invalid argument given to API */
 #define USERP_EASSERT       0x6003 /* internal assertion failure */
-#define USERP_EDOINGITWRONG 0x6004 /* exceeding sensible limits imposed by the library */
-#define USERP_ETYPESCOPE    0x6005 /* userp_type is not available in the current scope */
+#define USERP_ESTRINDEX     0x6004 /* userp_bstr part[i].ofs is invalid */
+#define USERP_EDOINGITWRONG 0x6005 /* exceeding sensible limits imposed by the library */
+#define USERP_ETYPESCOPE    0x6006 /* userp_type is not available in the current scope */
+#define USERP_ESYSERROR     0x6007 /* You asked libuserp to make a system call, and the system call failed. */
 #define USERP_EEOF          0x4002 /* unexpected end of input */
 #define USERP_ELIMIT        0x4003 /* decoded data exceeds a constraint */
 #define USERP_ESYMBOL       0x4004 /* symbol table entry is not valid */
@@ -42,11 +46,14 @@ extern int userp_env_get_diag(userp_env env, char *buf, size_t buflen);
 extern int userp_env_print_diag(userp_env env, FILE *fh);
 
 // Create a main Userp environment object, with initial reference count of 1
-extern userp_env userp_new_env(userp_alloc_fn alloc_callback, userp_diag_fn diag_callback, void *callback_data);
+extern userp_env userp_new_env(userp_alloc_fn alloc_callback, userp_diag_fn diag_callback, void *callback_data, int flags);
 // Acquite additional reference to a userp environment
 extern bool userp_grab_env(userp_env env);
 // Release a reference to a userp environment
 extern void userp_drop_env(userp_env env);
+
+extern void userp_env_set_file_logger(userp_env env, FILE *dest);
+extern void userp_env_set_logger(userp_env env, userp_diag_fn diag_callback, void *callback_data);
 
 // Reader callback, request bytes_needed to be appended to buffers
 typedef bool userp_reader_fn(void *callback_data, userp_bstrings* buffers, size_t bytes_needed, userp_env env);
@@ -96,38 +103,39 @@ typedef bool userp_reader_fn(void *callback_data, userp_bstrings* buffers, size_
  *   userp_drop_buffer(buf); // calls free(buf->data); free(buf);
  */
 struct userp_buffer {
-	userp_env env;
-	void *data;
-	size_t alloc_len;
-	int16_t refcnt;
-	int16_t flags;
+	uint8_t        *data;     // must always be non-NULL, points to start of buffer
+	userp_env      env;       // if non-null, creator of buffer, will be called to free buffer
+	size_t         alloc_len; // if nonzero, indicates how much memory is valid starting at 'data'
+	size_t         refcnt;    // if nonzero, indicates this buffer is reference-counted
+	int64_t        addr;      // indicates the origin/placement of this buffer, depends on flags
+	uint_least32_t flags;     // indicates details of buffer
 };
+#define USERP_FIELD_OFFSET(type,field) ((int)( ((int)&(((type*)64)->field)) - 64 ))
+#define USERP_GET_BUFFER_FROM_DATA_PTR(data_ptr) ((userp_buffer)( ((char*)data_ptr) - USERP_FIELD_OFFSET(struct userp_buffer, data) ))
 
-extern userp_buffer userp_new_buffer(userp_env env, void *data, size_t alloc_len);
+extern userp_buffer userp_new_buffer(userp_env env, void *data, size_t alloc_len, int flags);
 extern bool userp_grab_buffer(userp_buffer buf);
 extern void userp_drop_buffer(userp_buffer buf);
 
-struct userp_bstring {
-	uint8_t *start;
-	size_t len;
-	userp_buffer buf;
-	int64_t addr;
-};
 
-struct userp_bstrings {
+struct userp_bstr {
 	userp_env env;
-	size_t n_parts, n_alloc;
-	struct userp_bstring parts[];
+	size_t part_count, part_alloc;
+	struct userp_bstr_part {
+		uint8_t *data;
+		userp_buffer buf;
+		size_t ofs, len;
+	} parts;
 };
 
-extern bool userp_bstring_grow(userp_env env, struct userp_bstring *bstr, size_t new_len, const void* src);
-extern userp_bstrings userp_bstrings_new(userp_env env, int part_alloc_count);
-extern userp_bstrings userp_bstrings_append_part(userp_bstrings str, userp_buffer buf, uint8_t *start, size_t len);
-extern userp_bstrings userp_bstrings_append(userp_bstrings dest, userp_bstrings tail);
-#define userp_bstrings_clone(str) (str? userp_bstrings_append(userp_bstrings_new(str->env, str->n_alloc), str) : NULL)
-extern void userp_bstrings_trim(userp_bstrings r, size_t trim_head, size_t trim_tail);
-extern userp_bstrings userp_bstrings_splice(userp_bstrings dest, size_t offset, size_t len, userp_bstrings src, size_t src_offset, size_t src_len);
-extern void userp_bstrings_free(userp_bstrings str);
+extern userp_bstr userp_new_bstr(userp_env env, int part_alloc_count);
+extern void userp_free_bstr(userp_bstr *str);
+extern void* userp_bstr_append_bytes(userp_bstr *str, size_t n_bytes, const void* src_bytes);
+extern bool userp_bstr_append_parts(userp_bstr *str, size_t n_parts, const userp_bstr_part *src_parts);
+extern bool userp_bstr_append_stream(userp_bstr *str, FILE *f, int64_t length);
+extern bool userp_bstr_map_file(userp_bstr *str, FILE *f, int64_t offset, int64_t length);
+extern bool userp_bstr_splice(userp_bstr *dst, size_t dst_ofs, size_t dst_len, userp_bstr *src, size_t src_ofs, size_t src_len);
+extern void userp_bstr_crop(userp_bstr *str, size_t trim_head, size_t trim_tail);
 
 extern userp_scope userp_new_scope(userp_env env, userp_scope parent);
 extern bool userp_grab_scope(userp_scope scope);
