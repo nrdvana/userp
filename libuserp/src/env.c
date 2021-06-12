@@ -1,5 +1,5 @@
 #include "local.h"
-#include "userp_protected.h"
+#include "userp_private.h"
 
 /*
 =head2 userp_env_new
@@ -101,6 +101,8 @@ void userp_drop_env(userp_env env) {
 		userp_env_set_error(env, USERP_EASSERT, "Called userp_drop_env when refcnt already 0");
 		return;
 	}
+	if (env->log_trace)
+		env->userp_env_diag(
 	if (!--env->refcnt)
 		userp_free_env(env);
 }
@@ -220,21 +222,6 @@ for the message.  A return value of -1 means that a libc fwrite error occurred.
 
 extern int userp_env_get_diag_code(userp_env_t *env) {
 	return env->diag_code;
-}
-
-/* Return a static copy of the error code's symbolic name */
-const char *userp_diag_code_name(int code) {
-	#define RETSTR(x) case x: return #x;
-	switch (code) {
-	RETSTR(USERP_EALLOC)
-	RETSTR(USERP_EINVAL)
-	RETSTR(USERP_EEOF)
-	RETSTR(USERP_ELIMIT)
-	RETSTR(USERP_WLARGEMETA)
-	default:
-		return "unknown";
-	}
-	#undef RETSTR
 }
 
 static int userp_process_diag_tpl(userp_env_t *env, char *buf, size_t buf_len, FILE *fh) {

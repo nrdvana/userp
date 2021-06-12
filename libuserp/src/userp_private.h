@@ -1,5 +1,5 @@
-#ifndef USERP_PROTECTED_H
-#define USERP_PROTECTED_H
+#ifndef USERP_PRIVATE_H
+#define USERP_PRIVATE_H
 #include "userp.h"
 
 // -------------------------- userp_env.c ---------------------------
@@ -8,7 +8,7 @@ struct userp_diag {
 	int code;
 	const char *tpl, *cstr1, *cstr2;
 	userp_buffer buf;
-	int align;
+	int align, index;
 	size_t pos, len, size, count;
 };
 #define USERP_DIAG_ALIGN_ID         0x01
@@ -19,14 +19,22 @@ struct userp_diag {
 #define USERP_DIAG_LEN         "\x01\x03"
 #define USERP_DIAG_SIZE_ID          0x04
 #define USERP_DIAG_SIZE        "\x01\x04"
-#define USERP_DIAG_COUNT_ID         0x05
-#define USERP_DIAG_COUNT       "\x01\x05"
-#define USERP_DIAG_BUFADDR_ID       0x06
-#define USERP_DIAG_BUFADDR     "\x01\x06"
-#define USERP_DIAG_BUFHEX_ID        0x07
-#define USERP_DIAG_BUFHEX      "\x01\x07"
-#define USERP_DIAG_BUFSTRZ_ID       0x08
-#define USERP_DIAG_BUFSTRZ     "\x01\x08"
+#define USERP_DIAG_INDEX_ID         0x05
+#define USERP_DIAG_INDEX       "\x01\x05"
+#define USERP_DIAG_COUNT_ID         0x06
+#define USERP_DIAG_COUNT       "\x01\x06"
+#define USERP_DIAG_CSTR1_ID         0x07
+#define USERP_DIAG_CSTR1       "\x01\x07"
+#define USERP_DIAG_CSTR2_ID         0x08
+#define USERP_DIAG_CSTR2       "\x01\x08"
+#define USERP_DIAG_BUFADDR_ID       0x09
+#define USERP_DIAG_BUFADDR     "\x01\x09"
+#define USERP_DIAG_BUFHEX_ID        0x0A
+#define USERP_DIAG_BUFHEX      "\x01\x0A"
+#define USERP_DIAG_BUFSTR_ID        0x0B
+#define USERP_DIAG_BUFSTR      "\x01\x0B"
+
+void userp_diag_set(userp_diag diag, int code, const char *tpl, userp_buffer buf);
 
 struct userp_env {
 	userp_alloc_fn *alloc;
@@ -46,7 +54,6 @@ struct userp_env {
 		msg;               // Current message of less severity than error
 };
 
-void userp_env_diag(userp_env, int code, const char *tpl, userp_buffer buf);
 
 #define ENV_SET_DIAG_EOF(env) (do { env->diag_code= USERP_EEOF; env->diag_tpl= "End of input"; }while(0))
 void fatal_ref_overflow(userp_env env, const char *objtype);

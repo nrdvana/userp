@@ -2,6 +2,7 @@
 #define USERP_H
 
 typedef struct userp_env *userp_env;
+typedef struct userp_diag *userp_diag;
 typedef struct userp_scope *userp_scope;
 typedef int userp_symbol;
 typedef struct userp_type *userp_type;
@@ -39,11 +40,16 @@ typedef bool userp_alloc_fn(void *callback_data, void **pointer, size_t new_size
 #define USERP_WARN_EOF
 /* TODO */
 
-typedef void userp_diag_fn(void *callback_data, int diag_code, userp_env env);
-extern int userp_env_get_diag_code(userp_env env);
+typedef void userp_diag_fn(void *callback_data, int diag_code, userp_diag diag);
+
+extern int    userp_diag_get_code(userp_diag diag);
+extern bool   userp_diag_get_buffer(userp_diag diag, userp_buffer *buf_p, size_t *pos_p, size_t *len_p);
+extern int    userp_diag_get_index(userp_diag diag);
+extern size_t userp_diag_get_size(userp_diag diag);
+extern size_t userp_diag_get_count(userp_diag diag);
 extern const char *userp_diag_code_name(int code);
-extern int userp_env_get_diag(userp_env env, char *buf, size_t buflen);
-extern int userp_env_print_diag(userp_env env, FILE *fh);
+extern int    userp_diag_format(userp_diag env, char *buf, size_t buflen);
+extern int    userp_diag_print(userp_diag env, FILE *fh);
 
 // Create a main Userp environment object, with initial reference count of 1
 extern userp_env userp_new_env(userp_alloc_fn alloc_callback, userp_diag_fn diag_callback, void *callback_data, int flags);
