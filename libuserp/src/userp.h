@@ -11,14 +11,7 @@ typedef struct userp_dec *userp_dec;
 typedef struct userp_buffer *userp_buffer;
 typedef struct userp_bstr *userp_bstr;
 
-#define USERP_HINT_STATIC             0x0001
-#define USERP_HINT_DYNAMIC            0x0002
-#define USERP_HINT_BRIEF              0x0004
-#define USERP_HINT_PERSIST            0x0008
-#define USERP_POINTER_IS_BUFFER_DATA  0x0100
-#define USERP_ALLOC_FLAG_BITS         0x010F
-
-typedef bool userp_alloc_fn(void *callback_data, void **pointer, size_t new_size, int flags);
+// -------------------------- userp_diag.c -----------------------------------
 
 #define USERP_IS_FATAL(code) ((code>>13) == 3)
 #define USERP_IS_ERROR(code) ((code>>13) == 2)
@@ -40,16 +33,44 @@ typedef bool userp_alloc_fn(void *callback_data, void **pointer, size_t new_size
 #define USERP_WARN_EOF
 /* TODO */
 
-typedef void userp_diag_fn(void *callback_data, int diag_code, userp_diag diag);
-
 extern int    userp_diag_get_code(userp_diag diag);
 extern bool   userp_diag_get_buffer(userp_diag diag, userp_buffer *buf_p, size_t *pos_p, size_t *len_p);
 extern int    userp_diag_get_index(userp_diag diag);
 extern size_t userp_diag_get_size(userp_diag diag);
 extern size_t userp_diag_get_count(userp_diag diag);
 extern const char *userp_diag_code_name(int code);
-extern int    userp_diag_format(userp_diag env, char *buf, size_t buflen);
-extern int    userp_diag_print(userp_diag env, FILE *fh);
+extern int    userp_diag_format(userp_diag diag, char *buf, size_t buflen);
+extern int    userp_diag_print(userp_diag diag, FILE *fh);
+
+// --------------------------- userp_env.c -----------------------------------
+
+#define USERP_HINT_STATIC             0x0001
+#define USERP_HINT_DYNAMIC            0x0002
+#define USERP_HINT_BRIEF              0x0004
+#define USERP_HINT_PERSIST            0x0008
+#define USERP_HINT_ALIGN              0x0010
+#define USERP_POINTER_IS_BUFFER_DATA  0x0100
+#define USERP_ALLOC_FLAG_BITS         0x011F
+
+typedef bool userp_alloc_fn(void *callback_data, void **pointer, size_t new_size, int flags);
+
+#define USERP_LOG_LEVEL               0x0001
+
+#define USERP_DEFAULT                      0
+#define USERP_LOG_ERROR                    1
+#define USERP_LOG_WARN                     2
+#define USERP_LOG_DEBUG                    3
+#define USERP_LOG_TRACE                    4
+
+#define USERP_SAFETY                  0x0002
+
+#define USERP_MEASURE_TWICE                1
+#define USERP_RUN_WITH_SCISSORS            2
+
+typedef void userp_diag_fn(void *callback_data, userp_diag diag, int diag_code);
+extern void userp_file_logger(void *callback_data, userp_diag diag, int code);
+extern void userp_env_set_logger(userp_env env, userp_diag_fn diag_callback, void *callback_data);
+extern userp_diag userp_env_get_last_error(userp_env env);
 
 // Create a main Userp environment object, with initial reference count of 1
 extern userp_env userp_new_env(userp_alloc_fn alloc_callback, userp_diag_fn diag_callback, void *callback_data, int flags);
@@ -58,8 +79,6 @@ extern bool userp_grab_env(userp_env env);
 // Release a reference to a userp environment
 extern void userp_drop_env(userp_env env);
 
-extern void userp_env_set_file_logger(userp_env env, FILE *dest);
-extern void userp_env_set_logger(userp_env env, userp_diag_fn diag_callback, void *callback_data);
 
 // Reader callback, request bytes_needed to be appended to buffers
 typedef bool userp_reader_fn(void *callback_data, userp_bstr* buffers, size_t bytes_needed, userp_env env);

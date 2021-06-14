@@ -4,10 +4,20 @@
 /*
 ## userp_diag
 
+### Synopsis
+
+    userp_diag d= userp_env_get_last_error(env);
+    if (userp_diag_get_code(d) == USERP_EALLOC)
+      ...
+    else
+      userp_diag_print(d, stderr);
+
+### Description
+
 libuserp reports errors, warnings, and debug information via the userp_diag object.
 The library stores useful details into this object, and then (dependong on what
-callback you register on the `userp_env`) you receive the object and can decide
-whether to format it as text, or operate on it as data.
+callback you register on the `userp_env`) you receive the object and can make
+decisions about what to do based on its attributes, or just format it as text.
 
 ### Attributes
 
@@ -360,13 +370,13 @@ UNIT_TEST(diag_ref_bufaddr) {
 	bzero(&d, sizeof(d));
 	bzero(&buf, sizeof(buf));
 
-	buf.data= 0x1000;
+	buf.data= (uint8_t*) 0x1000;
 	userp_diag_set(&d, 1, "Buffer address: " USERP_DIAG_BUFADDR "\n", &buf);
 	d.pos= 1;
 	wrote= userp_diag_print(&d, stdout);
 }
 /*OUTPUT
-/^Buffer address: .*1001$/
+/Buffer address: .*1001/
 */
 
 #endif

@@ -36,8 +36,15 @@ sub check_unittest_output {
 	my $success= 1;
 	while (my ($name, $output)= splice(@expected_parts, 0, 2)) {
 		# output is treated as a regex if it starts with and ends with '/'
-		if ($output =~ m,^/(.*?)/$,) {
-			$output= qr/$1/;
+		if ($output =~ m,^/(.*?)/$,m) {
+			my $regex= '';
+			my @parts= split m,^/(.*?)/$,m, $output;
+			# even parts are literals, odd parts are regexes
+			while (my ($literal, $re)= splice @parts, 0, 2) {
+				$regex .= quotemeta($literal) . (defined $re? $re : '');
+			}
+			$regex =~ s/\\\n/\\n/g; # use \n escape notations instead of a backslash followed by literal newline char
+			$output= qr/^$regex$/;
 			main::like( delete $actual_by_name{$name}, $output, $name ) or $success= 0;
 		} else {
 			main::is( delete $actual_by_name{$name}, $output, $name ) or $success= 0;

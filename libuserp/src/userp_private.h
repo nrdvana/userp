@@ -2,7 +2,7 @@
 #define USERP_PRIVATE_H
 #include "userp.h"
 
-// -------------------------- userp_env.c ---------------------------
+// -------------------------- userp_diag.c -----------------------------------
 
 struct userp_diag {
 	int code;
@@ -36,6 +36,8 @@ struct userp_diag {
 
 void userp_diag_set(userp_diag diag, int code, const char *tpl, userp_buffer buf);
 
+// --------------------------- userp_env.c -----------------------------------
+
 struct userp_env {
 	userp_alloc_fn *alloc;
 	void *alloc_cb_data;
@@ -54,9 +56,11 @@ struct userp_env {
 		msg;               // Current message of less severity than error
 };
 
-
-#define ENV_SET_DIAG_EOF(env) (do { env->diag_code= USERP_EEOF; env->diag_tpl= "End of input"; }while(0))
-void fatal_ref_overflow(userp_env env, const char *objtype);
+extern bool userp_alloc(userp_env env, void **pointer, size_t elem_size, int flags, const char * obj_name);
+extern bool userp_alloc_array(userp_env env, void **pointer, size_t elem_size, size_t count, int flags, const char * elem_name);
+#define USERP_ALLOC_OBJ(env, ptr) userp_alloc(env, ptr, sizeof(**ptr), USERP_HINT_STATIC, #ptr+1)
+#define USERP_ALLOC_ARRAY(env, ptr, count) userp_alloc_array(env, ptr, sizeof(**ptr), count, USERP_HINT_DYNAMIC, #ptr+1)
+#define USERP_FREE(env, ptr) userp_alloc(env, ptr, 0, 0, NULL);
 
 #define SIZET_MUL_CAN_OVERFLOW(a, b) ( \
 	( \
@@ -65,11 +69,6 @@ void fatal_ref_overflow(userp_env env, const char *objtype);
 	) \
 	>> sizeof(size_t)*4 )
 
-extern bool userp_alloc(userp_env env, void **pointer, size_t elem_size, size_t count, int flags, const char * elem_name);
-#define USERP_ALLOC(env, ptr, count, flags) userp_alloc(env, (void**) ptr, 1, count, flags, #ptr + 1)
-#define USERP_ALLOC_STRUCT(env, ptr) userp_alloc(env, (void**) ptr, sizeof(*ptr), 1, USERP_HINT_STATIC, #ptr)
-#define USERP_ALLOC_ARRAY(env, ptr, elemtype, count, flags) userp_alloc(env, (void**) ptr, sizeof(elemtype), count, flags, #elemtype)
-#define USERP_FREE(env, ptr) userp_alloc(env, (void**) ptr, 0, 0, 0, NULL);
 
 #ifndef USERP_BSTR_PART_ALLOC_ROUND
 #define USERP_BSTR_PART_ALLOC_ROUND(x) (((x) + 8 + 15) & 15)
@@ -77,9 +76,6 @@ extern bool userp_alloc(userp_env env, void **pointer, size_t elem_size, size_t 
 #ifndef USERP_BUFFER_DATA_ALLOC_ROUND
 #define USERP_BUFFER_PART_ALLOC_ROUND(x) (((x) + 4095) & 4095)
 #endif
-
-extern bool userp_alloc_default(void *callback_data, void **pointer, size_t new_size, int flags);
-extern void userp_diag_default(void *callback_data, int diag_code, userp_env env);
 
 // -------------------------- userp_buffer.c ------------------------
 
