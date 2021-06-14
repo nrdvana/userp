@@ -240,46 +240,133 @@ void userp_diag_set(userp_diag diag, int code, const char *tpl, userp_buffer buf
 
 #ifdef WITH_UNIT_TESTS
 
-UNIT_TEST(simple_string) {
+UNIT_TEST(diag_simple_string) {
 	int wrote;
 	struct userp_diag d;
 	bzero(&d, sizeof(d));
 
+	printf("# simple string\n");
 	userp_diag_set(&d, 1, "Simple string", NULL);
 	wrote= userp_diag_print(&d, stdout);
 	printf("\nwrote=%d\n", wrote);
 
+	printf("# empty string\n");
 	userp_diag_set(&d, 1, "", NULL);
 	wrote= userp_diag_print(&d, stdout);
 	printf("\nwrote=%d\n", wrote);
 }
 /*OUTPUT
+# simple string
 Simple string
 wrote=13
+# empty string
 
 wrote=0
 */
 
-UNIT_TEST(tpl_ref_static_string) {
+UNIT_TEST(diag_tpl_ref_static_string) {
 	int wrote;
 	struct userp_diag d;
 	bzero(&d, sizeof(d));
+
+	printf("# cstr1 in middle\n");
 	userp_diag_set(&d, 1, "String ref '" USERP_DIAG_CSTR1 "'", NULL);
 	d.cstr1= "TEST";
 	wrote= userp_diag_print(&d, stdout);
 	printf("\nwrote=%d\n", wrote);
 
+	printf("# cstr1 at end\n");
+	userp_diag_set(&d, 1, "Ends with " USERP_DIAG_CSTR1, NULL);
+	wrote= userp_diag_print(&d, stdout);
+	printf("\nwrote=%d\n", wrote);
+
+	printf("# cstr1 at start\n");
+	userp_diag_set(&d, 1, USERP_DIAG_CSTR1 " and things", NULL);
+	wrote= userp_diag_print(&d, stdout);
+	printf("\nwrote=%d\n", wrote);
+
+	printf("# cstr1 is entire string\n");
+	userp_diag_set(&d, 1, USERP_DIAG_CSTR1, NULL);
+	wrote= userp_diag_print(&d, stdout);
+	printf("\nwrote=%d\n", wrote);
+
+	printf("# cstr1 is empty\n");
+	userp_diag_set(&d, 1, "'" USERP_DIAG_CSTR1 "'", NULL);
+	d.cstr1= "";
+	wrote= userp_diag_print(&d, stdout);
+	printf("\nwrote=%d\n", wrote);
+
+	printf("# cstr1 and cstr2\n");
 	userp_diag_set(&d, 1, "String ref '" USERP_DIAG_CSTR2 "', and '" USERP_DIAG_CSTR1 "'", NULL);
 	d.cstr1= "1";
 	d.cstr2= "2";
 	wrote= userp_diag_print(&d, stdout);
 	printf("\nwrote=%d\n", wrote);
+
+	printf("# empty cstr1 and cstr2\n");
+	userp_diag_set(&d, 1, USERP_DIAG_CSTR2 USERP_DIAG_CSTR1, NULL);
+	d.cstr1= "";
+	d.cstr2= "";
+	wrote= userp_diag_print(&d, stdout);
+	printf("\nwrote=%d\n", wrote);
 }
 /*OUTPUT
+# cstr1 in middle
 String ref 'TEST'
 wrote=17
+# cstr1 at end
+Ends with TEST
+wrote=14
+# cstr1 at start
+TEST and things
+wrote=15
+# cstr1 is entire string
+TEST
+wrote=4
+# cstr1 is empty
+''
+wrote=2
+# cstr1 and cstr2
 String ref '2', and '1'
 wrote=23
+# empty cstr1 and cstr2
+
+wrote=0
+*/
+
+UNIT_TEST(diag_ref_buf_hex) {
+	int wrote;
+	struct userp_diag d;
+	struct userp_buffer buf;
+	bzero(&d, sizeof(d));
+	bzero(&buf, sizeof(buf));
+
+	buf.data= "\x01\x02\x03\x04";
+	userp_diag_set(&d, 1, "Some Hex: " USERP_DIAG_BUFHEX, &buf);
+	d.pos= 1;
+	d.len= 3;
+	wrote= userp_diag_print(&d, stdout);
+	printf("\nwrote=%d\n", wrote);
+}
+/*OUTPUT
+Some Hex: 02 03 04
+wrote=18
+*/
+
+UNIT_TEST(diag_ref_bufaddr) {
+	int wrote;
+	struct userp_diag d;
+	struct userp_buffer buf;
+	bzero(&d, sizeof(d));
+	bzero(&buf, sizeof(buf));
+
+	buf.data= 0x1000;
+	userp_diag_set(&d, 1, "Buffer address: " USERP_DIAG_BUFADDR "\n", &buf);
+	d.pos= 1;
+	wrote= userp_diag_print(&d, stdout);
+}
+/*OUTPUT
+/^Buffer address: .*1001$/
 */
 
 #endif

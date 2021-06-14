@@ -209,10 +209,9 @@ sub update_testscripts {
 		my $code= length $prev? $prev : <<'END';
 #! /usr/bin/env perl
 use Test::More;
-my $test_bin= $ENV{TEST_ENTRYPOINT} || 'build/unittest';
-$test_bin = "./$test_bin" unless $test_bin =~ m,/,;
--e $test_bin or die "unittest binary '$test_bin' not found\n";
--x $test_bin or die "unittest binary '$test_bin' is not executable\n";
+use FindBin;
+use lib "$FindBin::Bin/lib";
+use TestUserp;
 
 END
 		$code =~ s/^done_testing$//m;
@@ -221,15 +220,13 @@ END
 				$code =~ /^subtest $test->{name}/
 					or die "No OUTPUT defined for test $test->{name} and no manual subtest of this name found in '$dest'\n";
 			} else {
-				my $expected= output_text_to_perl($test->{output});
+				my $expected= $test->{output};
+				my $delim_word= '---';
 				$expected =~ s/^/      /mg;
 				my $testcase= join "\n",
-					'    my $expected= ',
-					$expected.';',
-					'    my $actual= `$test_bin '.$test->{name}.'`;',
-					'    is( $?, 0, "test exited cleanly" );',
-					'    is( $actual, $expected, "output" );',
-					;
+					"    check_unittest_output($test->{name}, unindent <<'$delim_word');",
+					$expected
+					.$delim_word;
 				if ($code =~ /^# AUTO GENERATED\nsubtest $test->{name} => sub \{\n(.*?)\n\};\n\n/ms) {
 					substr($code, $-[1], $+[1]-$-[1])= $testcase;
 				} else {

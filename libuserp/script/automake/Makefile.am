@@ -19,7 +19,7 @@ PROVE=prove
 # with a blank file when distributed.
 include dev_rules.mak
 
-test: unittest
-	env TEST_ENTRYPOINT=unittest prove -lv t/
+test: unittest $(unittest_autogen_tests)
+	env UNITTEST_ENTRYPOINT=unittest prove -lv t/
 
 .PHONY: test

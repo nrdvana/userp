@@ -128,7 +128,10 @@ sub freshen_file {
 	return 1 if $dst_info && $src_info->size == $dst_info->size && $src_info->mtime == $dst_info->mtime;
 	unlink $dst if $dst_info;
 	if ($opt_symlink) {
-		symlink(File::Spec->abs2rel($src, $opt_dest), $dst) or die "symlink($dst): $!\n";
+		#print "src=$src dst=$dst  File::Spec->abs2rel($src, $opt_dest)= ".File::Spec->abs2rel($src, $opt_dest)."\n";
+		my $dst_dir= $dst;
+		$dst_dir =~ s,[^/\\]+$,,;
+		symlink(File::Spec->abs2rel($src, $dst_dir), $dst) or die "symlink($dst): $!\n";
 	} else {
 		system('cp','-a', $src, $dst) == 0 or die "cp to '$dst' failed\n";
 	}
