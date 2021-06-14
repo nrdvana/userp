@@ -108,7 +108,7 @@ struct choice_option {
 	userp_type type;
 	bool is_value: 1;
 	intmax_t merge_ofs, merge_count;
-	struct userp_bstring value;
+	userp_bstr value;
 };
 
 struct record_field {
@@ -161,7 +161,7 @@ struct userp_type_record {
 
 struct symbol_table {
 	int count, n_alloc;
-	struct userp_bstring symbol_text;
+	userp_bstr symbol_text;
 	size_t symbol_end[];
 };
 typedef struct symbol_table *symbol_table;
@@ -193,7 +193,7 @@ struct userp_dec {
 	userp_scope scope;
 	struct userp_dec_frame *stack;
 	size_t stack_i, stack_lim;
-	userp_bstrings input;
+	userp_bstr input;
 	userp_reader_fn *reader;
 	void * reader_cb_data;
 };

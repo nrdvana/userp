@@ -73,9 +73,9 @@ sub _proj_dir {
 
 sub source_files { $_[0]{source_files} || [] }
 
-sub test_entrypoint_srcfile { $_[0]{test_entrypoint_srcfile} || _proj_dir . '/src/test.c' }
+sub test_entrypoint_srcfile { $_[0]{test_entrypoint_srcfile} || _proj_dir . '/src/unittest.c' }
 
-sub test_script_dir { defined $_[0]{test_script_dir}? $_[0]{test_script_dir} : _proj_dir . '/test' }
+sub test_script_dir { defined $_[0]{test_script_dir}? $_[0]{test_script_dir} : _proj_dir . '/t' }
 
 =head2 tests
 
@@ -128,7 +128,7 @@ sub scan_source_files {
 		open my $fh, '<', $fname or die "Can't open $_\n";
 		while (<$fh>) {
 			push @tests, { name => $1, file => $fname } if /^UNIT_TEST\((\w+)\)/;
-			if (m,^/*OUTPUT$, && @tests) {
+			if (m,^/[*]OUTPUT$, && @tests) {
 				$tests[-1]{output}= '';
 				while (<$fh>) {
 					last if m,[*]/,;
@@ -146,7 +146,11 @@ sub write_entrypoint {
 	my @used_src= grep !$seen{$_}++, map $_->{file}, @{ $self->tests };
 	my @test_names= sort map $_->{name}, @{ $self->tests };
 	my $dest= $self->test_entrypoint_srcfile;
-	-e $dest and die "$dest already exists";
+	if (-e $dest) {
+		my $prev= do { local($/,@ARGV)= (undef,$dest); <> };
+		$prev =~ /test_entrypoint/
+			or die "$dest already exists, and does not look like a generated test entrypoint";
+	}
 	print "Writing entrypoint '$dest'\n";
 	my $fh;
 	open($fh, '>', $dest) && (print $fh <<END) && close $fh or die "Can't write to $dest\n";
@@ -155,13 +159,13 @@ sub write_entrypoint {
 #include "userp.h"
 
 #define UNIT_TEST(name) void name(int argc, char **argv)
-#define TRACE(x...) fprintf(stderr, x)
+#define TRACE(x...) fprintf(stderr, "# " x)
 
 #include "userp_private.h"
 
 @{[ map qq:#include "$_"\n:, sort @used_src ]} 
 
-typedef int test_entrypoint(int argc, char **argv);
+typedef void test_entrypoint(int argc, char **argv);
 struct tests {
 	const char *name;
 	test_entrypoint *entrypoint;
@@ -172,17 +176,18 @@ struct tests {
 
 int main(int argc, char **argv) {
 	int i;
-	if (!argv)
-	if (argc < 2)
-		fprintf(stderr, "Usage: ./test [COMMON_OPTS] TEST_NAME [TEST_ARGS]\n");
+	if (argc < 2) {
+		fprintf(stderr, "Usage: ./test [COMMON_OPTS] TEST_NAME [TEST_ARGS]\\n");
 		return 2;
 	}
-	for (i= 0; tests[i].name != NULL; i++) {
-		if (strcmp(tests[i].name, argv[1]) == 0)
-			return tests[i].entrypoint(argc-2, argv+2);
-	fprintf(stderr, "No such test %s\nAvailable tests are:\n", argv[1]);
 	for (i= 0; tests[i].name != NULL; i++)
-		fprintf(stderr, "  %s\n", tests[i].nme);
+		if (strcmp(tests[i].name, argv[1]) == 0) {
+			tests[i].entrypoint(argc-2, argv+2);
+			return 0;
+		}
+	fprintf(stderr, "No such test %s\\nAvailable tests are:\\n", argv[1]);
+	for (i= 0; tests[i].name != NULL; i++)
+		fprintf(stderr, "  %s\\n", tests[i].name);
 	return 2;
 }
 END
@@ -201,40 +206,62 @@ sub update_testscripts {
 		my $dest= "$dir/$unit.t";
 		print "Updating $dest\n";
 		my $prev= -e $dest? do { local ($/,@ARGV)=(undef,$dest); <> } : '';
-		my $code= length $prev? $prev : <<END;
+		my $code= length $prev? $prev : <<'END';
 #! /usr/bin/env perl
 use Test::More;
-my \$test_bin= 'build/test';
+my $test_bin= $ENV{TEST_ENTRYPOINT} || 'build/unittest';
+$test_bin = "./$test_bin" unless $test_bin =~ m,/,;
+-e $test_bin or die "unittest binary '$test_bin' not found\n";
+-x $test_bin or die "unittest binary '$test_bin' is not executable\n";
 
 END
+		$code =~ s/^done_testing$//m;
 		for my $test (@{ $scripts{$unit} }) {
 			if (!$test->{output}) {
 				$code =~ /^subtest $test->{name}/
 					or die "No OUTPUT defined for test $test->{name} and no manual subtest of this name found in '$dest'\n";
 			} else {
+				my $expected= output_text_to_perl($test->{output});
+				$expected =~ s/^/      /mg;
 				my $testcase= join "\n",
-					'    my $expected= <<_____;',
-					$test->{output},
-					"_____",
+					'    my $expected= ',
+					$expected.';',
 					'    my $actual= `$test_bin '.$test->{name}.'`;',
 					'    is( $?, 0, "test exited cleanly" );',
 					'    is( $actual, $expected, "output" );',
 					;
-				if ($code =~ /^# AUTO GENERATED\nsubtest $test->{name} => sub {\n(.*?)^};\n/ms) {
-					substr($code, $-[1], $+[1]-$_[0])= $testcase;
+				if ($code =~ /^# AUTO GENERATED\nsubtest $test->{name} => sub \{\n(.*?)\n\};\n\n/ms) {
+					substr($code, $-[1], $+[1]-$-[1])= $testcase;
 				} else {
-					$code .= "# AUTO GENERATED\n"
-						  .  "subtest $test->{name} => sub {\n"
-						  .  $testcase
-						  .  "};\n\n";
+					$code .= join "\n",
+						"# AUTO GENERATED",
+						"subtest $test->{name} => sub {",
+						$testcase,
+						"};\n\n";
 				}
 			}
 		}
+		$code .= "done_testing\n";
 		if ($code ne $prev) {
 			my $fh;
 			open($fh, '>', $dest) && (print $fh $code) && close $fh or die "Failed to write '$dest'\n";
 		}
 	}
+}
+
+sub output_text_to_perl {
+	my $string= shift;
+	my %escapes= (
+		"\n" => '\\n',
+		"\t" => '\\t',
+		'$' => '\\$',
+		'@' => '\\@',
+	);
+	sub esc {
+		defined $escapes{$_}? $escapes{$_} : sprintf("\\x%02X", ord)
+	}
+	return ' '.join "\n.", map { s/[\$\@\"\\\x0-\x1F\x7F-\xFF]/esc/eg; qq{"$_\\n"} }
+		split /\n/, $string;
 }
 
 1;

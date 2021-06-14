@@ -1,11 +1,16 @@
+build_script_dir = ../script
+
 ACLOCAL_AMFLAGS=-I m4
 
 lib_LTLIBRARIES = libuserp.la
-libuserp_la_SOURCES = userp_env.c
+libuserp_la_SOURCES = diag.c
+
+check_PROGRAMS = unittest
+unittest_SOURCES = unittest.c
+unittest_autoscan = diag.c
+unittest_autogen_tests = $(addprefix t/,$(patsubst %.c,%.t,$(unittest_autoscan)))
 
 AM_CPPFLAGS=-I$(top_srcdir)
-
-tests=$(subst .c,.t,$(wildcard test/*.c))
 
 CP=cp
 PROVE=prove
@@ -14,18 +19,7 @@ PROVE=prove
 # with a blank file when distributed.
 include dev_rules.mak
 
-# needed for default automake rule when processing test/ files
-$(tests): .deps/test
-
-include .deps/test/*.Po
-
-.deps/test:
-	mkdir -p .deps/test
-
-.o.t:
-	$(COMPILE) -o $@ $<
-
-test: $(tests)
-	prove -v test/
+test: unittest
+	env TEST_ENTRYPOINT=unittest prove -lv t/
 
 .PHONY: test

@@ -62,7 +62,7 @@ extern void userp_env_set_file_logger(userp_env env, FILE *dest);
 extern void userp_env_set_logger(userp_env env, userp_diag_fn diag_callback, void *callback_data);
 
 // Reader callback, request bytes_needed to be appended to buffers
-typedef bool userp_reader_fn(void *callback_data, userp_bstrings* buffers, size_t bytes_needed, userp_env env);
+typedef bool userp_reader_fn(void *callback_data, userp_bstr* buffers, size_t bytes_needed, userp_env env);
 
 /** Reference-counted buffer wrapper
  *
@@ -137,7 +137,7 @@ struct userp_bstr {
 extern userp_bstr userp_new_bstr(userp_env env, int part_alloc_count);
 extern void userp_free_bstr(userp_bstr *str);
 extern void* userp_bstr_append_bytes(userp_bstr *str, size_t n_bytes, const void* src_bytes);
-extern bool userp_bstr_append_parts(userp_bstr *str, size_t n_parts, const userp_bstr_part *src_parts);
+extern bool userp_bstr_append_parts(userp_bstr *str, size_t n_parts, const struct userp_bstr_part *src_parts);
 extern bool userp_bstr_append_stream(userp_bstr *str, FILE *f, int64_t length);
 extern bool userp_bstr_map_file(userp_bstr *str, FILE *f, int64_t offset, int64_t length);
 extern bool userp_bstr_splice(userp_bstr *dst, size_t dst_ofs, size_t dst_len, userp_bstr *src, size_t src_ofs, size_t src_len);
@@ -173,9 +173,9 @@ extern const userp_type userp_stream1_Int32U;       /* 32-bit little-endian unsi
 extern const userp_type userp_stream1_Int64;        /* 64-bit little-endian integer */
 extern const userp_type userp_stream1_Int64U;       /* 64-bit little-endian unsigned integer */
 
-bool          userp_create_stream(userp_env env, int version);
-bool          userp_parse_stream(userp_env env, userp_bstrings);
-userp_bstrings userp_get_buffers(userp_env env);
+//bool          userp_create_stream(userp_env env, int version);
+//bool          userp_parse_stream(userp_env env, userp_bstrings);
+//userp_bstrings userp_get_buffers(userp_env env);
 //bool          userp_stream_set_header(userp_context stream, const char *name, const char *value);
 //const char *  userp_stream_get_header(userp_context stream, const char *name);
 
@@ -196,7 +196,7 @@ bool userp_enc_bytes_zerocopy(userp_enc enc, const void* buf, size_t length);
 bool userp_enc_string(userp_enc enc, const char* str);
 
 
-userp_dec userp_dec_new(userp_scope scope, userp_bstrings source, userp_type root_type);
+userp_dec userp_dec_new(userp_scope scope, userp_bstr source, userp_type root_type);
 bool userp_dec_free(userp_dec);
 void userp_dec_set_reader(userp_reader_fn, void *callback_data);
 userp_scope userp_dec_get_scope(userp_dec dec);
@@ -234,6 +234,6 @@ bool userp_dec_float(userp_dec dec, float *out, bool truncate);
 bool userp_dec_double(userp_dec dec, double *out, bool truncate);
 // Copy out the bytes of the current node, as-is
 bool userp_dec_bytes(userp_dec dec, void *out, size_t *length_inout, size_t elem_size, int flags);
-userp_bstrings userp_dec_bytes_zerocopy(userp_dec dec, size_t elem_size, int flags);
+userp_bstr userp_dec_bytes_zerocopy(userp_dec dec, size_t elem_size, int flags);
 
 #endif

@@ -8,7 +8,6 @@ use File::Spec;
 use Getopt::Long;
 use Pod::Usage;
 use Cwd;
-use CTap;
 sub src_path; sub dst_path; sub make; sub freshen_file; sub mk_path;
 
 =head1 SYNOPSIS
@@ -75,12 +74,11 @@ for (<$proj_root/src/*>) {
 	my ($fname)= ($_ =~ m|([^/\\]+)$|);
 	freshen_file($_, dst_path($fname));
 }
-mk_path dst_path('test');
-for my $t_file (<$proj_root/test/*.c>) {
-	my ($fname)= ($t_file =~ m|([^/\\]+)$|);
-	unlink dst_path('test',$fname);
-	CTap->new(inline => !$opt_symlink)->include($t_file)->write(dst_path('test',$fname));
-}
+mk_path(dst_path('t'));
+for (<$proj_root/t/*>) {
+	my ($fname)= ($_ =~ m|([^/\\]+)$|);
+	freshen_file($_, dst_path('t',$fname));
+}	
 
 # Install autoconf files
 
@@ -121,7 +119,7 @@ if ($opt_tarball) {
 	...;
 }
 
-#------------------- functions ----------------
+#------------------- utility functions ----------------
 
 sub freshen_file {
 	my ($src, $dst)= @_;

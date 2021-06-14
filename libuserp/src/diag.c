@@ -1,3 +1,6 @@
+#include "local.h"
+#include "userp_private.h"
+
 /*
 ## userp_diag
 
@@ -134,7 +137,7 @@ or ``` -1 - bytes_written ``` if there is an I/O error.
 
 */
 
-static int userp_process_diag_tpl(userp_env_t *env, char *buf, size_t buf_len, FILE *fh);
+static int userp_process_diag_tpl(userp_diag diag, char *buf, size_t buf_len, FILE *fh);
 
 int userp_diag_format(userp_diag diag, char *buf, size_t buflen) {
 	return userp_process_diag_tpl(diag, buf, buflen, NULL);
@@ -198,9 +201,9 @@ int userp_process_diag_tpl(userp_diag diag, char *buf, size_t buf_len, FILE *fh)
 				from= diag->buf->data + diag->pos;
 				n= diag->len;
 				break;
-			case USERP_DIAG_CSTR1:
+			case USERP_DIAG_CSTR1_ID:
 				from= diag->cstr1; if (0)
-			case USERP_DIAG_CSTR2:
+			case USERP_DIAG_CSTR2_ID:
 				from= diag->cstr2;
 				n= strlen(from);
 			}
@@ -229,9 +232,9 @@ int userp_process_diag_tpl(userp_diag diag, char *buf, size_t buf_len, FILE *fh)
 void userp_diag_set(userp_diag diag, int code, const char *tpl, userp_buffer buf) {
 	diag->code= code;
 	diag->tpl= tpl;
-	if (diag->buf) userp_drop_buffer(diag->buf);
-	diag_buf= buf;
-	if (buf) userp_grab_buffer(diag->buf);
+	//if (diag->buf) userp_drop_buffer(diag->buf);
+	diag->buf= buf;
+	//if (buf) userp_grab_buffer(diag->buf);
 }
 
 
@@ -244,11 +247,11 @@ UNIT_TEST(simple_string) {
 
 	userp_diag_set(&d, 1, "Simple string", NULL);
 	wrote= userp_diag_print(&d, stdout);
-	printf(stdout, "\nwrote=%d\n", wrote);
+	printf("\nwrote=%d\n", wrote);
 
 	userp_diag_set(&d, 1, "", NULL);
 	wrote= userp_diag_print(&d, stdout);
-	printf(stdout, "\nwrote=%d\n", wrote);
+	printf("\nwrote=%d\n", wrote);
 }
 /*OUTPUT
 Simple string
@@ -264,13 +267,13 @@ UNIT_TEST(tpl_ref_static_string) {
 	userp_diag_set(&d, 1, "String ref '" USERP_DIAG_CSTR1 "'", NULL);
 	d.cstr1= "TEST";
 	wrote= userp_diag_print(&d, stdout);
-	printf(stdout, "\nwrote=%d\n", wrote);
+	printf("\nwrote=%d\n", wrote);
 
 	userp_diag_set(&d, 1, "String ref '" USERP_DIAG_CSTR2 "', and '" USERP_DIAG_CSTR1 "'", NULL);
 	d.cstr1= "1";
 	d.cstr2= "2";
 	wrote= userp_diag_print(&d, stdout);
-	printf(stdout, "\nwrote=%d\n", wrote);
+	printf("\nwrote=%d\n", wrote);
 }
 /*OUTPUT
 String ref 'TEST'
