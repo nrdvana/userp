@@ -154,13 +154,9 @@ sub write_entrypoint {
 	print "Writing entrypoint '$dest'\n";
 	my $fh;
 	open($fh, '>', $dest) && (print $fh <<END) && close $fh or die "Can't write to $dest\n";
-#define WITH_UNIT_TESTS
 #include "local.h"
-#include "userp.h"
-
 #define UNIT_TEST(name) void name(int argc, char **argv)
-#define TRACE(x...) fprintf(stderr, "# " x)
-
+#define TRACE(env, x...) do{ if(env->log_trace){ userp_diag_set(env->diag,x); userp_env_emit_diag(env); } }while(0)
 #include "userp_private.h"
 
 @{[ map qq:#include "$_"\n:, sort @used_src ]} 

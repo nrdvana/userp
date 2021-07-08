@@ -10,28 +10,32 @@ typedef struct userp_enc *userp_enc;
 typedef struct userp_dec *userp_dec;
 typedef struct userp_buffer *userp_buffer;
 typedef struct userp_bstr *userp_bstr;
+typedef uint_least32_t userp_flags;
 
-// -------------------------- userp_diag.c -----------------------------------
+// ----------------------------- diag.c --------------------------------------
 
 #define USERP_IS_FATAL(code) ((code>>13) == 3)
 #define USERP_IS_ERROR(code) ((code>>13) == 2)
 #define USERP_IS_WARN(code)  ((code>>13) == 1)
 #define USERP_IS_DEBUG(code) ((code>>13) == 0)
 
-#define USERP_EALLOC        0x6001 /* failure to alloc or realloc or free */
-#define USERP_EINVAL        0x6002 /* invalid argument given to API */
-#define USERP_EASSERT       0x6003 /* internal assertion failure */
-#define USERP_ESTRINDEX     0x6004 /* userp_bstr part[i].ofs is invalid */
-#define USERP_EDOINGITWRONG 0x6005 /* exceeding sensible limits imposed by the library */
-#define USERP_ETYPESCOPE    0x6006 /* userp_type is not available in the current scope */
-#define USERP_ESYSERROR     0x6007 /* You asked libuserp to make a system call, and the system call failed. */
-#define USERP_EEOF          0x4002 /* unexpected end of input */
-#define USERP_ELIMIT        0x4003 /* decoded data exceeds a constraint */
-#define USERP_ESYMBOL       0x4004 /* symbol table entry is not valid */
-#define USERP_WLARGEMETA    0x2001 /* encoded or decoded metadata is suspiciously large */
-
-#define USERP_WARN_EOF
-/* TODO */
+// Fatal errors (unlikely to be able to recover)
+#define USERP_EFATAL        0x6000 // Generic fatal error
+#define USERP_EBADSTATE     0x6001 // A userp object is in an invalid state / double-free / use-after-free
+// Regular errors (recoverable if caller watches return value)
+#define USERP_ERROR         0x4000 // Generic recoverable error
+#define USERP_EALLOC        0x4001 // failure to alloc or realloc or grab a reference
+#define USERP_EDOINGITWRONG 0x4002 // bad request made to the API, or exceed library internal limitation
+#define USERP_ETYPESCOPE    0x4003 // userp_type is not available in the current scope
+#define USERP_ESYSERROR     0x4004 // You asked libuserp to make a system call, and the system call failed
+#define USERP_EPROTOCOL     0x4100 // Generic error while decoding protocol
+#define USERP_EFEEDME       0x4101 // More data required to continue decoding
+#define USERP_ELIMIT        0x4102 // decoded data exceeds a limit
+#define USERP_ESYMBOL       0x4103 // symbol table entry is not valid
+#define USERP_ETYPE         0x4104 // type definition is not valid
+// Warnings
+#define USERP_WARN          0x2000 // generic warning
+#define USERP_WLARGEMETA    0x2001 // encoded or decoded metadata is suspiciously large
 
 extern int    userp_diag_get_code(userp_diag diag);
 extern bool   userp_diag_get_buffer(userp_diag diag, userp_buffer *buf_p, size_t *pos_p, size_t *len_p);
@@ -42,7 +46,7 @@ extern const char *userp_diag_code_name(int code);
 extern int    userp_diag_format(userp_diag diag, char *buf, size_t buflen);
 extern int    userp_diag_print(userp_diag diag, FILE *fh);
 
-// --------------------------- userp_env.c -----------------------------------
+// ------------------------------ env.c --------------------------------------
 
 #define USERP_HINT_STATIC             0x0001
 #define USERP_HINT_DYNAMIC            0x0002
@@ -52,7 +56,12 @@ extern int    userp_diag_print(userp_diag diag, FILE *fh);
 #define USERP_POINTER_IS_BUFFER_DATA  0x0100
 #define USERP_ALLOC_FLAG_BITS         0x011F
 
-typedef bool userp_alloc_fn(void *callback_data, void **pointer, size_t new_size, int flags);
+typedef bool userp_alloc_fn(void *callback_data, void **pointer, size_t new_size, userp_flags flags);
+typedef void userp_diag_fn(void *callback_data, userp_diag diag, int diag_code);
+
+extern userp_env userp_new_env(userp_alloc_fn alloc_callback, userp_diag_fn diag_callback, void *callback_data, userp_flags flags);
+extern bool userp_grab_env(userp_env env);
+extern void userp_drop_env(userp_env env);
 
 #define USERP_LOG_LEVEL               0x0001
 
@@ -67,20 +76,18 @@ typedef bool userp_alloc_fn(void *callback_data, void **pointer, size_t new_size
 #define USERP_MEASURE_TWICE                1
 #define USERP_RUN_WITH_SCISSORS            2
 
-typedef void userp_diag_fn(void *callback_data, userp_diag diag, int diag_code);
+void userp_env_set_attr(userp_env env, int attr_id, size_t value) {
+
 extern void userp_file_logger(void *callback_data, userp_diag diag, int code);
 extern void userp_env_set_logger(userp_env env, userp_diag_fn diag_callback, void *callback_data);
 extern userp_diag userp_env_get_last_error(userp_env env);
 
-// Create a main Userp environment object, with initial reference count of 1
-extern userp_env userp_new_env(userp_alloc_fn alloc_callback, userp_diag_fn diag_callback, void *callback_data, int flags);
-// Acquite additional reference to a userp environment
-extern bool userp_grab_env(userp_env env);
-// Release a reference to a userp environment
-extern void userp_drop_env(userp_env env);
+// ------------------------------- bstr.c ------------------------------------
 
+#define USERP_BUFFER_STATIC        0x001000
+#define USERP_BUFFER_ENV_ALLOC     0x002000
+#define USERP_BUFFER_MMAP          0x004000
 
-// Reader callback, request bytes_needed to be appended to buffers
 typedef bool userp_reader_fn(void *callback_data, userp_bstr* buffers, size_t bytes_needed, userp_env env);
 
 /** Reference-counted buffer wrapper
@@ -138,20 +145,22 @@ struct userp_buffer {
 #define USERP_FIELD_OFFSET(type,field) ((int)( ((int)&(((type*)64)->field)) - 64 ))
 #define USERP_GET_BUFFER_FROM_DATA_PTR(data_ptr) ((userp_buffer)( ((char*)data_ptr) - USERP_FIELD_OFFSET(struct userp_buffer, data) ))
 
-extern userp_buffer userp_new_buffer(userp_env env, void *data, size_t alloc_len, int flags);
+extern userp_buffer userp_new_buffer(userp_env env, void *data, size_t alloc_len, userp_flags flags);
 extern bool userp_grab_buffer(userp_buffer buf);
 extern void userp_drop_buffer(userp_buffer buf);
 
-
+struct userp_bstr_part {
+	uint8_t *data;
+	userp_buffer buf;
+	size_t ofs, len;
+};
 struct userp_bstr {
 	userp_env env;
 	size_t part_count, part_alloc;
-	struct userp_bstr_part {
-		uint8_t *data;
-		userp_buffer buf;
-		size_t ofs, len;
-	} parts;
+	struct userp_bstr_part parts[];
 };
+
+#define USERP_SIZEOF_BSTR(n_parts) (sizeof(struct userp_bstr) + sizeof(struct userp_bstr_part)*n_parts)
 
 extern userp_bstr userp_new_bstr(userp_env env, int part_alloc_count);
 extern void userp_free_bstr(userp_bstr *str);
@@ -214,22 +223,28 @@ bool userp_enc_bytes(userp_enc enc, const void* buf, size_t length);
 bool userp_enc_bytes_zerocopy(userp_enc enc, const void* buf, size_t length);
 bool userp_enc_string(userp_enc enc, const char* str);
 
+// -------------------------------- dec.c ------------------------------------
 
-userp_dec userp_dec_new(userp_scope scope, userp_bstr source, userp_type root_type);
+userp_dec userp_dec_new(userp_scope scope, userp_type root_type, userp_bstr source);
 bool userp_dec_free(userp_dec);
 void userp_dec_set_reader(userp_reader_fn, void *callback_data);
 userp_scope userp_dec_get_scope(userp_dec dec);
 
-// Get the tree-depth of the current node
-int userp_dec_node_depth(userp_dec dec);
-// Get the type of the current node or its parents, optionally inspecting Choice sub-types
-userp_type userp_dec_node_type(userp_dec dec, int parent_level, int choice_subtype);
-// Inspect the count and size of array dimensions in the current node, or a parent
-size_t userp_dec_node_dimensions(userp_dec dec, int parent_level, int dimension);
-// Get the number of fields in a record or elements in an array
-size_t userp_dec_node_elem_count(userp_dec dec, int parent_level);
-// Get the current iteration offset within an array/record node
-bool userp_dec_node_elem_pos(userp_dec dec, int parent_level, size_t *idx, userp_symbol *field_name);
+struct userp_node_info {
+	userp_type node_type;
+	size_t node_depth;
+	size_t subtype_count;
+	const userp_type *subtypes;
+	size_t array_dim_count;
+	const size_t *array_dims;
+	size_t elem_count;
+	const uint8_t
+		*data_start,
+		*data_limit;
+};
+
+// Parse the current node if not parsed yet and return a struct describing it
+const struct userp_node_info *userp_dec_node_info(userp_dec dec);
 // Skip the current node and move to the next element in the parent array or record
 bool userp_dec_skip(userp_dec dec);
 // Decode the current node as an integer, and move to the next node if successful
@@ -244,15 +259,17 @@ bool userp_dec_typeref(userp_dec dec, userp_type *out);
 bool userp_dec_begin(userp_dec dec, size_t *n_elem);
 // Stop iterating an array or record and set the current node to the following element, if any
 bool userp_dec_end(userp_dec dec, int parent_level);
+// Get the current iteration offset within an array/record node
+bool userp_dec_tell(userp_dec dec, int parent_level, size_t *idx, userp_symbol *field_name);
 // Seek to the specified array index or field number of the parent node
-bool userp_dec_seek_elem(userp_dec dec, int elem_idx);
+bool userp_dec_seek(userp_dec dec, int parent_level, int elem_idx);
 // Seek to the named field of the most recent parent record node
-bool userp_dec_seek_field(userp_dec dec, userp_symbol fieldname);
+bool userp_dec_seek_field(userp_dec dec, int parent_level, userp_symbol fieldname);
 // Decode the current node as a `float` and move to the next node
 bool userp_dec_float(userp_dec dec, float *out, bool truncate);
 bool userp_dec_double(userp_dec dec, double *out, bool truncate);
 // Copy out the bytes of the current node, as-is
-bool userp_dec_bytes(userp_dec dec, void *out, size_t *length_inout, size_t elem_size, int flags);
+bool userp_dec_bytes(userp_dec dec, void *out, size_t *length_inout, size_t elem_size, userp_flags flags);
 userp_bstr userp_dec_bytes_zerocopy(userp_dec dec, size_t elem_size, int flags);
 
 #endif

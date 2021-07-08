@@ -22,3 +22,4 @@
 #include <fcntl.h>
 
 #define HAVE_POSIX_FILES
+#include <errno.h>
