@@ -2,7 +2,7 @@
 #define USERP_PRIVATE_H
 #include "userp.h"
 
-// -------------------------- userp_diag.c -----------------------------------
+// ----------------------------- diag.c --------------------------------------
 
 struct userp_diag {
 	int code;
@@ -34,9 +34,10 @@ struct userp_diag {
 #define USERP_DIAG_BUFSTR_ID        0x0B
 #define USERP_DIAG_BUFSTR      "\x01\x0B"
 
-void userp_diag_set(userp_diag diag, int code, const char *tpl, userp_buffer buf);
+void userp_diag_set(userp_diag diag, int code, const char *tpl);
+void userp_diag_setf(userp_diag diag, int code, const char *tpl, ...);
 
-// --------------------------- userp_env.c -----------------------------------
+// ------------------------------ env.c --------------------------------------
 
 struct userp_env {
 	userp_alloc_fn *alloc;
@@ -48,7 +49,8 @@ struct userp_env {
 		measure_twice: 1,
 		log_warn: 1,
 		log_debug: 1,
-		log_trace: 1;
+		log_trace: 1,
+		log_suppress: 1;
 	
 	/* Storage for error conditions */
 	struct userp_diag err, // Most recent error
@@ -62,6 +64,9 @@ extern bool userp_alloc_array(userp_env env, void **pointer, size_t elem_size, s
 #define USERP_ALLOC_ARRAY(env, ptr, count) userp_alloc_array(env, ptr, sizeof(**ptr), count, USERP_HINT_DYNAMIC, #ptr+1)
 #define USERP_FREE(env, ptr) userp_alloc(env, ptr, 0, 0, NULL);
 
+#define USERP_CLEAR_ERROR(env) ((env)->err->code= 0)
+#define USERP_DISPATCH_ERROR(env) do { if ((env)->err.code) env->diag(env->diag_cb_data, &env->err, env->err.code); } while (0)
+
 #define SIZET_MUL_CAN_OVERFLOW(a, b) ( \
 	( \
 		(((size_t)(a) >> sizeof(size_t)*4) + 1) \
@@ -71,13 +76,15 @@ extern bool userp_alloc_array(userp_env env, void **pointer, size_t elem_size, s
 
 
 #ifndef USERP_BSTR_PART_ALLOC_ROUND
-#define USERP_BSTR_PART_ALLOC_ROUND(x) (((x) + 8 + 15) & 15)
+#define USERP_BSTR_PART_ALLOC_ROUND(x) (((x) + 8 + 15) & ~15)
 #endif
 #ifndef USERP_BUFFER_DATA_ALLOC_ROUND
-#define USERP_BUFFER_PART_ALLOC_ROUND(x) (((x) + 4095) & 4095)
+#define USERP_BUFFER_PART_ALLOC_ROUND(x) (((x) + 4095) & ~4095)
 #endif
 
-// -------------------------- userp_buffer.c ------------------------
+// -------------------------------- bstr.c -----------------------------------
+
+#define USERP_SIZEOF_BSTR(n_parts) (sizeof(struct userp_bstr) + sizeof(struct userp_bstr_part)*n_parts)
 
 
 // -------------------------- userp_scope.c --------------------------
@@ -182,7 +189,7 @@ struct userp_scope {
 
 userp_symbol userp_scope_add_symbol(userp_scope scope, const char *name);
 
-// -------------------------- userp_dec.c ---------------------------
+// ----------------------------- dec.c -------------------------------
 
 struct userp_dec {
 	userp_env env;
@@ -192,8 +199,46 @@ struct userp_dec {
 	userp_bstr input;
 	userp_reader_fn *reader;
 	void * reader_cb_data;
+	// The struct ends with a userp_bstr instance, allocated to a default
+	// length specified in the environment.  As long as the input buffers
+	// can fit in this bstr, ->input doesn't need a second allocation.
+	struct userp_bstr input_inst;
 };
 
+struct userp_dec_frame {
+	int frame_type;
+	userp_type node_type, parent_type;
+	size_t elem_i, elem_lim;
+	
+	userp_type array_type, rec_type, 
+};
+
+extern userp_dec userp_new_dec_silent(
+	userp_env env, userp_scope scope, userp_type root_type,
+	userp_buffer buffer_ref, uint8_t bytes, size_t n_bytes
+);
+extern bool userp_grab_dec_silent(userp_env env, userp_dec dec);
+extern void userp_drop_dec_silent(userp_env env, userp_dec dec);
+
+
+#define FRAME_TYPE_RECORD  1
+#define FRAME_TYPE_ARRAY   2
+#define FRAME_TYPE_CHOICE  3
+#define FRAME_TYPE_INT     4
+#define FRAME_TYPE_SYM     5
+#define FRAME_TYPE_TYPE    6
+
+#define FRAME_BY_PARENT_LEVEL(dec, parent_level) \
+	parent_level < 0? ( -1-parent_level <= dec->stack_i? dec->stack[-1-parent_level] : NULL ) \
+	: ( parent_level <= dec->stack_i? dec->stack[dec->stack_i - parent_level] : NULL )
+
+#ifndef USERP_DEC_FRAME_ALLOC_ROUND
+#define USERP_DEC_FRAME_ALLOC_ROUND(x) (((x) + 31) & ~15)
+#endif
+
 #define CATCH(label) if (0) label: 
+
+void userp_unimplemented(const char* msg);
+#define unimplemented(x) userp_unimplemented(x)
 
 #endif /* USERP_PROTECTED_H */

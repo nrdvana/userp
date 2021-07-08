@@ -1,44 +1,227 @@
-/*
-## userp_dec
+#include "config.h"
+#include "userp_protected.h"
 
-The decoder object `userp_dec` parses a Userp data structure from a series of buffers.
+typedef struct userp_dec_frame *frame;
+
+static void frame_init(userp_dec dec, frame f, userp_type t);
+static void frame_destroy(userp_dec dec, frame f);
+
+/*APIDOC
+## userp_env
+
+### Synopsis
+
+  userp_dec dec= userp_new_dec(scope, root_type, null, buffer, n_bytes);
+  if (!dec)
+    die("can't initialize decoder");
+  userp_symbol mydata_sym= userp_scope_get_symbol(scope, "mydata");
+  if (!userp_dec_begin(dec, NULL)
+	|| !userp_dec_seek_field(dec, mydata_sym)
+	|| !(str= userp_dec_bytes_zerocopy(dec, sizeof(int), USERP_DEC_ARRAY)))
+	die("Error loading 'mydata' from stream");
+  int *my_data= (int*) str->parts[0].data;
+
+### Description
+
+A Userp decoder object parses a buffer of bytes that you supply.  It either decodes data nodes
+into variables of the host language (copy) or marks the boundaries of a host-language-compatible
+data node within the byte buffer (nocopy).
+
+### Construction & Lifecycle
+
+Decoder objects are created with `userp_new_dec`, referencing a `userp_scope`, root type, and
+optional initial buffer.  The decoder increments the reference count of the scope, which in turn
+is holding a reference to a `userp_env`.  The root type reference is also held by the scope,
+either directly or by a parent scope.  Decoder objects are also reference counted, though
+currently nothing in libuserp makes references to them.
+
+When supplying byte strings for the decoder, you may include a reference to a `userp_buf`. If you
+do, the decoder will add references to that buffer as needed.  If you do not, it is assumed that
+you guarantee that the byte array has a longer lifespan that the decoder object.  (this is hard to
+guarantee if you start mking multiple references to the decoder)
+
+#### userp_new_dec
+
+    userp_dec dec= userp_new_dec(
+      env,           // environment to which userp_dec should be attached
+      scope,         // userp_scope object, required
+      root_type,     // userp_type reference, required, must be found in scope
+      buffer_ref,    // optionl reference to userp_buf, used to track lifespan of bytes
+      bytes,         // pointer to start of buffer for decoder
+      n_bytes        // number of bytes available
+    );
+    ...
+    userp_drop_dec(dec);
+
+This creates a new decoder in the context of `env`.  The decoder is given a scope that determines
+what types and symbols are available; it must(*) be identical to the scope that was used while
+encoding the bytes.  The `root_type` specifies what to be decoded; it must also be the same as
+used by the encoder.  The `buffer_ref` is an optional reference to a `userp_buf` used to track the
+lifespan of the pointer `bytes`.  `buffer_ref` does not need to be created from the same
+`userp_env`, but in a multithreaded program you must make sure that it comes from a `userp_env`
+exclusive to the current thread.  `bytes` is a pointer to the beginning of the encoded data.  It
+is optional, and you can supply more bytes later using `userp_dec_feed`.  If the `buffer_ref` is
+not null, `bytes` must point within the bytes of that buffer.  If `n_bytes` is zero, `buffer_ref`
+and `bytes` are ignored as if they were not supplied.
+
+On success, this returns the new decoder, with a reference count of 1; free this when you are done
+with it using `userp_drop_dec`.  On failure, it emits a diagnostic via `env` (which may be fatal)
+and then returns NULL.
+
+[*] unless you're really careful
+
+#### userp_grab_dec
+
+    bool success= userp_grab_dec(env, dec);
+
+This adds a reference to the specified `userp_dec` object.  It can fail if the reference count
+hits INT_MAX (unlikely) or if `dec` was previously destroyed. (but that case overlaps with
+undefined behavior, unless you enable the USERP_MEASURE_TWICE option).  Errors (if any) are
+reported via the `env`.  `env` may be null to deliberately skip any safety or error reporting.
+
+#### userp_drop_dec
+
+    userp_drop_dec(env, dec);
+
+Release a reference to the `userp_dec`, possibly destroying it if the last reference is removed.
+It is undefined behavior to drop a decoder that was already freed, unless you enable the
+USERP_MEASURE_TWICE option.  Errors (if any) are reported via the `env`. `env` may be null to
+deliberately skip any safety or error reporting.
 
 */
 
-struct userp_dec_frame;
+userp_dec userp_new_dec(
+	userp_env env, userp_scope scope, userp_type root_type,
+	userp_buffer buffer_ref, uint8_t bytes, size_t n_bytes
+) {
+	userp_dec dec;
+	USERP_CLEAR_ERROR(env);
+	dec= userp_new_dec_silent(env, scope, root_type, buffer_ref, bytes, n_bytes);
+	USERP_DISPATCH_ERROR(env);
+	return dec;
+}
 
-struct userp_dec {
-	userp_env env;
-	userp_scope scope;
-	struct userp_dec_frame *stack;
-	size_t stack_i, stack_lim;
-	userp_bstrings buf;
-	userp_reader_fn reader;
-	void * reader_cb_data;
-};
+userp_dec userp_new_dec_silent(
+	userp_env env, userp_scope scope, userp_type root_type,
+	userp_buffer buffer_ref, uint8_t bytes, size_t n_bytes
+) {
+	userp_dec dec= NULL;
+	frame stack= NULL;
+	size_t n_frames= USERP_DEC_FRAME_ALLOC_ROUND(1);
+	size_t n_input_parts= 4;//enc->decoder_alloc_input_parts_typical;
+	bool got_scope= flase;
 
-#define FRAME_TYPE_RECORD  1
-#define FRAME_TYPE_ARRAY   2
-#define FRAME_TYPE_CHOICE  3
-#define FRAME_TYPE_INT     4
-#define FRAME_TYPE_SYM     5
-#define FRAME_TYPE_TYPE    6
-struct userp_dec_frame {
-	int frame_type;
-	userp_type node_type, parent_type;
-	size_t elem_i, elem_lim;
-	
-	userp_type array_type, rec_type, 
-};
-typedef struct userp_dec_frame *frame;
+	if (!env->run_with_scissors) {
+		if (!scope || !root_type || !userp_scope_contains_type(scope, root_type)) {
+			userp_diag_set(&env->err, USERP_ETYPESCOPE, "Invalid root type");
+			return NULL;
+		}
+		if (n_bytes && bytes && buffer_ref) {
+			if (bytes < buffer_ref->data || bytes > buffer_ref->data + buffer_ref->alloc_len) {
+				userp_diag_set(&env->err, USERP_EBUFPOINTER, "Byte pointer is not within buffer");
+				return NULL;
+			}
+		}
+	}
+	// Perform all allocations, and if any fail, free them all
+	if (!userp_alloc(env, &dec, sizeof(*dec) + sizeof(struct userp_bstr_part)*n_input_parts, USERP_HINT_STATIC, "userp_dec")
+		|| !USERP_ALLOC_ARRAY(env, &stack, n_frames)
+		// decoder holds a reference to the scope
+		|| !(got_scope= userp_grab_scope_silent(env, scope))
+		|| (n_bytes && bytes && buffer_ref && !userp_grab_buffer_silent(env, buffer_ref))
+	) {
+		if (got_scope) userp_drop_scope_silent(env, scope);
+		USERP_FREE(env, &stack);
+		USERP_FREE(env, &dec);
+		// The userp_env->diag_code will already be set by one of the allocation functions
+		return NULL;
+	}
+	bzero(dec, sizeof(*dec));
+	dec->env= env;
+	dec->scope= scope;
+	// initialize the first decoder stack element with the root type
+	frame_init(&stack[0], root_type);
+	dec->stack= stack;
+	dec->stack_lim= n_frames;
+	// initial storage for input bstr is found at end of this record
+	dec->input= &dec->input_inst;
+	dec->input_inst.part_alloc= n_input_parts;
+	// Initialize buffer, if provided
+	if (n_bytes && bytes) {
+		dec->input_inst.part_count= 1;
+		dec->input_inst.parts[0].data= bytes;
+		dec->input_inst.parts[0].len= n_bytes;
+		dec->input_inst.parts[0].buf= buffer_ref; // ref count was handled above
+	}
+	return dec;
+}
 
-#define FRAME_BY_PARENT_LEVEL(dec, parent_level) \
-	parent_level < 0? ( -1-parent_level <= dec->stack_i? dec->stack[-1-parent_level] : NULL ) \
-	: ( parent_level <= dec->stack_i? dec->stack[dec->stack_i - parent_level] : NULL )
+void dec_free(userp_dec dec) {
+	size_t i;
+	do {
+		frame_destroy(dec->stack[dec->stack_i]);
+	} while (dec->stack_i-- > 0); 
+	USERP_FREE(dec->env, &dec->stack);
+	if (dec->input == &dec->input_inst) {
+		for (i= 0; i < dec->part_count; i++) {
+			if (dec->input_inst.parts[i].buf)
+				userp_drop_buffer(dec->env, dec->input_inst.parts[i].buf);
+		}
+	} else if (dec->input)
+		userp_bstr_free(dec->input);
+	userp_drop_scope_silent(dec->env, dec->scope);
+	USERP_FREE(dec->env, &dec);
+}
 
-static void unimplemented(const char* msg) {
-	fprintf(stderr, "Unimplemented: %s", msg);
-	abort();
+bool userp_grab_dec(userp_env env, userp_dec dec) {
+	if (env) USERP_CLEAR_ERROR(env);
+	if (userp_grab_dec_silent(env, dec))
+		return true;
+	if (env) USERP_DISPATCH_ERROR(env);
+	return false;
+}
+
+bool userp_grab_dec_silent(userp_env env, userp_dec dec) {
+	if (env && env->measure_twice) {
+		unimplemented("verify dec belongs to env");
+		// remove dec from env's set if dec is getting freed
+	}
+	if (++dec->refcnt)
+		return true;
+	// else, overflow
+	--dec->refcnt;
+	if (env)
+		unimplemented("report grab_dec failed");
+	return false;
+}
+
+void userp_drop_dec(userp_env env, userp_dec dec) {
+	if (env) USERP_CLEAR_ERROR(env);
+	userp_drop_dec_silent(env, dec);
+	if (env) USERP_DISPATCH_ERROR(env);
+}
+
+void userp_drop_dec_silent(userp_env env, userp_dec dec) {
+	if (env && env->measure_twice) {
+		unimplemented("verify dec belongs to env");
+	}
+	if (dec->refcnt && !--dec->refcnt) {
+		dec_free(dec);
+	}
+}
+
+void frame_init(userp_dec dec, frame f, userp_type t) {
+	bzero(f, sizeof(*f));
+	f->node_type= t;
+	unimplemented("initialize frame");
+}
+void frame_destroy(userp_dec dec, frame f) {
+	unimplemented("destroy frame");
+}
+
+void userp_dec_set_reader(userp_dec dec, userp_reader_fn reader, void *callback_data) {
+	dec->reader= reader;
+	dec->reader_cb_data= callback_data;
 }
 
 /*
