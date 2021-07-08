@@ -134,7 +134,8 @@ bool userp_grab_env(userp_env env) {
 	if (++env->refcnt)
 		return true;
 	--env->refcnt;
-	userp_diag_set(&env->err, USERP_EALLOC, "Reference count exceeds size_t", NULL);
+	userp_diag_set(&env->err, USERP_EALLOC, "Reference count exceeds size_t");
+	userp_env_emit_err(env);
 	return false;
 }
 
@@ -181,24 +182,27 @@ The `flags` indicate how the memory will be used:
 
   * USERP_HINT_STATIC
     The memory should not need to grow.  The allocator can optimize by not reserving any extra
-	space at the end for reallocations.
+    space at the end for reallocations.
   * USERP_HINT_DYNAMIC
     The memory is likely to grow.  The allocator can optimize by reserving a larger chunk of
-	memory so that future reallocation does not need to relocate as often.
+    memory so that future reallocation does not need to relocate as often.
   * USERP_HINT_BRIEF
     The memory allocation is short-lived
   * USERP_HINT_PERSIST
     The memory allocation is likely to be held longer than many other allocations
   * USERP_HINT_ALIGN
-    The library is trying to allocate an aligned buffer.  The allocator should return something
-	aligned to a larger degree than normal, like a kilobyte boundary or whole page boundary.
-	(a userp stream may request ANY alignment value, subject to the limits of the userp_env,
-	 and if the allocator returns a buffer insufficiently aligned, the library will reallocate
-	 to a larger size until the buffer contains an address of appropriate alignment)
+    The library is trying to allocate a highly-aligned buffer.  While all allocations should be
+    aligned at least to the largest native type (e.g. long long) this flag means the allocator
+    should return something aligned to a larger degree than normal, like a kilobyte boundary or
+    whole page boundary.
+    (a userp stream may request ANY alignment value (possibly malicious), clamped to the limits
+     configured in userp_env, and if the allocator returns a buffer insufficiently aligned, the
+     library will reallocate to a larger size until the buffer contains a span of bytes of
+     appropriate alignment)
   * USERP_POINTER_IS_BUFFER_DATA
     The pointer referenced is `&buffer->data` of a `userp_buffer` structure.  If the allocator
-	wishes, it can use the macro `USERP_GET_BUFFER_FROM_DATA_PTR` to get a pointer to the buffer
-	and inspect its attributes.
+    wishes, it can use the macro `USERP_GET_BUFFER_FROM_DATA_PTR` to get a pointer to the buffer
+    and inspect its attributes.
 
 The allocator must be set in the initial call to `userp_new_env`, because this is the first moment
 that memory gets allocated for the library.  There is no way to change the allocator later, though
@@ -367,9 +371,7 @@ void userp_env_set_attr(userp_env env, int attr_id, size_t value) {
 	}
 	CATCH(unknown_val) {
 		if (!env->run_with_scissors) {
-			userp_diag_set(&env->err, USERP_EINVAL, "Unknown " USERP_DIAG_CSTR1 ": " USERP_DIAG_INDEX, NULL);
-			env->err.index= (int) value;
-			env->err.cstr1= attr_name;
+			userp_diag_setf(&env->err, USERP_EINVAL, "Unknown " USERP_DIAG_CSTR1 ": " USERP_DIAG_INDEX, attr_name, (int) value);
 			userp_env_emit_err(env);
 		}
 	}
@@ -381,9 +383,9 @@ bool userp_alloc_obj(userp_env env, void **pointer, size_t elem_size, int flags,
 	if (env->alloc(env->alloc_cb_data, pointer, elem_size, flags))
 		return true;
 	if (elem_size)
-		userp_diag_set(&env->err, USERP_ELIMIT, "Unable to allocate " USERP_DIAG_CSTR1 " (" USERP_DIAG_SIZE " bytes)", NULL);
+		userp_diag_set(&env->err, USERP_ELIMIT, "Unable to allocate " USERP_DIAG_CSTR1 " (" USERP_DIAG_SIZE " bytes)");
 	else
-		userp_diag_set(&env->err, USERP_EASSERT, "Unable to free " USERP_DIAG_CSTR1, NULL);
+		userp_diag_set(&env->err, USERP_EASSERT, "Unable to free " USERP_DIAG_CSTR1);
 	env->err.cstr1= obj_name;
 	env->err.size= elem_size;
 	// de-allocation errors need reported immediately, because they can be fatal
@@ -395,18 +397,17 @@ bool userp_alloc_array(userp_env env, void **pointer, size_t elem_size, size_t c
 	size_t n= elem_size * count;
 	// check overflow
 	if (!env->run_with_scissors && SIZET_MUL_CAN_OVERFLOW(elem_size, count)) {
-		userp_diag_set(&env->err, USERP_ELIMIT, "Allocation of " USERP_DIAG_COUNT "x " USERP_DIAG_CSTR1 " (" USERP_DIAG_SIZE ") exceeds size_t", NULL);
-		env->err.size= elem_size;
-		env->err.count= count;
-		env->err.cstr1= elem_name;
+		userp_diag_setf(&env->err, USERP_ELIMIT,
+			"Allocation of " USERP_DIAG_COUNT "x " USERP_DIAG_CSTR1 " (" USERP_DIAG_SIZE ") exceeds size_t",
+			count, elem_name, elem_size);
 		return false;
 	}
 	if (env->alloc(env->alloc_cb_data, pointer, n, flags))
 		return true;
 	if (count)
-		userp_diag_set(&env->err, USERP_ELIMIT, "Unable to allocate " USERP_DIAG_COUNT "x " USERP_DIAG_CSTR1 " (" USERP_DIAG_SIZE " bytes)", NULL);
+		userp_diag_set(&env->err, USERP_ELIMIT, "Unable to allocate " USERP_DIAG_COUNT "x " USERP_DIAG_CSTR1 " (" USERP_DIAG_SIZE " bytes)");
 	else
-		userp_diag_set(&env->err, USERP_EASSERT, "Unable to free array of " USERP_DIAG_COUNT " " USERP_DIAG_CSTR1, NULL);
+		userp_diag_set(&env->err, USERP_EASSERT, "Unable to free array of " USERP_DIAG_COUNT " " USERP_DIAG_CSTR1);
 	env->err.count= count;
 	env->err.cstr1= elem_name;
 	env->err.size= n;
@@ -415,7 +416,12 @@ bool userp_alloc_array(userp_env env, void **pointer, size_t elem_size, size_t c
 	return false;
 }
 
-#ifdef WITH_UNIT_TESTS
+void userp_unimplemented(const char* msg) {
+	fprintf(stderr, "Unimplemented: %s", msg);
+	abort();
+}
+
+#ifdef UNIT_TEST
 
 static bool logging_alloc(void *callback_data, void **pointer, size_t new_size, int flags) {
 	void *prev= *pointer;
@@ -427,6 +433,17 @@ static bool logging_alloc(void *callback_data, void **pointer, size_t new_size, 
 UNIT_TEST(env_new_free) {
 	userp_env env= userp_new_env(logging_alloc, userp_file_logger, stdout, 0);
 	userp_free_env(env);
+}
+/*OUTPUT
+/alloc 0x0+ to \d+ = 0x\w+/
+/alloc 0x\w+ to 0 = 0x0+/
+*/
+
+UNIT_TEST(env_grab_drop) {
+	userp_env env= userp_new_env(logging_alloc, userp_file_logger, stdout, 0);
+	userp_grab_env(env);
+	userp_drop_env(env);
+	userp_drop_env(env);
 }
 /*OUTPUT
 /alloc 0x0+ to \d+ = 0x\w+/

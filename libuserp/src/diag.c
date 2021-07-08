@@ -2,7 +2,7 @@
 #include "userp_private.h"
 
 /*
-## userp_diag
+## Userp Diagnostics
 
 ### Synopsis
 
@@ -188,7 +188,10 @@ int userp_process_diag_tpl(userp_diag diag, char *buf, size_t buf_len, FILE *fh)
 				break;
 			// integer with "power of 2" notation
 			case USERP_DIAG_ALIGN_ID:
-				n= snprintf(tmp_buf, sizeof(tmp_buf), "2**%d", diag->align);
+				i= diag->align; if (0)
+			case USERP_DIAG_INDEX_ID:
+				i= diag->index;
+				n= snprintf(tmp_buf, sizeof(tmp_buf), "2**%d", i);
 				break;
 			// Generic integer fields
 			case USERP_DIAG_POS_ID:
@@ -215,6 +218,7 @@ int userp_process_diag_tpl(userp_diag diag, char *buf, size_t buf_len, FILE *fh)
 				from= diag->cstr1; if (0)
 			case USERP_DIAG_CSTR2_ID:
 				from= diag->cstr2;
+				if (!from) from= "(NULL)";
 				n= strlen(from);
 			}
 		}
@@ -224,6 +228,10 @@ int userp_process_diag_tpl(userp_diag diag, char *buf, size_t buf_len, FILE *fh)
 			n= pos-from;
 		}
 		if (n) {
+			if (!from) {
+				from= "(NULL)";
+				n= 6;
+			}
 			if (buf && str_len+1 < buf_len) // don't call memcpy unless there is room for at least 1 char and NUL
 				memcpy(buf+str_len, from, (str_len+n+1 <= buf_len)? n : buf_len-1-str_len);
 			if (fh) {
@@ -239,16 +247,70 @@ int userp_process_diag_tpl(userp_diag diag, char *buf, size_t buf_len, FILE *fh)
 	return str_len;
 }
 
-void userp_diag_set(userp_diag diag, int code, const char *tpl, userp_buffer buf) {
+void userp_diag_set(userp_diag diag, int code, const char *tpl) {
 	diag->code= code;
 	diag->tpl= tpl;
-	//if (diag->buf) userp_drop_buffer(diag->buf);
-	diag->buf= buf;
-	//if (buf) userp_grab_buffer(diag->buf);
+	if (diag->buf) {
+		userp_drop_buffer(diag->buf);
+		diag->buf= NULL;
+	}
+}
+
+void userp_diag_setf(userp_diag diag, int code, const char *tpl, ...) {
+	va_list ap;
+	va_start(ap, tpl);
+	diag->code= code;
+	diag->tpl= tpl;
+	if (diag->buf) {
+		userp_drop_buffer(diag->buf);
+		diag->buf= NULL;
+	}
+	while (*tpl) {
+		if (*tpl++ == '\x01') {
+			switch (*tpl++) {
+			case USERP_DIAG_BUFADDR_ID:
+			case USERP_DIAG_BUFHEX_ID:
+			case USERP_DIAG_BUFSTR_ID:
+				diag->buf= va_arg(ap, userp_buffer);
+				//if (buf) userp_grab_buffer(diag->buf);
+				diag->pos= va_arg(ap, size_t);
+				diag->len= va_arg(ap, size_t);
+				break;
+			case USERP_DIAG_ALIGN_ID:
+				diag->align= va_arg(ap, int);
+				break;
+			case USERP_DIAG_INDEX_ID:
+				diag->index= va_arg(ap, int);
+				break;
+			case USERP_DIAG_POS_ID:
+				diag->pos= va_arg(ap, size_t);
+				break;
+			case USERP_DIAG_LEN_ID:
+				diag->len= va_arg(ap, size_t);
+				break;
+			case USERP_DIAG_SIZE_ID:
+				diag->size= va_arg(ap, size_t);
+				break;
+			case USERP_DIAG_COUNT_ID:
+				diag->count= va_arg(ap, size_t);
+				break;
+			case USERP_DIAG_CSTR1_ID:
+				diag->cstr1= va_arg(ap, const char *);
+				break;
+			case USERP_DIAG_CSTR2_ID:
+				diag->cstr2= va_arg(ap, const char *);
+				break;
+			default:
+				fprintf(stderr, "BUG: Unhandled diagnostic variable %d", *tpl);
+				abort();
+			}
+		}
+	}
+	va_end(ap);
 }
 
 
-#ifdef WITH_UNIT_TESTS
+#ifdef UNIT_TEST
 
 UNIT_TEST(diag_simple_string) {
 	int wrote;
@@ -256,12 +318,12 @@ UNIT_TEST(diag_simple_string) {
 	bzero(&d, sizeof(d));
 
 	printf("# simple string\n");
-	userp_diag_set(&d, 1, "Simple string", NULL);
+	userp_diag_set(&d, 1, "Simple string");
 	wrote= userp_diag_print(&d, stdout);
 	printf("\nwrote=%d\n", wrote);
 
 	printf("# empty string\n");
-	userp_diag_set(&d, 1, "", NULL);
+	userp_diag_set(&d, 1, "");
 	wrote= userp_diag_print(&d, stdout);
 	printf("\nwrote=%d\n", wrote);
 }
@@ -280,43 +342,37 @@ UNIT_TEST(diag_tpl_ref_static_string) {
 	bzero(&d, sizeof(d));
 
 	printf("# cstr1 in middle\n");
-	userp_diag_set(&d, 1, "String ref '" USERP_DIAG_CSTR1 "'", NULL);
-	d.cstr1= "TEST";
+	userp_diag_setf(&d, 1, "String ref '" USERP_DIAG_CSTR1 "'", "TEST");
 	wrote= userp_diag_print(&d, stdout);
 	printf("\nwrote=%d\n", wrote);
 
 	printf("# cstr1 at end\n");
-	userp_diag_set(&d, 1, "Ends with " USERP_DIAG_CSTR1, NULL);
+	userp_diag_setf(&d, 1, "Ends with " USERP_DIAG_CSTR1, "TEST");
 	wrote= userp_diag_print(&d, stdout);
 	printf("\nwrote=%d\n", wrote);
 
 	printf("# cstr1 at start\n");
-	userp_diag_set(&d, 1, USERP_DIAG_CSTR1 " and things", NULL);
+	userp_diag_setf(&d, 1, USERP_DIAG_CSTR1 " and things", "TEST");
 	wrote= userp_diag_print(&d, stdout);
 	printf("\nwrote=%d\n", wrote);
 
 	printf("# cstr1 is entire string\n");
-	userp_diag_set(&d, 1, USERP_DIAG_CSTR1, NULL);
+	userp_diag_setf(&d, 1, USERP_DIAG_CSTR1, "TEST");
 	wrote= userp_diag_print(&d, stdout);
 	printf("\nwrote=%d\n", wrote);
 
 	printf("# cstr1 is empty\n");
-	userp_diag_set(&d, 1, "'" USERP_DIAG_CSTR1 "'", NULL);
-	d.cstr1= "";
+	userp_diag_setf(&d, 1, "'" USERP_DIAG_CSTR1 "'", "");
 	wrote= userp_diag_print(&d, stdout);
 	printf("\nwrote=%d\n", wrote);
 
 	printf("# cstr1 and cstr2\n");
-	userp_diag_set(&d, 1, "String ref '" USERP_DIAG_CSTR2 "', and '" USERP_DIAG_CSTR1 "'", NULL);
-	d.cstr1= "1";
-	d.cstr2= "2";
+	userp_diag_setf(&d, 1, "String ref '" USERP_DIAG_CSTR2 "', and '" USERP_DIAG_CSTR1 "'", "2", "1");
 	wrote= userp_diag_print(&d, stdout);
 	printf("\nwrote=%d\n", wrote);
 
 	printf("# empty cstr1 and cstr2\n");
-	userp_diag_set(&d, 1, USERP_DIAG_CSTR2 USERP_DIAG_CSTR1, NULL);
-	d.cstr1= "";
-	d.cstr2= "";
+	userp_diag_setf(&d, 1, USERP_DIAG_CSTR2 USERP_DIAG_CSTR1, "", "");
 	wrote= userp_diag_print(&d, stdout);
 	printf("\nwrote=%d\n", wrote);
 }
@@ -352,9 +408,7 @@ UNIT_TEST(diag_ref_buf_hex) {
 	bzero(&buf, sizeof(buf));
 
 	buf.data= "\x01\x02\x03\x04";
-	userp_diag_set(&d, 1, "Some Hex: " USERP_DIAG_BUFHEX, &buf);
-	d.pos= 1;
-	d.len= 3;
+	userp_diag_setf(&d, 1, "Some Hex: " USERP_DIAG_BUFHEX, &buf, 1, 3);
 	wrote= userp_diag_print(&d, stdout);
 	printf("\nwrote=%d\n", wrote);
 }
@@ -371,8 +425,7 @@ UNIT_TEST(diag_ref_bufaddr) {
 	bzero(&buf, sizeof(buf));
 
 	buf.data= (uint8_t*) 0x1000;
-	userp_diag_set(&d, 1, "Buffer address: " USERP_DIAG_BUFADDR "\n", &buf);
-	d.pos= 1;
+	userp_diag_setf(&d, 1, "Buffer address: " USERP_DIAG_BUFADDR "\n", &buf, 1, 0);
 	wrote= userp_diag_print(&d, stdout);
 }
 /*OUTPUT
