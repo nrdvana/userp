@@ -33,6 +33,7 @@ typedef uint_least32_t userp_flags;
 #define USERP_ELIMIT        0x4102 // decoded data exceeds a limit
 #define USERP_ESYMBOL       0x4103 // symbol table entry is not valid
 #define USERP_ETYPE         0x4104 // type definition is not valid
+#define USERP_EBUFPOINTER   0x4105 // specified pointer is not within specified buffer
 // Warnings
 #define USERP_WARN          0x2000 // generic warning
 #define USERP_WLARGEMETA    0x2001 // encoded or decoded metadata is suspiciously large
@@ -75,8 +76,11 @@ extern void userp_drop_env(userp_env env);
 
 #define USERP_MEASURE_TWICE                1
 #define USERP_RUN_WITH_SCISSORS            2
+#define USERP_TRUNCATE_INTO_INT            3
+#define USERP_TRUNCATE_INTO_FLOAT          4
 
-void userp_env_set_attr(userp_env env, int attr_id, size_t value) {
+
+void userp_env_set_attr(userp_env env, int attr_id, size_t value);
 
 extern void userp_file_logger(void *callback_data, userp_diag diag, int code);
 extern void userp_env_set_logger(userp_env env, userp_diag_fn diag_callback, void *callback_data);
@@ -146,8 +150,8 @@ struct userp_buffer {
 #define USERP_GET_BUFFER_FROM_DATA_PTR(data_ptr) ((userp_buffer)( ((char*)data_ptr) - USERP_FIELD_OFFSET(struct userp_buffer, data) ))
 
 extern userp_buffer userp_new_buffer(userp_env env, void *data, size_t alloc_len, userp_flags flags);
-extern bool userp_grab_buffer(userp_buffer buf);
-extern void userp_drop_buffer(userp_buffer buf);
+extern bool userp_grab_buffer(userp_env env, userp_buffer buf);
+extern void userp_drop_buffer(userp_env env, userp_buffer buf);
 
 struct userp_bstr_part {
 	uint8_t *data;
@@ -177,6 +181,7 @@ extern void userp_drop_scope(userp_scope scope);
 extern userp_symbol userp_scope_get_symbol(userp_scope scope, const char * name, bool create);
 extern userp_type userp_scope_get_type(userp_scope scope, userp_symbol name);
 extern userp_type userp_scope_new_type(userp_scope scope, userp_symbol name, userp_type base_type);
+extern bool userp_scope_contains_type(userp_scope scope, userp_type type);
 extern userp_enc userp_type_encode(userp_type type);
 extern userp_dec userp_type_decode(userp_type type);
 
@@ -225,51 +230,56 @@ bool userp_enc_string(userp_enc enc, const char* str);
 
 // -------------------------------- dec.c ------------------------------------
 
-userp_dec userp_dec_new(userp_scope scope, userp_type root_type, userp_bstr source);
-bool userp_dec_free(userp_dec);
-void userp_dec_set_reader(userp_reader_fn, void *callback_data);
-userp_scope userp_dec_get_scope(userp_dec dec);
+userp_dec userp_new_dec(
+	userp_env env, userp_scope scope, userp_type root_type,
+	userp_buffer buffer_ref, uint8_t *bytes, size_t n_bytes
+);
+bool userp_grab_dec(userp_env env, userp_dec dec);
+void userp_drop_dec(userp_env env, userp_dec dec);
+
+
+userp_env userp_dec_env(userp_dec dec);
+userp_scope userp_dec_scope(userp_dec dec);
+void userp_dec_set_reader(userp_dec dec, userp_reader_fn, void *callback_data);
 
 struct userp_node_info {
 	userp_type node_type;
 	size_t node_depth;
+	size_t data_len;
+	const uint8_t *data_start;
 	size_t subtype_count;
 	const userp_type *subtypes;
 	size_t array_dim_count;
 	const size_t *array_dims;
 	size_t elem_count;
-	const uint8_t
-		*data_start,
-		*data_limit;
 };
+typedef const struct userp_node_info *userp_node_info;
 
 // Parse the current node if not parsed yet and return a struct describing it
-const struct userp_node_info *userp_dec_node_info(userp_dec dec);
+userp_node_info userp_dec_node_info(userp_dec dec);
+// Begin iterating the array or record elements of the current node
+bool userp_dec_begin(userp_dec dec);
+// Stop iterating an array or record and set the current node to the following element, if any
+bool userp_dec_end(userp_dec dec);
+// Seek to the specified array index or field number of the parent node
+bool userp_dec_seek_elem(userp_dec dec, size_t elem_idx);
+// Seek to the named field of the most recent parent record node
+bool userp_dec_seek_field(userp_dec dec, userp_symbol fieldname);
 // Skip the current node and move to the next element in the parent array or record
 bool userp_dec_skip(userp_dec dec);
 // Decode the current node as an integer, and move to the next node if successful
 bool userp_dec_int(userp_dec dec, int *out);
-bool userp_dec_intmax(userp_dec dec, intmax_t *out);
-bool userp_dec_intbuf(userp_dec dec, void *buffer_out, size_t *len_inout);
+bool userp_dec_int_n(userp_dec dec, void *intbuf, size_t word_size, bool is_signed);
+bool userp_dec_bigint(userp_dec dec, void *intbuf, size_t *len, int *sign);
 // Decode the current node as a Symbol, and move to the next node if successful
 bool userp_dec_symbol(userp_dec dec, userp_symbol *out);
 // Decode the current node as a Type reference, and move to the next node if successful
 bool userp_dec_typeref(userp_dec dec, userp_type *out);
-// Begin iterating the array or record elements of the current node
-bool userp_dec_begin(userp_dec dec, size_t *n_elem);
-// Stop iterating an array or record and set the current node to the following element, if any
-bool userp_dec_end(userp_dec dec, int parent_level);
-// Get the current iteration offset within an array/record node
-bool userp_dec_tell(userp_dec dec, int parent_level, size_t *idx, userp_symbol *field_name);
-// Seek to the specified array index or field number of the parent node
-bool userp_dec_seek(userp_dec dec, int parent_level, int elem_idx);
-// Seek to the named field of the most recent parent record node
-bool userp_dec_seek_field(userp_dec dec, int parent_level, userp_symbol fieldname);
 // Decode the current node as a `float` and move to the next node
-bool userp_dec_float(userp_dec dec, float *out, bool truncate);
-bool userp_dec_double(userp_dec dec, double *out, bool truncate);
+bool userp_dec_float(userp_dec dec, float *out);
+bool userp_dec_double(userp_dec dec, double *out);
 // Copy out the bytes of the current node, as-is
 bool userp_dec_bytes(userp_dec dec, void *out, size_t *length_inout, size_t elem_size, userp_flags flags);
-userp_bstr userp_dec_bytes_zerocopy(userp_dec dec, size_t elem_size, int flags);
+userp_bstr userp_dec_bytes_zerocopy(userp_dec dec, size_t elem_size, userp_flags flags);
 
 #endif

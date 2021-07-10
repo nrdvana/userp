@@ -1,5 +1,5 @@
-#include "config.h"
-#include "userp_protected.h"
+#include "local.h"
+#include "userp_private.h"
 
 typedef struct userp_dec_frame *frame;
 
@@ -92,7 +92,7 @@ deliberately skip any safety or error reporting.
 
 userp_dec userp_new_dec(
 	userp_env env, userp_scope scope, userp_type root_type,
-	userp_buffer buffer_ref, uint8_t bytes, size_t n_bytes
+	userp_buffer buffer_ref, uint8_t *bytes, size_t n_bytes
 ) {
 	userp_dec dec;
 	USERP_CLEAR_ERROR(env);
@@ -103,13 +103,13 @@ userp_dec userp_new_dec(
 
 userp_dec userp_new_dec_silent(
 	userp_env env, userp_scope scope, userp_type root_type,
-	userp_buffer buffer_ref, uint8_t bytes, size_t n_bytes
+	userp_buffer buffer_ref, uint8_t *bytes, size_t n_bytes
 ) {
 	userp_dec dec= NULL;
 	frame stack= NULL;
 	size_t n_frames= USERP_DEC_FRAME_ALLOC_ROUND(1);
 	size_t n_input_parts= 4;//enc->decoder_alloc_input_parts_typical;
-	bool got_scope= flase;
+	bool got_scope= false;
 
 	if (!env->run_with_scissors) {
 		if (!scope || !root_type || !userp_scope_contains_type(scope, root_type)) {
@@ -140,9 +140,9 @@ userp_dec userp_new_dec_silent(
 	dec->env= env;
 	dec->scope= scope;
 	// initialize the first decoder stack element with the root type
-	frame_init(&stack[0], root_type);
 	dec->stack= stack;
 	dec->stack_lim= n_frames;
+	frame_init(dec, &stack[0], root_type);
 	// initial storage for input bstr is found at end of this record
 	dec->input= &dec->input_inst;
 	dec->input_inst.part_alloc= n_input_parts;
@@ -159,11 +159,11 @@ userp_dec userp_new_dec_silent(
 void dec_free(userp_dec dec) {
 	size_t i;
 	do {
-		frame_destroy(dec->stack[dec->stack_i]);
+		frame_destroy(dec, &dec->stack[dec->stack_i]);
 	} while (dec->stack_i-- > 0); 
 	USERP_FREE(dec->env, &dec->stack);
 	if (dec->input == &dec->input_inst) {
-		for (i= 0; i < dec->part_count; i++) {
+		for (i= 0; i < dec->input_inst.part_count; i++) {
 			if (dec->input_inst.parts[i].buf)
 				userp_drop_buffer(dec->env, dec->input_inst.parts[i].buf);
 		}
@@ -219,151 +219,164 @@ void frame_destroy(userp_dec dec, frame f) {
 	unimplemented("destroy frame");
 }
 
+
+/*APIDOC
+### Attributes
+
+#### env
+
+   userp_env env= userp_dec_env(dec);
+
+Return the reference to the `userp_env` object this decoder is attached to.  The reference count
+is unchanged.
+
+#### scope
+
+    userp_scope scope= userp_dec_scope(dec);
+
+Return the scope this decoder was created from.  The reference count is unchanged.
+
+#### reader
+
+    userp_reader_fn userp_dec_reader
+
+    void userp_dec_set_reader(
+      userp_dec dec,
+      userp_reader_fn my_callback,
+      void *callback_param
+    );
+
+If you decide to construct the decoder before all data is available, you can add a callback that
+will get called any time the decoder reaches the end of input and needs more bytes.  Without this
+callback, the decode functions will emit an EOF error and return false.  With this callback, you
+can perform a blocking operation to fetch the next chunk of data and `userp_dec_feed` it to the
+decoder, avoiding the error condition.
+
+You may pass NULL to un-set the reader.
+
+*/
+
+userp_env userp_dec_env(userp_dec dec) {
+	return dec->env;
+}
+
+userp_scope userp_dec_scope(userp_dec dec) {
+	return dec->scope;
+}
+
 void userp_dec_set_reader(userp_dec dec, userp_reader_fn reader, void *callback_data) {
 	dec->reader= reader;
 	dec->reader_cb_data= callback_data;
 }
 
-/*
-### userp_dec_node_depth
+/*APIDOC
+#### node_info
 
-  int node_depth= userp_dec_node_depth(dec);
+    struct userp_node_info {
+        userp_type node_type;
+        size_t node_depth;
+        size_t subtype_count;
+        const userp_type *subtypes;
+        size_t array_dim_count;
+        const size_t *array_dims;
+        size_t elem_count;
+        const uint8_t
+            *data_start,
+            *data_limit;
+    } *userp_node_info;
+    const userp_node_info info= userp_dec_node_info(dec);
 
-Get the tree-depth of the current node.
+Return the information about the "current node".  If the decoder hits the end of the input before
+it can fully populate this struct, it calls the reader callback (if any) and if it still can't
+complete the node into, it returns NULL and emits the error `USERP_EOF` via the `userp_env`
+associated with this decoder.  Any other decoder error will likewise emit an error and return
+NULL.
 
-The root node of a block has a depth of 0.  After calling `userp_dec_begin_array` or
-`userp_dec_begin_record` this will return 1.  Calling `userp_dec_end_array` or
-`userp_dec_end_record` return to the previous depth.
+When iterating an array or record, after the final element has been decoded this function will
+return a `userp_node_info` with `node_type == NULL`, indicating that there are no further nodes,
+until you call `userp_dec_end` to return to the parent node.  `node_depth` will still be set to
+one higher than the parent node.  The root node has a `node_depth == 0` and after decoding it the
+`node_depth` remains 0.
 
-*/
-int userp_dec_node_depth(userp_dec dec) {
-	return dec->stack_i;
-}
-
-/*
-### userp_dec_node_type
-
-  userp_type cur_typ= userp_dec_node_type(dec, parent_level, choice_subtype);
-  
-  userp_dec_node_type(dec, 0, 0);  // current node
-  userp_dec_node_type(dec, 1, 0);  // parent node
-  userp_dec_node_type(dec, 2, 0);  // parent-of-parent node
-  userp_dec_node_type(dec, 0, 1);  // current node choice sub-type
-  userp_dec_node_type(dec, 1, 2);  // parent node choice sub-sub-type
-  userp_dec_node_type(dec, 0, -1); // current node choice sub^n-type
-
-Get the type of the current node or its parents, optionally inspecting Choice sub-types.
-
-If the `parent_level` is zero, this returns the type of the current node.  If `parent_level` is
-1, it returns the type of the record or array (or choice wrapping one of those) that this node
-was contained in, and so on.
-
-If the current node is a Choice type, specify a `choice_subtype` of 1 to inspect the member type
-that was actually encoded.  If that was also a Choice type, keep incrementing `choice_subtype`
-until it isn't to find out the real type that you will actually be decoding next.  You may specify
-`-1` to jump directly to the leaf-most sub-type.
-
-If the `parent_level` or `choice_subtype` are out of bounds, this simply returns NULL and no
-error is raised.  If you have finished iterating the elements of an array or record, then
-there is no current node and this can also return NULL for `parent_level` of 0.
+The struct returned is **only valid until the next call to userp_dec_node_info** and may be
+recycled.  Attempting to alter this struct (which is deliberately marked const) results in
+undefined behavior.  Do not make shallow copies of this struct either, as the referenced arrays
+like `subtypes` and `array_dims` are similarly transient.
 
 */
-userp_type userp_dec_node_type(userp_dec dec, int parent_level, int choice_subtype) {
-	frame f= FRAME_BY_PARENT_LEVEL(dec, parent_level);
-	if (!f) return NULL;
-	if (choice_subtype != 0) {
-		if (f->frame_type == FRAME_TYPE_CHOICE) {
-			unimplemented("inspect choice type");
-		}
-		else if (choice_subtype != -1) // -1 means "end type" so allow that for non-choice nodes 
-			return NULL;
-	}
-	return f->node_type;
+
+const userp_node_info userp_dec_node_info(userp_dec dec) {
+	unimplemented("userp_dec_node_info");
 }
 
-/*
-### userp_dec_node_dimensions
+/*APIDOC
 
-  size_t n= userp_dec_node_dimensions(dec, parent_level, dimension);
+### Tree Navigation Functions
 
-  // For an array declared as 3x4:
-  userp_dec_node_dimensions(dec, 0, -1);  // returns 2 dimensions
-  userp_dec_node_dimensions(dec, 0, 0);   // returns 3, size of first dimension
-  userp_dec_node_dimensions(dec, 0, 1);   // returns 4, size of second dimension
+#### userp_dec_begin
 
-Inspect the count and size of array dimensions in the current node, or a parent. Specify a
-dimension of -1 to fetch the count of dimensions.  Specify a dimension index to get the size of
-that dimension.  Typical arrays only have 1 dimension.
+  size_t n_elems;
+  bool success= userp_dec_begin(dec);
 
-Note that you don't have to know the dimensions of an array in order to decode it; you can
-count the elements as a flat list using `userp_dec_node_elem_count(dec, 0)`.  The
-dimensions are purely for metadata and letting the application know the shape of the array.
+Begin iterating the array or record elements of the current node.  The current node becomes the
+parent node, and the new current node is element 0 of the array, or the first encoded field of
+the record.  You may `userp_dec_begin` an empty array or record, but the current element will have
+a type of NULL and the only valid cursor operation will be to call `userp_dec_end` or
+`userp_dec_rewind`.
 
-Note that after calling `begin_array`, the array is the parent node, so specify a `parent_level`
-of 1.  Before calling `begin_array` use `parent_level` of 0.  
+If the current node is not an array or record, this returns false and sets an error flag.
 
-For nodes which are not arrays, this returns 0.
+#### userp_doc_end
+
+    bool success= userp_dec_end(dec);
+
+Stop iterating an array or record, return to that parent node, and then set the current node to
+whatever follows it.
 
 */
-size_t userp_dec_node_dimensions(userp_dec dec, int parent_level, int dimension) {
-	frame f= FRAME_BY_PARENT_LEVEL(dec, parent_level);
-	if (!f) return NULL;
-	if (f->frame_type == FRAME_TYPE_ARRAY) {
-		unimplemented("inspect array dimensions");
-	}
-	return 0;
+
+bool userp_dec_begin(userp_dec dec) {
+	unimplemented("userp_dec_begin");
 }
 
-/*
-### userp_dec_node_elem_count
+bool userp_dec_end(userp_dec dec) {
+	unimplemented("userp_dec_end");
+}
 
-  size_t n= userp_dec_node_elem_count(dec, parent_level);
+/*APIDOC
+#### userp_dec_seek_elem
 
-Get the number of fields in a record or elements in an array.
+    bool success= userp_dec_seek_elem(dec, elem_idx);
 
-If the node at `parent_level` (where `parent_level=0` is the current node) is a record,
-this returns the number of fields present.  If the node is an array, this returns
-the overall element count (inclusive of all dimensions).
+Seek to the specified field name or array index, changing the current node to that element.
 
-For nodes which are not array or record, this returns 0.
+If the element does not exist, the current node is unchanged and the function
+returns false.  If there is no current array or record being iterated, this returns false and
+sets a error flag on the `userp_env`.
 
 */
-size_t userp_dec_node_elem_count(userp_dec dec, int parent_level) {
-	frame f= FRAME_BY_PARENT_LEVEL(dec, parent_level);
-	if (!f) return NULL;
-	switch (f->frame_type) {
-	case FRAME_TYPE_RECORD:
-		unimplemented("record elem count");
-	case FRAME_TYPE_ARRAY:
-		unimplemented("array elem count");
-	}
-	return 0;
+bool userp_dec_seek_elem(userp_dec dec, size_t elem_idx) {
+	unimplemented("userp_dec_seek");
 }
 
-/*
-### userp_dec_node_elem_pos
+/*APIDOC
+#### userp_dec_seek_field
 
-  size_t idx;
-  userp_symbol field_name;
-  bool success= userp_dec_node_elem_info(dec, parent_level, &idx, &field_name);
+  userp_symbol sym= userp_scope_get_symbol(scope, "my_field");
+  bool success= userp_dec_seek_field(dec, sym);
 
-Get the current iteration offset within an array/record node.  `parent_level` should be one or
-greater (since beginning iteration on an array or record causes it to become a parent node).
-For records, the `idx` is only meaningful if you are iterating fields in the natural order.
-Either output parameter may be NULL to indicate you aren't interested in receiving it.
-
-Returns false if the node is not an array or record.  If the node is an array, and you asked
-for `field_name`, it will be set to NULL.
+Seek to the named field of the most recent parent record node.  If the record does not contain
+this field, this returns false.  If there is no record being iterated, or the symbol is NULL, or
+the symbol is not part of the current scope (regardless of its string value) this returns false
+and sets an error flag in `userp_env`.
 
 */
-bool userp_dec_node_elem_pos(userp_dec dec, int parent_level, size_t *idx, userp_symbol *field_name) {
-	frame f= FRAME_BY_PARENT_LEVEL(dec, parent_level);
-	if (!f) return NULL;
-	unimplemented("elem_pos");
+bool userp_dec_seek_field(userp_dec dec, userp_symbol fieldname) {
+	unimplemented("userp_dec_seek_field");
 }
 
-/*
-### userp_dec_skip
+/*APIDOC
+#### userp_dec_skip
 
 Skip the current node and move to the next element in the parent array or record.
 
@@ -371,11 +384,14 @@ To skip more than one element, use `userp_seek_elem`.
 
 */
 bool userp_dec_skip(userp_dec dec) {
-	unimplemented("elem_pos");
+	unimplemented("userp_dec_skip");
 }
 
-/*
-### userp_dec_int
+/*APIDOC
+
+### Decoding Functions
+
+#### userp_dec_int
 
   int int_out;
   bool success= userp_dec_int(dec, &int_out);
@@ -384,43 +400,49 @@ Decode the current node as an integer, and move to the next node if successful.
 
 If the current node is an integer-compatible type and fits within an `int`, this stores
 the value into `*int_out` and moves the internal iterator to the next node, and returns true.
-If one of those pre-conditions is not true, this returns false and sets an error flag
-in the `userp_env`.
+If one of those pre-conditions is not true, this returns false and emits an error via
+the `userp_env`.
 
-### userp_dec_intmax
+#### userp_dec_int_n
 
-  intmax_t intmax_out;
-  bool success= userp_dec_intmax(dec, &intmax_out);
+    long long int_out;
+    bool success= userp_dec_int_n(dec, &int_out, sizeof(int_out), true);
+    uint64_t u64;
+    bool success= userp_dec_int_n(dec, &u64, sizeof(u64), false);
 
-Like `userp_dec_int` but on the longest int data type available to the C implementation.
+Decode the current node as an arbitrary-sized integer.  Same as userp_dec_int but you can
+specify any byte length.  The entire number of bytes will be filled in host-endian order,
+and optionally signed.  Decoding a negative number into an unsigned integer is an error.
 
-### userp_dec_intbuf
+#### userp_dec_bigint
 
   char buffer[256];
   size_t len= sizeof(buffer);
-  bool success= userp_dec_intbuf(dec, buffer, &len);
+  int sign;
+  bool success= userp_dec_intbuf(dec, buffer, &len, &sign);
 
-Like `userp_dec_int` but stores the bytes of the integer into a buffer, which can then be loaded
-into a bigint object of some sort.  It will be loaded into the buffer in a platform-endian byte
-order and additionally padded to a multipe of sizeof(long).  The size of the buffer is given in
-`len`, and the number of bytes used is returned in that same variable.
+Like `userp_dec_int` but stores the bytes of the integer into a buffer.  The bufer is filled to
+a multiple of `sizeof(long)`, and the `len` is updated to the number of bytes written.
+If `sign` is supplied, the sign bit will be written here instead of generating twos-complement
+encoding.  If `sign` is not supplied, the value will always be two's-complement up to the number
+of bytes written.  (the remainder of the buffer is not filled)
 
 If the current node is not an integer, or it does not fit into the buffer, this returns false and
-sets an error on the `userp_env`.
+sets an error on the `userp_env`.  (to find the size of buffer required, inspect the node_info)
 
 */
 bool userp_dec_int(userp_dec dec, int *out) {
 	unimplemented("userp_dec_int");
 }
-bool userp_dec_intmax(userp_dec dec, intmax_t *out) {
-	unimplemented("userp_dec_intmax");
+bool userp_dec_int_n(userp_dec dec, void *intbuf, size_t word_size, bool is_signed) {
+	unimplemented("userp_dec_int_n");
 }
-bool userp_dec_intbuf(userp_dec dec, void *buffer_out, size_t *len_inout) {
-	unimplemented("userp_dec_intbuf");
+bool userp_dec_bigint(userp_dec dec, void *intbuf, size_t *len, int *sign) {
+	unimplemented("userp_dec_bigint");
 }
 
 /*
-### userp_dec_symbol
+#### userp_dec_symbol
 
   userp_symbol sym_out;
   bool success= userp_dec_symbol(dec, &sym_out);
@@ -436,7 +458,7 @@ bool userp_dec_symbol(userp_dec dec, userp_symbol *out) {
 }
 
 /*
-### userp_dec_typeref
+#### userp_dec_typeref
 
   userp_type type_out;
   bool success= userp_dec_typeref(dec, &type_out);
@@ -453,99 +475,34 @@ bool userp_dec_typeref(userp_dec dec, userp_type *out) {
 }
 
 /*
-### userp_dec_begin
+#### userp_dec_float
 
-  size_t n_elems;
-  bool success= userp_dec_begin(dec, &n_elems);
-
-Begin iterating the array or record elements of the current node.  The current node becomes the
-parent node, and the new current node is element 0 of the array, or the first encoded field of
-the record.  You may `user_dec_begin` an empty array or record, but the current element will have
-a type of NULL and the only valid cursor operation will be to call `userp_dec_end` or
-`userp_dec_rewind`.
-
-If the current node is not an array or record, this returns false and sets an error flag.
-
-For convenience, you may pass a `size_t` pointer which will receive the total number
-of elements in the array or record, the same value returned by `userp_dec_node_elem_count(dec,0)`.
-The size_t will only be written if it is not NULL and if opening the array/record succeeds.
-
-*/
-bool userp_dec_begin(userp_dec dec, size_t *n_elem) {
-	unimplemented("userp_dec_begin");
-}
-
-/*
-### userp_doc_end
-
-  bool success= userp_dec_end(dec, parent_level);
-
-Stop iterating an array or record and set the current node to the following element, if any.
-
-If `parent_level` does not reference an array or record element, or the history of the stream has
-been discarded, this will return false and set an error code in `userp_env`.
-
-*/
-bool userp_dec_end(userp_dec dec, int parent_level) {
-	unimplemented("userp_dec_end");
-}
-
-/*
-### userp_dec_seek_elem
-
-  bool success= userp_dec_seek_elem(dec, elem_idx);
-
-Seek to the specified array index or field number of the parent node, changing the current node
-to that element.  If the element does not exist, the current node is unchanged and the function
-returns false.  If there is no current array or record being iterated, this returns false and
-sets a error flag on the `userp_env`.
-
-*/
-bool userp_dec_seek_elem(userp_dec dec, int elem_idx) {
-	unimplemented("userp_dec_seek");
-}
-
-/*
-### userp_dec_seek_field
-
-  bool success= userp_dec_seek_field(dec, field_symbol);
-
-Seek to the named field of the most recent parent record node.  If the record does not contain
-this field, this returns false.  If there is no record being iterated, or the symbol is NULL, or
-the symbol is not part of the current scope (regardless of its string value) this returns false
-and sets an error flag in `userp_env`.
-
-*/
-bool userp_dec_seek_field(userp_dec dec, userp_symbol fieldname) {
-	unimplemented("userp_dec_seek_field");
-}
-
-/*
-### userp_dec_float
-
-  float f;
-  bool success= userp_dec_float(dec, &f, bool truncate);
+    float f;
+    bool success= userp_dec_float(dec, &f);
 
 Decode the current node as a `float` and move to the next node.
 
 If the current node is a floating-point record that fits in `float`, or is an integer which can be
-losslessly (unless `truncate`) loadded into a `float`, this stores the value into `*out` and
-returns true.  Else it returns false and sets an error flag.
+losslessly loadded into a `float` (unless truncate options are enabled in the environent), this
+stores the value into `*out` and returns true.  Else it returns false and sets an error flag.
 
-### userp_dec_double
+#### userp_dec_double
+
+    double d;
+    bool success= userp_dec_double(dec, &d);
 
 Same as `userp_dec_float` but with storage into a double.
 
 */
-bool userp_dec_float(userp_dec dec, float *out, bool truncate) {
+bool userp_dec_float(userp_dec dec, float *out) {
 	unimplemented("userp_dec_float");
 }
-bool userp_dec_double(userp_dec dec, double *out, bool truncate) {
+bool userp_dec_double(userp_dec dec, double *out) {
 	unimplemented("userp_dec_double");
 }
 
 /*
-### userp_dec_bytes
+#### userp_dec_bytes
 
   int buffer[500];
   size_t len= sizeof(buffer);
@@ -553,7 +510,7 @@ bool userp_dec_double(userp_dec dec, double *out, bool truncate) {
   bool success= userp_dec_bytes(dec, buffer, &len, elem_size, flags);
 
 Copy out the bytes of the current node, as-is.  This is intended primarily to dump out arrays of
-fixed-length integers (like reading char[], int[], float[] and so on).  This can be a dangerous
+fixed-length integers (like reading char[], int[], float[] and so on).  This can be an error-prone
 operation, so you should first verify that the type of the current node matches your expectations.
 A good way to do this is to declare a type that matches your struct or array (which can be
 generated at compile time) and then call `userp_type_has_equiv_encoding` to find out if it is
@@ -587,7 +544,7 @@ meet the restrictions of the `flags` in effect, this returns false and sets an e
 the len argument to let you know how many bytes were required.**
 
 */
-bool userp_dec_bytes(userp_dec dec, void *out, size_t *length_inout, size_t elem_size, int flags) {
+bool userp_dec_bytes(userp_dec dec, void *out, size_t *length_inout, size_t elem_size, userp_flags flags) {
 	unimplemented("userp_dec_bytes");
 }
 
@@ -617,7 +574,7 @@ for any data that didn't need changed.
 On failure, this function returns NULL and sets a code in `userp_env` as usual.
 
 */
-userp_bstrings userp_dec_bytes_zerocopy(userp_dec dec, size_t elem_size, int flags) {
+userp_bstrings userp_dec_bytes_zerocopy(userp_dec dec, size_t elem_size, userp_flags flags) {
 	unimplemented("userp_dec_bytes_zerocopy");
 }
 
