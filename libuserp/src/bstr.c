@@ -137,13 +137,13 @@ make assumptions about this buffer.
 
 */
 
-userp_buffer userp_new_buffer(userp_env env, void *data, size_t alloc_len, userp_flags flags) {
+extern userp_buffer userp_new_buffer(userp_env env, void *data, size_t alloc_len, userp_flags flags) {
 	userp_buffer buf= NULL;
 	if (!USERP_ALLOC_OBJ(env, &buf))
 		return NULL;
 	if (!data && alloc_len) {
 		alloc_len= USERP_BUFFER_DATA_ALLOC_ROUND(alloc_len);
-		if (!USERP_ALLOC_ARRAY(env, &data, uint8_t, alloc_len, flags)) {
+		if (!userp_alloc_array(env, &data, 1, alloc_len, flags, "buffer data")) {
 			USERP_FREE(env, &buf);
 			return NULL;
 		}

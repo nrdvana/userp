@@ -3,7 +3,7 @@ build_script_dir = ../script
 ACLOCAL_AMFLAGS=-I m4
 
 lib_LTLIBRARIES = libuserp.la
-libuserp_la_SOURCES = diag.c env.c bstr.c
+libuserp_la_SOURCES = diag.c env.c bstr.c dec.c
 
 check_PROGRAMS = unittest
 unittest_SOURCES = unittest.c

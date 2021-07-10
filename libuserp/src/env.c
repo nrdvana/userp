@@ -1,7 +1,7 @@
 #include "local.h"
 #include "userp_private.h"
 
-static bool userp_default_alloc_fn(void *unused, void **pointer, size_t new_size, int flags);
+static bool userp_default_alloc_fn(void *unused, void **pointer, size_t new_size, userp_flags flags);
 
 /*APIDOC
 ## userp_env
@@ -70,7 +70,7 @@ This can emit a fatal error if `env` is not valid or if the internal reference c
 
 */
 
-userp_env userp_new_env(userp_alloc_fn alloc_fn, userp_diag_fn diag_fn, void *cb_data, int flags) {
+userp_env userp_new_env(userp_alloc_fn alloc_fn, userp_diag_fn diag_fn, void *cb_data, userp_flags flags) {
 	userp_env env= NULL;
 	struct userp_diag err;
 	void *alloc_callback_data= alloc_fn? cb_data : NULL;
@@ -115,7 +115,7 @@ static void userp_free_env(userp_env env) {
 		// report the error from a temporary buffer first, just in case writes
 		// to the env->err fail.
 		bzero(&err, sizeof(err));
-		err.code= USERP_EASSERT;
+		err.code= USERP_EFATAL;
 		err.tpl= "Failed to free userp_env";
 		diag(diag_cb_data, &err, err.code);
 		// Then copy it for future reference
@@ -124,30 +124,23 @@ static void userp_free_env(userp_env env) {
 }
 
 bool userp_grab_env(userp_env env) {
-	struct userp_diag diag;
-	if (!env || !env->refcnt) {
-		bzero(&diag, sizeof(diag));
-		diag.code= USERP_EASSERT;
-		diag.tpl= "Attempt to grab a destroyed userp_env";
-		userp_file_logger(stderr, &diag, diag.code);
-	}
+	USERP_CLEAR_ERROR(env);
+	if (userp_grab_env_silent(env))
+		return true;
+	USERP_DISPATCH_ERROR(env);
+	return false;
+}
+
+bool userp_grab_env_silent(userp_env env) {
 	if (++env->refcnt)
 		return true;
 	--env->refcnt;
 	userp_diag_set(&env->err, USERP_EALLOC, "Reference count exceeds size_t");
-	userp_env_emit_err(env);
 	return false;
 }
 
 void userp_drop_env(userp_env env) {
-	struct userp_diag diag;
-	if (!env || !env->refcnt) {
-		bzero(&diag, sizeof(diag));
-		diag.code= USERP_EASSERT;
-		diag.tpl= "Attempt to drop a destroyed userp_env";
-		userp_file_logger(stderr, &diag, diag.code);
-	}
-	if (!--env->refcnt)
+	if (env->refcnt && !--env->refcnt)
 		userp_free_env(env);
 }
 
@@ -210,7 +203,7 @@ you can modify the state of your `callback_data`.
 
 */
 
-bool userp_default_alloc_fn(void *unused, void **pointer, size_t new_size, int flags) {
+bool userp_default_alloc_fn(void *unused, void **pointer, size_t new_size, userp_flags flags) {
 	void *re;
 	if (new_size) {
 		if (!(re= realloc(*pointer, new_size)))
@@ -300,10 +293,6 @@ userp_diag userp_env_get_last_error(userp_env env) {
 	return &env->err;
 }
 
-void userp_env_emit_err(userp_env env) {
-	env->diag(env->diag_cb_data, &env->err, env->err.code);
-}
-
 /*APIDOC
 #### log_level
 
@@ -372,7 +361,7 @@ void userp_env_set_attr(userp_env env, int attr_id, size_t value) {
 	CATCH(unknown_val) {
 		if (!env->run_with_scissors) {
 			userp_diag_setf(&env->err, USERP_EINVAL, "Unknown " USERP_DIAG_CSTR1 ": " USERP_DIAG_INDEX, attr_name, (int) value);
-			userp_env_emit_err(env);
+			USERP_DISPATCH_ERROR(env);
 		}
 	}
 }
@@ -385,11 +374,11 @@ bool userp_alloc_obj(userp_env env, void **pointer, size_t elem_size, int flags,
 	if (elem_size)
 		userp_diag_set(&env->err, USERP_ELIMIT, "Unable to allocate " USERP_DIAG_CSTR1 " (" USERP_DIAG_SIZE " bytes)");
 	else
-		userp_diag_set(&env->err, USERP_EASSERT, "Unable to free " USERP_DIAG_CSTR1);
+		userp_diag_set(&env->err, USERP_EFATAL, "Unable to free " USERP_DIAG_CSTR1);
 	env->err.cstr1= obj_name;
 	env->err.size= elem_size;
 	// de-allocation errors need reported immediately, because they can be fatal
-	if (!elem_size) userp_env_emit_err(env);
+	if (!elem_size) USERP_DISPATCH_ERROR(env);
 	return false;
 }
 
@@ -407,12 +396,12 @@ bool userp_alloc_array(userp_env env, void **pointer, size_t elem_size, size_t c
 	if (count)
 		userp_diag_set(&env->err, USERP_ELIMIT, "Unable to allocate " USERP_DIAG_COUNT "x " USERP_DIAG_CSTR1 " (" USERP_DIAG_SIZE " bytes)");
 	else
-		userp_diag_set(&env->err, USERP_EASSERT, "Unable to free array of " USERP_DIAG_COUNT " " USERP_DIAG_CSTR1);
+		userp_diag_set(&env->err, USERP_EFATAL, "Unable to free array of " USERP_DIAG_COUNT " " USERP_DIAG_CSTR1);
 	env->err.count= count;
 	env->err.cstr1= elem_name;
 	env->err.size= n;
 	// de-allocation errors need reported immediately, because they can be fatal
-	if (!count) userp_env_emit_err(env);
+	if (!count) USERP_DISPATCH_ERROR(env);
 	return false;
 }
 

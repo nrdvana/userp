@@ -62,10 +62,19 @@ int userp_diag_get_code(userp_diag diag) {
 const char * userp_diag_code_name(int code) {
 	#define RETSTR(x) case x: return #x;
 	switch (code) {
+	RETSTR(USERP_EFATAL)
+	RETSTR(USERP_EBADSTATE)
+	RETSTR(USERP_ERROR)
 	RETSTR(USERP_EALLOC)
-	RETSTR(USERP_EINVAL)
-	RETSTR(USERP_EEOF)
+	RETSTR(USERP_EDOINGITWRONG)
+	RETSTR(USERP_ETYPESCOPE)
+	RETSTR(USERP_ESYSERROR)
+	RETSTR(USERP_EPROTOCOL)
+	RETSTR(USERP_EFEEDME)
 	RETSTR(USERP_ELIMIT)
+	RETSTR(USERP_ESYMBOL)
+	RETSTR(USERP_ETYPE)
+	RETSTR(USERP_WARN)
 	RETSTR(USERP_WLARGEMETA)
 	default:
 		return "unknown";
@@ -251,7 +260,7 @@ void userp_diag_set(userp_diag diag, int code, const char *tpl) {
 	diag->code= code;
 	diag->tpl= tpl;
 	if (diag->buf) {
-		userp_drop_buffer(diag->buf);
+		userp_drop_buffer_silent(diag->buf->env, diag->buf);
 		diag->buf= NULL;
 	}
 }

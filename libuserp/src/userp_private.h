@@ -44,7 +44,7 @@ struct userp_env {
 	void *alloc_cb_data;
 	userp_diag_fn *diag;
 	void *diag_cb_data;
-	size_t refcnt;
+	unsigned refcnt;
 	int run_with_scissors: 1,
 		measure_twice: 1,
 		log_warn: 1,
@@ -60,12 +60,14 @@ struct userp_env {
 
 extern bool userp_alloc(userp_env env, void **pointer, size_t elem_size, int flags, const char * obj_name);
 extern bool userp_alloc_array(userp_env env, void **pointer, size_t elem_size, size_t count, int flags, const char * elem_name);
-#define USERP_ALLOC_OBJ(env, ptr) userp_alloc(env, ptr, sizeof(**ptr), USERP_HINT_STATIC, #ptr+1)
-#define USERP_ALLOC_ARRAY(env, ptr, count) userp_alloc_array(env, ptr, sizeof(**ptr), count, USERP_HINT_DYNAMIC, #ptr+1)
-#define USERP_FREE(env, ptr) userp_alloc(env, ptr, 0, 0, NULL);
+#define USERP_ALLOC_OBJ(env, ptr) userp_alloc(env, (void**)ptr, sizeof(**ptr), USERP_HINT_STATIC, #ptr+1)
+#define USERP_ALLOC_ARRAY(env, ptr, count) userp_alloc_array(env, (void**)ptr, sizeof(**ptr), count, USERP_HINT_DYNAMIC, #ptr+1)
+#define USERP_FREE(env, ptr) userp_alloc(env, (void**) ptr, 0, 0, NULL);
 
-#define USERP_CLEAR_ERROR(env) ((env)->err->code= 0)
+#define USERP_CLEAR_ERROR(env) ((env)->err.code= 0)
 #define USERP_DISPATCH_ERROR(env) do { if ((env)->err.code) env->diag(env->diag_cb_data, &env->err, env->err.code); } while (0)
+
+extern bool userp_grab_env_silent(userp_env env);
 
 #define SIZET_MUL_CAN_OVERFLOW(a, b) ( \
 	( \
@@ -79,12 +81,15 @@ extern bool userp_alloc_array(userp_env env, void **pointer, size_t elem_size, s
 #define USERP_BSTR_PART_ALLOC_ROUND(x) (((x) + 8 + 15) & ~15)
 #endif
 #ifndef USERP_BUFFER_DATA_ALLOC_ROUND
-#define USERP_BUFFER_PART_ALLOC_ROUND(x) (((x) + 4095) & ~4095)
+#define USERP_BUFFER_DATA_ALLOC_ROUND(x) (((x) + 4095) & ~4095)
 #endif
 
 // -------------------------------- bstr.c -----------------------------------
 
 #define USERP_SIZEOF_BSTR(n_parts) (sizeof(struct userp_bstr) + sizeof(struct userp_bstr_part)*n_parts)
+
+extern bool userp_grab_buffer_silent(userp_env env, userp_buffer buf);
+extern bool userp_drop_buffer_silent(userp_env env, userp_buffer buf);
 
 
 // -------------------------- userp_scope.c --------------------------
@@ -178,7 +183,8 @@ typedef struct type_table *type_table;
 struct userp_scope {
 	userp_env env;
 	userp_scope parent;
-	size_t level, refcnt;
+	size_t level;
+	unsigned refcnt;
 	bool is_final;
 
 	symbol_table symtable, *symtable_stack;
@@ -187,6 +193,8 @@ struct userp_scope {
 	size_t typetable_count;
 };
 
+bool userp_grab_scope_silent(userp_env env, userp_scope scope);
+void userp_drop_scope_silent(userp_env env, userp_scope scope);
 userp_symbol userp_scope_add_symbol(userp_scope scope, const char *name);
 
 // ----------------------------- dec.c -------------------------------
@@ -195,6 +203,7 @@ struct userp_dec {
 	userp_env env;
 	userp_scope scope;
 	struct userp_dec_frame *stack;
+	unsigned refcnt;
 	size_t stack_i, stack_lim;
 	userp_bstr input;
 	userp_reader_fn *reader;
@@ -210,12 +219,12 @@ struct userp_dec_frame {
 	userp_type node_type, parent_type;
 	size_t elem_i, elem_lim;
 	
-	userp_type array_type, rec_type, 
+	userp_type array_type, rec_type;
 };
 
 extern userp_dec userp_new_dec_silent(
 	userp_env env, userp_scope scope, userp_type root_type,
-	userp_buffer buffer_ref, uint8_t bytes, size_t n_bytes
+	userp_buffer buffer_ref, uint8_t *bytes, size_t n_bytes
 );
 extern bool userp_grab_dec_silent(userp_env env, userp_dec dec);
 extern void userp_drop_dec_silent(userp_env env, userp_dec dec);
