@@ -118,7 +118,7 @@ Because of the reference count, there is not a `userp_free_buffer` function, and
     // Ask for an allocation from env's allocator
     buf= userp_new_buffer(env, NULL, len, 0);
 
-This function allocates a new `struct userp_bstr` and optionally also the `data` it points to.
+This function allocates a new `struct userp_buffer` and optionally also the `data` it points to.
 If `data` is NULL and `alloc_len` is nonzero, this instructs the function to allocate `data`
 of that size.  If `data` is provided, it becomes the `buffer->data` directly.  `alloc_len` is
 likewise used to initialize `buffer->alloc_len`, and may be zero if you don't want the library to
@@ -135,44 +135,69 @@ make assumptions about this buffer.
   * USERP_BUFFER_DATA_PERSIST
     the `data` is long-lived and should not be freed
 
+#### userp_grab_buffer
+
+    success= userp_grab_buffer(userp_env env, userp_buffer buf);
+
+Acquire an additional reference to the buffer, returning true if successful.  This can fail if the
+reference count exceeds the maximum, or the specified environment does not match the one that
+created the buffer, or if you have `USERP_MEASURE_TWICE` enabled and the buffer is invalid.
+
+The library checks that `env` matches `buf->env` to help ensure that the buffer is being used in
+a safe manner; i.e. that the reference count is not being accessed by parallel threads.  You may
+pass an `env` of NULL to skip this check and use `buf->env`.
+
+If the buffer has the flag `USERP_BUFFER_PERSIST`, this function essentially does nothing because
+`refcnt` is not used, on the assumption that the buffer lives longer than any references to it.
+
+#### userp_drop_buffer
+
+    userp_drop_buffer(userp_env env, userp_buffer buf);
+
+Release a reference to a `userp_buffer`.  This has no effect if the buffer was allocated with the
+flag USERP_BUFFER_PERSIST.  If this is the last reference to the buffer, it and its data may be
+freed, except if the `*_PERSIST` flags were set.  This emits an error to the environment if the
+environment was not the one that allocated the buffer.  If the buffer was already freed, this
+causes undefined behaviour, unless the environment has `USERP_MEASURE_TWICE` enabled, in which
+case you can rely on an error being emitted.
+
+If the buffer was holding the last reference to the environment, the environment will also get
+freed during this call.
+
 */
 
 extern userp_buffer userp_new_buffer(userp_env env, void *data, size_t alloc_len, userp_flags flags) {
 	userp_buffer buf= NULL;
 	if (!USERP_ALLOC_OBJ(env, &buf))
 		return NULL;
-	if (!data && alloc_len) {
+	if (!data && alloc_len && !(flags & USERP_BUFFER_DATA_PERSIST)) {
 		alloc_len= USERP_BUFFER_DATA_ALLOC_ROUND(alloc_len);
 		if (!userp_alloc_array(env, &data, 1, alloc_len, flags, "buffer data")) {
 			USERP_FREE(env, &buf);
 			return NULL;
 		}
-		flags &= ~USERP_BUFFER_DATA_PERSIST;
 	}
 	buf->data= data;
 	buf->env= env;
 	buf->alloc_len= alloc_len;
-	buf->refcnt= 1;
+	buf->refcnt= (flags & USERP_BUFFER_PERSIST)? 0 : 1;
 	buf->addr= 0;
-	buf->flags= flags & ~USERP_BUFFER_PERSIST;
+	buf->flags= flags;
 	return buf;
 }
 
-static void userp_free_buffer(userp_buffer buf) {
-	userp_env env;
-	// Buffer cannot be freed unless env is set
-	assert(buf != NULL);
-	assert(buf->env != NULL);
-	env= buf->env;
+static void userp_free_buffer(userp_env env, userp_buffer buf) {
 	// Free the data if it came from env->alloc
 	if (!(buf->flags & USERP_BUFFER_DATA_PERSIST))
 		USERP_FREE(env, &buf->data);
 	// userp_env can have a weak reference to a buffer, for diagnostics.
 	// If this is that buffer, set the reference to NULL.
-	if (&env->err.buf == buf)
+	if (env->err.buf == buf)
 		env->err.buf= NULL;
-	else if (&env->diag.buf == buf)
-		env->diag.buf= NULL;
+	else if (env->warn.buf == buf)
+		env->warn.buf= NULL;
+	else if (env->msg.buf == buf)
+		env->msg.buf= NULL;
 	// Free the buffer struct
 	if (env->measure_twice)
 		bzero(buf, sizeof(*buf));
@@ -181,35 +206,53 @@ static void userp_free_buffer(userp_buffer buf) {
 	userp_drop_env(env);
 }
 
-bool userp_grab_buffer(userp_buffer buf) {
-	struct userp_diag diag;
-	if (!buf) return false;
+static bool userp_check_buffer_valid(userp_env env, userp_buffer buf) {
+	if (!buf) {
+		userp_diag_set(&env->err, USERP_EBADSTATE, "Attempt to use NULL buffer");
+		return false;
+	}
+	// TODO:
+	return true;
+}
+
+bool userp_grab_buffer(userp_env env, userp_buffer buf) {
+	if (!env) env= buf->env;
+	if (env->measure_twice && !userp_check_buffer_valid(env, buf))
+		return false;
 	// If the buffer is persistent, the refcnt is not used, and just assume we
 	// can make as many references as needed to it.
 	if (buf->flags & USERP_BUFFER_PERSIST)
 		return true;
-	if (!buf->env)
-		// don't know where to report the error
+	if (buf->env != env) {
+		userp_diag_set(&env->err, USERP_EBADSTATE, "Buffer does not belong to this userp_env");
 		return false;
+	}
 	if (!buf->refcnt) {
-		userp_diag_set(&buf->env->err, USERP_EBADSTATE, "Attempt to grab a destroyed userp_buffer");
+		userp_diag_set(&env->err, USERP_EBADSTATE, "Attempt to grab a destroyed userp_buffer");
 		return false;
 	}
 	if (!++buf->refcnt) {
-		userp_diag_set(&buf->env->err, USERP_EALLOC, "Reference count exceeds size_t");
+		userp_diag_set(&env->err, USERP_EALLOC, "Reference count exceeds size_t");
 		--buf->refcnt;
 		return false;
 	}
 	return true;
 }
 
-void userp_drop_buffer(userp_buffer buf) {
-	struct userp_diag diag;
-	if (buf && !(buf->flags & USERP_BUFFER_PERSIST)) {
+void userp_drop_buffer(userp_env env, userp_buffer buf) {
+	if (!env) env= buf->env;
+	if (env->measure_twice && !userp_check_buffer_valid(env, buf))
+		return;
+	if (buf->env != env) {
+		userp_diag_set(&env->err, USERP_EBADSTATE, "Buffer does not belong to this userp_env");
+		return;
+	}
+	if (!(buf->flags & USERP_BUFFER_PERSIST)) {
 		if (!buf->refcnt)
-			userp_diag_set(&buf->env->err, USERP_EBADSTATE, "Attempt to grab a destroyed userp_buffer");
+			userp_diag_set(&env->err, USERP_EBADSTATE, "Attempt to grab a destroyed userp_buffer");
 		else if (!--buf->refcnt)
-			userp_free_buffer(buf);
+			userp_free_buffer(env, buf);
+		// it is possible that env has been freed here
 	}
 }
 
@@ -317,7 +360,7 @@ void userp_drop_buffer(userp_buffer buf) {
 //	return true;
 //}
 
-#ifdef HAVE_POSIX_FILES
+#if 0 && HAVE_POSIX_FILES
 
 bool userp_bstr_append_file(userp_bstr *str, int fd, size_t length) {
 	int got;
@@ -345,7 +388,7 @@ bool userp_bstr_append_file(userp_bstr *str, int fd, size_t length) {
 
 #endif
 
-#ifdef HAVE_POSIX_MEMMAP
+#if 0 && HAVE_POSIX_MEMMAP
 
 bool userp_bstr_map_file(userp_bstr *str, int fd, int64_t offset, int64_t length) {
 	// Does the string already have a part adjacent or overlapping with this request?

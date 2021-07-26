@@ -26,8 +26,9 @@ typedef uint_least32_t userp_flags;
 #define USERP_ERROR         0x4000 // Generic recoverable error
 #define USERP_EALLOC        0x4001 // failure to alloc or realloc or grab a reference
 #define USERP_EDOINGITWRONG 0x4002 // bad request made to the API, or exceed library internal limitation
-#define USERP_ETYPESCOPE    0x4003 // userp_type is not available in the current scope
-#define USERP_ESYSERROR     0x4004 // You asked libuserp to make a system call, and the system call failed
+#define USERP_EUNKNOWN      0x4003 // Unknown enum value passed to API
+#define USERP_ETYPESCOPE    0x4004 // userp_type is not available in the current scope
+#define USERP_ESYSERROR     0x4005 // You asked libuserp to make a system call, and the system call failed
 #define USERP_EPROTOCOL     0x4100 // Generic error while decoding protocol
 #define USERP_EFEEDME       0x4101 // More data required to continue decoding
 #define USERP_ELIMIT        0x4102 // decoded data exceeds a limit
@@ -88,8 +89,8 @@ extern userp_diag userp_env_get_last_error(userp_env env);
 
 // ------------------------------- bstr.c ------------------------------------
 
-#define USERP_BUFFER_STATIC        0x001000
-#define USERP_BUFFER_ENV_ALLOC     0x002000
+#define USERP_BUFFER_PERSIST       0x001000
+#define USERP_BUFFER_DATA_PERSIST  0x002000
 #define USERP_BUFFER_MMAP          0x004000
 
 typedef bool userp_reader_fn(void *callback_data, userp_bstr* buffers, size_t bytes_needed, userp_env env);

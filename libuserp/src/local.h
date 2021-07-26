@@ -21,5 +21,6 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-#define HAVE_POSIX_FILES
+#define HAVE_POSIX_FILES 1
+#define HAVE_POSIX_MEMMAP 0
 #include <errno.h>
