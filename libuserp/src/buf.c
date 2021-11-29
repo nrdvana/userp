@@ -166,30 +166,36 @@ freed during this call.
 
 */
 
-extern userp_buffer userp_new_buffer(userp_env env, void *data, size_t alloc_len, userp_flags flags) {
+extern userp_buffer userp_new_buffer(userp_env env, void *data, size_t alloc_len, userp_buffer_flags flags) {
 	userp_buffer buf= NULL;
 	if (!USERP_ALLOC_OBJ(env, &buf))
 		return NULL;
-	if (!data && alloc_len && !(flags & USERP_BUFFER_DATA_PERSIST)) {
-		alloc_len= USERP_BUFFER_DATA_ALLOC_ROUND(alloc_len);
-		if (!userp_alloc_array(env, &data, 1, alloc_len, flags, "buffer data")) {
-			USERP_FREE(env, &buf);
-			return NULL;
-		}
-	}
 	buf->data= data;
 	buf->env= env;
 	buf->alloc_len= alloc_len;
-	buf->refcnt= (flags & USERP_BUFFER_PERSIST)? 0 : 1;
-	buf->addr= 0;
+	buf->refcnt= 1;
 	buf->flags= flags;
+	if (!buf->data && alloc_len) {
+		alloc_len= USERP_BUFFER_DATA_ALLOC_ROUND(alloc_len);
+		if (!userp_alloc_array(env, (void**) &buf->data, 1, alloc_len,
+				(flags&USERP_ALLOC_FLAG_MASK)|USERP_POINTER_IS_BUFFER_DATA, "buffer data")
+		) {
+			USERP_FREE(env, &buf);
+			return NULL;
+		}
+		buf->flags |= USERP_BUFFER_DATA_ALLOC;
+	}
+	userp_grab_env(env);
 	return buf;
 }
 
-static void userp_free_buffer(userp_env env, userp_buffer buf) {
+static void userp_free_buffer(userp_buffer buf) {
+	userp_env env= buf->env;
+
 	// Free the data if it came from env->alloc
-	if (!(buf->flags & USERP_BUFFER_DATA_PERSIST))
-		USERP_FREE(env, &buf->data);
+	if (buf->flags & USERP_BUFFER_DATA_ALLOC)
+		userp_alloc(env, (void**) &buf->data, 0, USERP_POINTER_IS_BUFFER_DATA, NULL);
+
 	// userp_env can have a weak reference to a buffer, for diagnostics.
 	// If this is that buffer, set the reference to NULL.
 	if (env->err.buf == buf)
@@ -198,208 +204,75 @@ static void userp_free_buffer(userp_env env, userp_buffer buf) {
 		env->warn.buf= NULL;
 	else if (env->msg.buf == buf)
 		env->msg.buf= NULL;
+
 	// Free the buffer struct
-	if (env->measure_twice)
-		bzero(buf, sizeof(*buf));
 	USERP_FREE(env, &buf);
+
 	// drop strong reference to the env.  This may cause env to be destroyed
 	userp_drop_env(env);
 }
 
-static bool userp_check_buffer_valid(userp_env env, userp_buffer buf) {
-	if (!buf) {
-		userp_diag_set(&env->err, USERP_EBADSTATE, "Attempt to use NULL buffer");
-		return false;
-	}
-	// TODO:
-	return true;
-}
-
-bool userp_grab_buffer(userp_env env, userp_buffer buf) {
-	if (!env) env= buf->env;
-	if (env->measure_twice && !userp_check_buffer_valid(env, buf))
-		return false;
-	// If the buffer is persistent, the refcnt is not used, and just assume we
-	// can make as many references as needed to it.
-	if (buf->flags & USERP_BUFFER_PERSIST)
-		return true;
-	if (buf->env != env) {
-		userp_diag_set(&env->err, USERP_EBADSTATE, "Buffer does not belong to this userp_env");
-		return false;
-	}
-	if (!buf->refcnt) {
-		userp_diag_set(&env->err, USERP_EBADSTATE, "Attempt to grab a destroyed userp_buffer");
-		return false;
-	}
-	if (!++buf->refcnt) {
-		userp_diag_set(&env->err, USERP_EALLOC, "Reference count exceeds size_t");
-		--buf->refcnt;
-		return false;
+bool userp_grab_buffer(userp_buffer buf) {
+	// Refcount will be zero if buffer is not dynamically allocated
+	if (buf->refcnt) {
+		// check for rollover
+		if (!++buf->refcnt) {
+			--buf->refcnt; // back up to UINT_MAX
+			return false;
+		}
 	}
 	return true;
 }
 
-void userp_drop_buffer(userp_env env, userp_buffer buf) {
-	if (!env) env= buf->env;
-	if (env->measure_twice && !userp_check_buffer_valid(env, buf))
-		return;
-	if (buf->env != env) {
-		userp_diag_set(&env->err, USERP_EBADSTATE, "Buffer does not belong to this userp_env");
-		return;
-	}
-	if (!(buf->flags & USERP_BUFFER_PERSIST)) {
-		if (!buf->refcnt)
-			userp_diag_set(&env->err, USERP_EBADSTATE, "Attempt to grab a destroyed userp_buffer");
-		else if (!--buf->refcnt)
-			userp_free_buffer(env, buf);
-		// it is possible that env has been freed here
-	}
-}
-
-//bool userp_grow_buffer(userp_buffer buf, size_t alloc_len) {
-//	if (!buf->env) return false;
-//	if (!(buf->flags & USERP_BUFFER_ENV_ALLOC)) {
-//		userp_env_set_error(buf->env, USERP_EINVAL, "buffer is not resizable");
-//		return false;
-//	}
-//	if (buf->alloc_len >= alloc_len) return true;
-//	alloc_len= USERP_BUFFER_DATA_ALLOC_ROUND(alloc_len);
-//	return USERP_ALLOC_ARRAY(buf->env, &buf->data, uint8_t, alloc_len, USERP_HINT_DYNAMIC);
-//}
-//
-//userp_bstr userp_new_bstr(userp_env env, int part_alloc_count) {
-//	userp_bstr str= NULL;
-//	if (!USERP_ALLOC(env, &str, SIZEOF_USERP_BSTR(part_alloc_count)))
-//		return NULL;
-//	str->env= env;
-//	str->part_count= 0;
-//	str->part_alloc= part_alloc_count;
-//	return str;
-//}
-//
-//bool userp_free_bstr(userp_bstr *str) {
-//	size_t i;
-//	for (i= 0; i < (*str)->part_count; i++) {
-//		if ((*str)->parts[i].buf && (*str)->parts[i].buf->refcnt)
-//			userp_drop_buffer((*str)->parts[i].buf);
-//	}
-//	USERP_FREE((*str)->env, str);
-//}
-//
-//void* userp_bstr_append_bytes(userp_bstr *str, size_t n_bytes, const void* src_bytes) {
-//	userp_buffer buf;
-//	struct userp_bstr_part *part;
-//	void *ret= NULL;
-//	// In order to append to an existing buffer, it must have an 'env', it must be flagged
-//	// USERP_BUFFER_APPENDABLE, and must have a refcnt of 1.
-//	if (str->part_count) {
-//		part= &(*str)->parts[str->part_count-1];
-//		buf= part->buf;
-//		if (buf && buf->env && (buf->flags | USERP_BUFFER_APPENDABLE)) {
-//			// This should always be true, but if not, don't touch this buffer segment
-//			if (part->data >= buf->data && part->len < buf->alloc_len && (parts->data - buf->data) <= buf->alloc_len - part->len) {
-//				// Can the buffer already hold an additional n_bytes?
-//				if ((part->data - buf->data) + part->len + n_bytes <= buf->alloc_len)
-//					ret= part->data + part->len;
-//			}
-//		}
-//	}
-//	if (!ret) { // need a new buffer?
-//		// Ensure room for a new part
-//		if ((*str)->part_count >= (*str)->part_alloc && !userp_bstr_append_parts(str, 1, NULL))
-//			return NULL;
-//		// Then allocate another buffer for this new part
-//		if (!(buf= userp_new_buffer((*str)->env, NULL, n_bytes, USERP_BUFFER_APPENDABLE)))
-//			return NULL;
-//		// Add the part
-//		part= &(*str)->parts[(*str)->part_count++];
-//		part->buf= buf;
-//		part->data= buf->data;
-//		part->len= 0;
-//		ret= part->data;
-//	}
-//	if (src_bytes) {
-//		memcpy(ret, src_bytes, n_bytes);
-//		part->len += n_bytes;
-//	}
-//	return part->data;
-//}
-//
-//bool userp_bstr_append_parts(userp_bstr *str, size_t n_parts, const struct userp_bstr_part *src_parts) {
-//	size_t n, i, ofs_diff;
-//	struct userp_bstr_part *new_parts;
-//	// is there room for this number of parts?
-//	if ((*str)->part_count + n_parts > (*str)->part_alloc) {
-//		// round up to multiple of 16, leaving at least 8 slots open
-//		n= USERP_BSTR_PART_ALLOC_ROUND( (*str)->part_count + n_parts );
-//		// realloc, possibly changing *str
-//		if (!USERP_ALLOC((*str)->env, str, SIZEOF_USERP_BSTR((*str)->part_count + n_parts)))
-//			return false;
-//		(*str)->part_alloc= n;
-//	}
-//	// If src_parts is not given, then the only change is enlarging the string object, above.
-//	// If it is given, then also copy the parts onto the end of the string and update the
-//	// offsets and grab references to the buffers.
-//	if (src_parts) {
-//		new_parts= (*str)->parts + (*str)->part_count;
-//		memcpy(new_parts, src_parts, sizeof(struct userp_bstr_part)*n_parts);
-//		ofs_diff= ((*str)->part_count == 0? 0 : (new_parts[-1].ofs + new_parts[-1].len)) - src_parts[0].ofs;
-//		for (i= 0; i < n_parts; i++) {
-//			new_parts[i].ofs += ofs_diff;
-//			if (i > 0 && new_parts[i].ofs < new_parts[i-1].ofs + new_parts[i-1].len) {
-//				// invalid indexing on string
-//				(*str)->env->diag_pos= i;
-//				fatal_error((*str)->env, USERP_ESTRINDEX, "src_parts[" USERP_DIAG_POS "].ofs is invalid");
-//				return false;
-//			}
-//		}
-//		for (i= 0; i < n_parts; i++)
-//			userp_grab_buffer(new_parts[i].buf);
-//		(*str)->part_count += n_parts;
-//	}
-//	return true;
-//}
-
-#if 0 && HAVE_POSIX_FILES
-
-bool userp_bstr_append_file(userp_bstr *str, int fd, size_t length) {
-	int got;
-	void *dest= userp_bstr_append_bytes(str, length, NULL);
-	if (!dest)
-		return false;
-	got= read(fd, dest, length);
-	if (got > 0) {
-		((*str)->parts + (*str)->part_count - 1)->len += got;
+bool userp_drop_buffer(userp_buffer buf) {
+	if (buf->refcnt && !--buf->refcnt) {
+		userp_free_buffer(buf);
 		return true;
-	}
-	else if (got == 0
-		|| errno == EAGAIN
-		|| errno == EINTR
-		|| errno == EWOULDBLOCK
-	) {
-		userp_env_set_error((*str)->env, USERP_EEOF, "No bytes ready to read from stream");
-	}
-	else {
-		(*str)->env->diag_pos= errno;
-		userp_env_set_error((*str)->env, USERP_ESYSERROR, "System error " USERP_DIAG_POS " while calling read()");
 	}
 	return false;
 }
 
-#endif
+#ifdef UNIT_TEST
 
-#if 0 && HAVE_POSIX_MEMMAP
-
-bool userp_bstr_map_file(userp_bstr *str, int fd, int64_t offset, int64_t length) {
-	// Does the string already have a part adjacent or overlapping with this request?
+UNIT_TEST(buf_new_dynamic) {
+	userp_env env= userp_new_env(logging_alloc, userp_file_logger, stdout, 0);
+	userp_buffer buf= userp_new_buffer(env, NULL, 1024, 0);
+	userp_drop_buffer(buf);
+	userp_drop_env(env);
 }
-
-#endif
-
-/*
-bool userp_bstr_splice(userp_bstr *dst, size_t dst_ofs, size_t dst_len, userp_bstr *src, size_t src_ofs, size_t src_len) {
-}
-
-void userp_bstr_crop(userp_bstr *str, size_t trim_head, size_t trim_tail) {
-}
+/*OUTPUT
+/alloc 0x0+ to \d+ = 0x\w+/
+/alloc 0x0+ to \d{2} = 0x\w+/
+/alloc 0x0+ to \d{4} = 0x\w+ POINTER_IS_BUFFER_DATA/
+/alloc 0x\w+ to 0 = 0x0+ POINTER_IS_BUFFER_DATA/
+/alloc 0x\w+ to 0 = 0x0+/
+/alloc 0x\w+ to 0 = 0x0+/
 */
+
+char static_buffer[1024];
+UNIT_TEST(buf_new_static) {
+	userp_env env= userp_new_env(logging_alloc, userp_file_logger, stdout, 0);
+	userp_buffer buf= userp_new_buffer(env, static_buffer, sizeof(static_buffer), 0);
+	userp_drop_buffer(buf);
+	userp_drop_env(env);
+}
+/*OUTPUT
+/alloc 0x0+ to \d+ = 0x\w+/
+/alloc 0x0+ to \d{2} = 0x\w+/
+/alloc 0x\w+ to 0 = 0x0+/
+/alloc 0x\w+ to 0 = 0x0+/
+*/
+
+UNIT_TEST(buf_on_stack) {
+	char stack_buffer[1024];
+	userp_env env= userp_new_env(logging_alloc, userp_file_logger, stdout, 0);
+	struct userp_buffer buf= { .data= stack_buffer, .alloc_len= sizeof(stack_buffer) };
+	userp_drop_buffer(&buf);
+	userp_drop_env(env);
+}
+/*OUTPUT
+/alloc 0x0+ to \d+ = 0x\w+/
+/alloc 0x\w+ to 0 = 0x0+/
+*/
+
+#endif

@@ -7,12 +7,13 @@ libuserp_la_SOURCES = diag.c env.c bstr.c dec.c
 
 check_PROGRAMS = unittest
 unittest_SOURCES = unittest.c
-unittest_autoscan = diag.c env.c bstr.c
+unittest_autoscan = diag.c env.c buf.c
 unittest_autogen_tests = $(addprefix t/,$(patsubst %.c,%.t,$(unittest_autoscan)))
 
 AM_CPPFLAGS=-I$(top_srcdir)
 
 CP=cp
+PERL=perl
 PROVE=prove
 
 # This contains rules needed to auto-generate source files, but gets overwritten

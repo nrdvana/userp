@@ -67,8 +67,6 @@ extern bool userp_alloc_array(userp_env env, void **pointer, size_t elem_size, s
 #define USERP_CLEAR_ERROR(env) ((env)->err.code= 0)
 #define USERP_DISPATCH_ERROR(env) do { if ((env)->err.code) env->diag(env->diag_cb_data, &env->err, env->err.code); } while (0)
 
-extern bool userp_grab_env_silent(userp_env env);
-
 #define SIZET_MUL_CAN_OVERFLOW(a, b) ( \
 	( \
 		(((size_t)(a) >> sizeof(size_t)*4) + 1) \
@@ -87,10 +85,6 @@ extern bool userp_grab_env_silent(userp_env env);
 // -------------------------------- bstr.c -----------------------------------
 
 #define USERP_SIZEOF_BSTR(n_parts) (sizeof(struct userp_bstr) + sizeof(struct userp_bstr_part)*n_parts)
-
-extern bool userp_grab_buffer_silent(userp_env env, userp_buffer buf);
-extern bool userp_drop_buffer_silent(userp_env env, userp_buffer buf);
-
 
 // -------------------------- userp_scope.c --------------------------
 

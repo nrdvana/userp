@@ -68,7 +68,7 @@ const char * userp_diag_code_name(int code) {
 	RETSTR(USERP_EALLOC)
 	RETSTR(USERP_EDOINGITWRONG)
 	RETSTR(USERP_ETYPESCOPE)
-	RETSTR(USERP_ESYSERROR)
+	RETSTR(USERP_ESYS)
 	RETSTR(USERP_EPROTOCOL)
 	RETSTR(USERP_EFEEDME)
 	RETSTR(USERP_ELIMIT)
@@ -260,7 +260,7 @@ void userp_diag_set(userp_diag diag, int code, const char *tpl) {
 	diag->code= code;
 	diag->tpl= tpl;
 	if (diag->buf) {
-		userp_drop_buffer_silent(diag->buf->env, diag->buf);
+		userp_drop_buffer(diag->buf);
 		diag->buf= NULL;
 	}
 }

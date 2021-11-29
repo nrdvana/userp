@@ -21,7 +21,8 @@ anything and everything.
 ## API Overview
 
 The entire library operates in the context of a `userp_env`, which holds
-various configuration for everything else.
+various configuration for everything else.  It also holds the last error from
+any operation, stored in a `userp_diag` object.
 
 To facilitate zero-copy, the library uses `userp_buffer` objects to describe
 each block of data, then references those with `userp_bstr` strings.
@@ -43,6 +44,9 @@ end, the `userp_enc` and `userp_dec` are separate from the `userp_stream`.
 A `userp_stream` is the top-level object for reading and writng the complete
 protocol of blocks, which contain scopes, indexes, and metadata.
 
+Anything with a reference count has a corresponding "grab"/"drop" API call
+to acquire or release a reference to it.
+
 ### Environment Objects
 
 The `userp_env` object holds all configuration needed by the rest of the
@@ -53,6 +57,13 @@ objects referencing it) must only be used by one thread at a time.
 
 `userp_env` must be dynamically allocated because it is reference-counted, and
 only freed after the last thing using it is freed.
+
+### Diagnostic Objects
+
+Rather than simple error codes, linuserp stores various information about the
+last error or last logging event that occurred.  You can query the attributes
+of these objects to get additional info about the error or message, and you
+can format them as strings.
 
 ### Buffer Objects and Strings
 

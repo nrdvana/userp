@@ -10,7 +10,7 @@ typedef struct userp_enc *userp_enc;
 typedef struct userp_dec *userp_dec;
 typedef struct userp_buffer *userp_buffer;
 typedef struct userp_bstr *userp_bstr;
-typedef uint_least32_t userp_flags;
+typedef uint_least32_t userp_env_flags, userp_alloc_flags, userp_buffer_flags;
 
 // ----------------------------- diag.c --------------------------------------
 
@@ -28,7 +28,7 @@ typedef uint_least32_t userp_flags;
 #define USERP_EDOINGITWRONG 0x4002 // bad request made to the API, or exceed library internal limitation
 #define USERP_EUNKNOWN      0x4003 // Unknown enum value passed to API
 #define USERP_ETYPESCOPE    0x4004 // userp_type is not available in the current scope
-#define USERP_ESYSERROR     0x4005 // You asked libuserp to make a system call, and the system call failed
+#define USERP_ESYS          0x4005 // You asked libuserp to make a system call, and the system call failed
 #define USERP_EPROTOCOL     0x4100 // Generic error while decoding protocol
 #define USERP_EFEEDME       0x4101 // More data required to continue decoding
 #define USERP_ELIMIT        0x4102 // decoded data exceeds a limit
@@ -56,14 +56,14 @@ extern int    userp_diag_print(userp_diag diag, FILE *fh);
 #define USERP_HINT_PERSIST            0x0008
 #define USERP_HINT_ALIGN              0x0010
 #define USERP_POINTER_IS_BUFFER_DATA  0x0100
-#define USERP_ALLOC_FLAG_BITS         0x011F
+#define USERP_ALLOC_FLAG_MASK         0x011F
 
-typedef bool userp_alloc_fn(void *callback_data, void **pointer, size_t new_size, userp_flags flags);
+typedef bool userp_alloc_fn(void *callback_data, void **pointer, size_t new_size, userp_alloc_flags flags);
 typedef void userp_diag_fn(void *callback_data, userp_diag diag, int diag_code);
 
-extern userp_env userp_new_env(userp_alloc_fn alloc_callback, userp_diag_fn diag_callback, void *callback_data, userp_flags flags);
+extern userp_env userp_new_env(userp_alloc_fn alloc_callback, userp_diag_fn diag_callback, void *callback_data, userp_env_flags flags);
 extern bool userp_grab_env(userp_env env);
-extern void userp_drop_env(userp_env env);
+extern bool userp_drop_env(userp_env env);
 
 #define USERP_LOG_LEVEL               0x0001
 
@@ -80,20 +80,22 @@ extern void userp_drop_env(userp_env env);
 #define USERP_TRUNCATE_INTO_INT            3
 #define USERP_TRUNCATE_INTO_FLOAT          4
 
-
 void userp_env_set_attr(userp_env env, int attr_id, size_t value);
 
 extern void userp_file_logger(void *callback_data, userp_diag diag, int code);
 extern void userp_env_set_logger(userp_env env, userp_diag_fn diag_callback, void *callback_data);
 extern userp_diag userp_env_get_last_error(userp_env env);
 
-// ------------------------------- bstr.c ------------------------------------
+// ------------------------------- buf.c ------------------------------------
 
-#define USERP_BUFFER_PERSIST       0x001000
-#define USERP_BUFFER_DATA_PERSIST  0x002000
-#define USERP_BUFFER_MMAP          0x004000
+// buf->data was allocated with env's alloc, needs freed, and can be re-allocated.
+#define USERP_BUFFER_DATA_ALLOC    0x001000
+
+// buf->data was allocated with mmap, and needs freed with munmap
+#define USERP_BUFFER_DATA_MMAP     0x002000
 
 typedef bool userp_reader_fn(void *callback_data, userp_bstr* buffers, size_t bytes_needed, userp_env env);
+typedef void userp_buffer_destructor(void *callback_data, userp_buffer *buf);
 
 /** Reference-counted buffer wrapper
  *
@@ -140,19 +142,18 @@ typedef bool userp_reader_fn(void *callback_data, userp_bstr* buffers, size_t by
  *   userp_drop_buffer(buf); // calls free(buf->data); free(buf);
  */
 struct userp_buffer {
-	uint8_t        *data;     // must always be non-NULL, points to start of buffer
-	userp_env      env;       // if non-null, creator of buffer, will be called to free buffer
-	size_t         alloc_len; // if nonzero, indicates how much memory is valid starting at 'data'
-	size_t         refcnt;    // if nonzero, indicates this buffer is reference-counted
-	int64_t        addr;      // indicates the origin/placement of this buffer, depends on flags
-	uint_least32_t flags;     // indicates details of buffer
+	uint8_t *                data;      // points to start of buffer
+	userp_env                env;       // owner of the buffer
+	size_t                   refcnt;    // if nonzero, this buffer is reference-counted
+	size_t                   alloc_len; // if nonzero, how much memory is valid starting at 'data'
+	userp_buffer_flags       flags;
 };
 #define USERP_FIELD_OFFSET(type,field) ((int)( ((int)&(((type*)64)->field)) - 64 ))
 #define USERP_GET_BUFFER_FROM_DATA_PTR(data_ptr) ((userp_buffer)( ((char*)data_ptr) - USERP_FIELD_OFFSET(struct userp_buffer, data) ))
 
-extern userp_buffer userp_new_buffer(userp_env env, void *data, size_t alloc_len, userp_flags flags);
-extern bool userp_grab_buffer(userp_env env, userp_buffer buf);
-extern void userp_drop_buffer(userp_env env, userp_buffer buf);
+extern userp_buffer userp_new_buffer(userp_env env, void *data, size_t alloc_len, userp_buffer_flags flags);
+extern bool userp_grab_buffer(userp_buffer buf);
+extern bool userp_drop_buffer(userp_buffer buf);
 
 struct userp_bstr_part {
 	uint8_t *data;
@@ -280,7 +281,7 @@ bool userp_dec_typeref(userp_dec dec, userp_type *out);
 bool userp_dec_float(userp_dec dec, float *out);
 bool userp_dec_double(userp_dec dec, double *out);
 // Copy out the bytes of the current node, as-is
-bool userp_dec_bytes(userp_dec dec, void *out, size_t *length_inout, size_t elem_size, userp_flags flags);
-userp_bstr userp_dec_bytes_zerocopy(userp_dec dec, size_t elem_size, userp_flags flags);
+//bool userp_dec_bytes(userp_dec dec, void *out, size_t *length_inout, size_t elem_size, userp_flags flags);
+//userp_bstr userp_dec_bytes_zerocopy(userp_dec dec, size_t elem_size, userp_flags flags);
 
 #endif

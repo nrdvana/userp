@@ -159,7 +159,7 @@ sub write_entrypoint {
 #define TRACE(env, x...) do{ if(env->log_trace){ userp_diag_set(env->diag,x); userp_env_emit_diag(env); } }while(0)
 #include "userp_private.h"
 
-@{[ map qq:#include "$_"\n:, sort @used_src ]} 
+@{[ map qq:#include "$_"\n:, @used_src ]}
 
 typedef void test_entrypoint(int argc, char **argv);
 struct tests {

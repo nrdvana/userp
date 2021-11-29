@@ -1,7 +1,7 @@
 #include "local.h"
 #include "userp_private.h"
 
-static bool userp_default_alloc_fn(void *unused, void **pointer, size_t new_size, userp_flags flags);
+static bool userp_default_alloc_fn(void *unused, void **pointer, size_t new_size, userp_alloc_flags flags);
 
 /*APIDOC
 ## userp_env
@@ -70,7 +70,7 @@ This can emit a fatal error if `env` is not valid or if the internal reference c
 
 */
 
-userp_env userp_new_env(userp_alloc_fn alloc_fn, userp_diag_fn diag_fn, void *cb_data, userp_flags flags) {
+userp_env userp_new_env(userp_alloc_fn alloc_fn, userp_diag_fn diag_fn, void *cb_data, userp_env_flags flags) {
 	userp_env env= NULL;
 	struct userp_diag err;
 	void *alloc_callback_data= alloc_fn? cb_data : NULL;
@@ -124,24 +124,20 @@ static void userp_free_env(userp_env env) {
 }
 
 bool userp_grab_env(userp_env env) {
-	USERP_CLEAR_ERROR(env);
-	if (userp_grab_env_silent(env))
+	if (++env->refcnt)
 		return true;
+	--env->refcnt; // it hit zero.  Roll it back to INT_MAX
+	userp_diag_set(&env->err, USERP_EALLOC, "Reference count exceeds size_t");
 	USERP_DISPATCH_ERROR(env);
 	return false;
 }
 
-bool userp_grab_env_silent(userp_env env) {
-	if (++env->refcnt)
-		return true;
-	--env->refcnt;
-	userp_diag_set(&env->err, USERP_EALLOC, "Reference count exceeds size_t");
-	return false;
-}
-
-void userp_drop_env(userp_env env) {
-	if (env->refcnt && !--env->refcnt)
+bool userp_drop_env(userp_env env) {
+	if (env->refcnt && !--env->refcnt) {
 		userp_free_env(env);
+		return true;
+	}
+	return false;
 }
 
 /*APIDOC
@@ -203,7 +199,7 @@ you can modify the state of your `callback_data`.
 
 */
 
-bool userp_default_alloc_fn(void *unused, void **pointer, size_t new_size, userp_flags flags) {
+bool userp_default_alloc_fn(void *unused, void **pointer, size_t new_size, userp_alloc_flags flags) {
 	void *re;
 	if (new_size) {
 		if (!(re= realloc(*pointer, new_size)))
@@ -360,7 +356,7 @@ void userp_env_set_attr(userp_env env, int attr_id, size_t value) {
 	}
 	CATCH(unknown_val) {
 		if (!env->run_with_scissors) {
-			userp_diag_setf(&env->err, USERP_EINVAL, "Unknown " USERP_DIAG_CSTR1 ": " USERP_DIAG_INDEX, attr_name, (int) value);
+			userp_diag_setf(&env->err, USERP_EUNKNOWN, "Unknown " USERP_DIAG_CSTR1 ": " USERP_DIAG_INDEX, attr_name, (int) value);
 			USERP_DISPATCH_ERROR(env);
 		}
 	}
@@ -368,7 +364,7 @@ void userp_env_set_attr(userp_env env, int attr_id, size_t value) {
 
 // ----------------------------- Private methods -----------------------------
 
-bool userp_alloc_obj(userp_env env, void **pointer, size_t elem_size, int flags, const char * obj_name) {
+bool userp_alloc(userp_env env, void **pointer, size_t elem_size, int flags, const char * obj_name) {
 	if (env->alloc(env->alloc_cb_data, pointer, elem_size, flags))
 		return true;
 	if (elem_size)
@@ -385,7 +381,7 @@ bool userp_alloc_obj(userp_env env, void **pointer, size_t elem_size, int flags,
 bool userp_alloc_array(userp_env env, void **pointer, size_t elem_size, size_t count, int flags, const char * elem_name) {
 	size_t n= elem_size * count;
 	// check overflow
-	if (!env->run_with_scissors && SIZET_MUL_CAN_OVERFLOW(elem_size, count)) {
+	if (SIZET_MUL_CAN_OVERFLOW(elem_size, count)) {
 		userp_diag_setf(&env->err, USERP_ELIMIT,
 			"Allocation of " USERP_DIAG_COUNT "x " USERP_DIAG_CSTR1 " (" USERP_DIAG_SIZE ") exceeds size_t",
 			count, elem_name, elem_size);
@@ -412,10 +408,11 @@ void userp_unimplemented(const char* msg) {
 
 #ifdef UNIT_TEST
 
-static bool logging_alloc(void *callback_data, void **pointer, size_t new_size, int flags) {
+static bool logging_alloc(void *callback_data, void **pointer, size_t new_size, userp_alloc_flags flags) {
 	void *prev= *pointer;
 	bool ret= userp_default_alloc_fn(callback_data, pointer, new_size, flags);
-	printf("alloc 0x%llX to %ld = 0x%llX\n", (long long) prev, new_size, (long long) *pointer);
+	printf("alloc 0x%llX to %ld = 0x%llX%s\n", (long long) prev, new_size, (long long) *pointer,
+		flags & USERP_POINTER_IS_BUFFER_DATA? " POINTER_IS_BUFFER_DATA":"");
 	return ret;
 }
 
