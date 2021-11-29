@@ -56,13 +56,12 @@ struct userp_env {
 	struct userp_diag err, // Most recent error
 		warn,              // Most recent warning
 		msg;               // Current message of less severity than error
+	
+	// Defaults for encoders
+	int default_enc_output_parts;
 };
 
-extern bool userp_alloc(userp_env env, void **pointer, size_t elem_size, int flags, const char * obj_name);
-extern bool userp_alloc_array(userp_env env, void **pointer, size_t elem_size, size_t count, int flags, const char * elem_name);
-#define USERP_ALLOC_OBJ(env, ptr) userp_alloc(env, (void**)ptr, sizeof(**ptr), USERP_HINT_STATIC, #ptr+1)
-#define USERP_ALLOC_ARRAY(env, ptr, count) userp_alloc_array(env, (void**)ptr, sizeof(**ptr), count, USERP_HINT_DYNAMIC, #ptr+1)
-#define USERP_FREE(env, ptr) userp_alloc(env, (void**) ptr, 0, 0, NULL);
+extern bool userp_alloc_math(userp_env env, void **pointer, size_t elem_size, size_t count, size_t extra, userp_alloc_flags flags);
 
 #define USERP_CLEAR_ERROR(env) ((env)->err.code= 0)
 #define USERP_DISPATCH_ERROR(env) do { if ((env)->err.code) env->diag(env->diag_cb_data, &env->err, env->err.code); } while (0)
@@ -190,6 +189,25 @@ struct userp_scope {
 bool userp_grab_scope_silent(userp_env env, userp_scope scope);
 void userp_drop_scope_silent(userp_env env, userp_scope scope);
 userp_symbol userp_scope_add_symbol(userp_scope scope, const char *name);
+
+// ----------------------------- enc.c -------------------------------
+
+#ifndef USERP_ENC_DEFAULT_OUTPUT_PARTS
+#define USERP_ENC_DEFAULT_OUTPUT_PARTS 8
+#endif
+#ifndef USERP_ENC_DEFAULT_OUTPUT_BUFSIZE
+#define USERP_ENC_DEFAULT_OUTPUT_BUFSIZE 4096
+#endif
+
+struct userp_enc {
+	userp_env env;
+	userp_scope scope;
+	userp_bstr output;
+	uint8_t *out_pos, *out_lim;
+	int out_align;
+	
+	struct userp_bstr output_inst;
+};
 
 // ----------------------------- dec.c -------------------------------
 

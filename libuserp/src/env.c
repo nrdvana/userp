@@ -364,42 +364,37 @@ void userp_env_set_attr(userp_env env, int attr_id, size_t value) {
 
 // ----------------------------- Private methods -----------------------------
 
-bool userp_alloc(userp_env env, void **pointer, size_t elem_size, int flags, const char * obj_name) {
-	if (env->alloc(env->alloc_cb_data, pointer, elem_size, flags))
+bool userp_alloc(userp_env env, void **pointer, size_t new_size, userp_alloc_flags flags) {
+	if (env->alloc(env->alloc_cb_data, pointer, new_size, flags))
 		return true;
-	if (elem_size)
-		userp_diag_set(&env->err, USERP_ELIMIT, "Unable to allocate " USERP_DIAG_CSTR1 " (" USERP_DIAG_SIZE " bytes)");
-	else
-		userp_diag_set(&env->err, USERP_EFATAL, "Unable to free " USERP_DIAG_CSTR1);
-	env->err.cstr1= obj_name;
-	env->err.size= elem_size;
-	// de-allocation errors need reported immediately, because they can be fatal
-	if (!elem_size) USERP_DISPATCH_ERROR(env);
+	userp_diag_set(&env->err, new_size? USERP_ELIMIT : USERP_EFATAL, "alloc(" USERP_DIAG_SIZE ") failed");
+	env->err.size= new_size;
+	USERP_DISPATCH_ERROR(env);
 	return false;
 }
 
-bool userp_alloc_array(userp_env env, void **pointer, size_t elem_size, size_t count, int flags, const char * elem_name) {
-	size_t n= elem_size * count;
-	// check overflow
-	if (SIZET_MUL_CAN_OVERFLOW(elem_size, count)) {
-		userp_diag_setf(&env->err, USERP_ELIMIT,
-			"Allocation of " USERP_DIAG_COUNT "x " USERP_DIAG_CSTR1 " (" USERP_DIAG_SIZE ") exceeds size_t",
-			count, elem_name, elem_size);
-		return false;
-	}
-	if (env->alloc(env->alloc_cb_data, pointer, n, flags))
-		return true;
-	if (count)
-		userp_diag_set(&env->err, USERP_ELIMIT, "Unable to allocate " USERP_DIAG_COUNT "x " USERP_DIAG_CSTR1 " (" USERP_DIAG_SIZE " bytes)");
-	else
-		userp_diag_set(&env->err, USERP_EFATAL, "Unable to free array of " USERP_DIAG_COUNT " " USERP_DIAG_CSTR1);
-	env->err.count= count;
-	env->err.cstr1= elem_name;
-	env->err.size= n;
-	// de-allocation errors need reported immediately, because they can be fatal
-	if (!count) USERP_DISPATCH_ERROR(env);
-	return false;
-}
+//bool userp_alloc_array(userp_env env, void **pointer, size_t elem_size, size_t count, int flags, const char * elem_name) {
+//	size_t n= elem_size * count;
+//	// check overflow
+//	if (SIZET_MUL_CAN_OVERFLOW(elem_size, count)) {
+//		userp_diag_setf(&env->err, USERP_ELIMIT,
+//			"Allocation of " USERP_DIAG_COUNT "x " USERP_DIAG_CSTR1 " (" USERP_DIAG_SIZE ") exceeds size_t",
+//			count, elem_name, elem_size);
+//		return false;
+//	}
+//	if (env->alloc(env->alloc_cb_data, pointer, n, flags))
+//		return true;
+//	if (count)
+//		userp_diag_set(&env->err, USERP_ELIMIT, "Unable to allocate " USERP_DIAG_COUNT "x " USERP_DIAG_CSTR1 " (" USERP_DIAG_SIZE " bytes)");
+//	else
+//		userp_diag_set(&env->err, USERP_EFATAL, "Unable to free array of " USERP_DIAG_COUNT " " USERP_DIAG_CSTR1);
+//	env->err.count= count;
+//	env->err.cstr1= elem_name;
+//	env->err.size= n;
+//	// de-allocation errors need reported immediately, because they can be fatal
+//	if (!count) USERP_DISPATCH_ERROR(env);
+//	return false;
+//}
 
 void userp_unimplemented(const char* msg) {
 	fprintf(stderr, "Unimplemented: %s", msg);

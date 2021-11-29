@@ -124,7 +124,7 @@ userp_dec userp_new_dec_silent(
 		}
 	}
 	// Perform all allocations, and if any fail, free them all
-	if (!userp_alloc(env, &dec, sizeof(*dec) + sizeof(struct userp_bstr_part)*n_input_parts, USERP_HINT_STATIC, "userp_dec")
+	if (!userp_alloc(env, (void**) &dec, sizeof(*dec) + sizeof(struct userp_bstr_part)*n_input_parts, USERP_HINT_STATIC, "userp_dec")
 		|| !USERP_ALLOC_ARRAY(env, &stack, n_frames)
 		// decoder holds a reference to the scope
 		|| !(got_scope= userp_grab_scope_silent(env, scope))
@@ -183,8 +183,8 @@ bool userp_grab_dec(userp_env env, userp_dec dec) {
 
 bool userp_grab_dec_silent(userp_env env, userp_dec dec) {
 	if (env && env->measure_twice) {
-		unimplemented("verify dec belongs to env");
-		// remove dec from env's set if dec is getting freed
+		unimplemented("verify decoder belongs to env");
+		// remove decoder from env's set if decoder is getting freed
 	}
 	if (++dec->refcnt)
 		return true;

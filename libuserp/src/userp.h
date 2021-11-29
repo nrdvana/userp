@@ -26,6 +26,7 @@ typedef uint_least32_t userp_env_flags, userp_alloc_flags, userp_buffer_flags;
 #define USERP_ERROR         0x4000 // Generic recoverable error
 #define USERP_EALLOC        0x4001 // failure to alloc or realloc or grab a reference
 #define USERP_EDOINGITWRONG 0x4002 // bad request made to the API, or exceed library internal limitation
+#define USERP_EFOREIGNSCOPE 0x4002 // scope belongs to a different env
 #define USERP_EUNKNOWN      0x4003 // Unknown enum value passed to API
 #define USERP_ETYPESCOPE    0x4004 // userp_type is not available in the current scope
 #define USERP_ESYS          0x4005 // You asked libuserp to make a system call, and the system call failed
@@ -61,9 +62,17 @@ extern int    userp_diag_print(userp_diag diag, FILE *fh);
 typedef bool userp_alloc_fn(void *callback_data, void **pointer, size_t new_size, userp_alloc_flags flags);
 typedef void userp_diag_fn(void *callback_data, userp_diag diag, int diag_code);
 
+extern bool userp_alloc(userp_env env, void **pointer, size_t new_size, userp_alloc_flags flags);
+
+#define USERP_ALLOC_OBJ(env, ptr) userp_alloc(env, (void**)ptr, sizeof(**ptr), USERP_HINT_STATIC)
+#define USERP_ALLOC_OBJPLUS(env, ptr, extra_bytes) userp_alloc(env, (void**)ptr, sizeof(**ptr) + extra_bytes, USERP_HINT_STATIC)
+#define USERP_ALLOC_ARRAY(env, ptr, count) userp_alloc(env, (void**)ptr, sizeof(**ptr) * count, USERP_HINT_DYNAMIC)
+#define USERP_FREE(env, ptr) userp_alloc(env, (void**) ptr, 0, 0);
+
 extern userp_env userp_new_env(userp_alloc_fn alloc_callback, userp_diag_fn diag_callback, void *callback_data, userp_env_flags flags);
 extern bool userp_grab_env(userp_env env);
 extern bool userp_drop_env(userp_env env);
+
 
 #define USERP_LOG_LEVEL               0x0001
 

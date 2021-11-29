@@ -5,7 +5,7 @@ use Pod::Usage;
 
 =head1 SYNOPSIS
 
-  perl -I. -MUnitTestGen -e UnitTestGen::run [OPTIONS] SOURCE_FILE ...
+  perl UnitTestGen.pm [OPTIONS] SOURCE_FILE ...
 
 =head1 OPTIONS
 
@@ -256,5 +256,7 @@ sub output_text_to_perl {
 	return ' '.join "\n.", map { s/[\$\@\"\\\x0-\x1F\x7F-\xFF]/esc/eg; qq{"$_\\n"} }
 		split /\n/, $string;
 }
+
+__PACKAGE__->run unless caller;
 
 1;
