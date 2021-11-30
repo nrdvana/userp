@@ -2,11 +2,153 @@
 #include "userp.h"
 #include "userp_private.h"
 
-static bool alloc_symtable(userp_env env, symbol_table *symtable, size_t count, int flags);
-static void free_symtable(userp_env env, symbol_table *symtable);
-static bool alloc_typetable(userp_env env, type_table *typetable, size_t count, int flags);
-static void free_typetable(userp_env env, type_table *typetable);
-static void free_type(userp_env env, userp_type t);
+/*----------------------------------------------------------------------------
+
+## Symbol Tables
+
+The symbol tables are built either from parsing a symbol table of the protocol,
+or one symbol at a time as the user supplies them.
+
+### Table Parsed From Buffers
+
+In the whole-table case, the memory holding the symbols is pre-allocated in
+a userp_bstr, and the scope will hold a strong reference to those buffers for
+its lifespan.  But, any symbol that crosses the boundary of one buffer to the
+next needs copied to a buffer where it can be contiguous.  So, the symbol table
+parser may allocate additional buffers to hold those symbols.
+
+The final symbol table is stored in an array of small structs each pointing to
+the name, and if it refers to any type in the current scope.  A second array of
+pointers lists the symbols in sorted order for quick lookup.
+
+### Table Built by User
+
+In the one-at-a-time case, the memory holding the symbols is allocated one block
+at a time, and the symbol vector is allocated one element at a time, sorted with
+a red-black tree.
+
+When the scope is finalized, the user has the option to optimize the symbol
+table, sorting all the strings into one contiguous buffer and reducing the
+lookup from a binary tree to a binary search on an array.
+
+*/
+
+struct symbol_entry {
+	const char *data;
+	userp_type type_ref;
+};
+struct symbol_tree_node31 {
+	uint16_t left, right:31, color:1;
+};
+struct symbol_tree_node15 {
+	uint16_t left, right:15, color:1;
+};
+
+struct symbol_table {
+	struct symbol_entry *symbols; // an array pointing to each symbol
+	size_t count, alloc;
+	void *symbol_tree;            // an optional red/black tree sorting the symbols
+	userp_bstr chardata;          // stores all buffers used by the symbols
+};
+typedef struct symbol_table symtable;
+
+#define INIT_SYMTABLE(self, alloc_count) \
+	if (!USERP_ALLOC_ARRAY(env, &((self)->symbols), alloc_count)) \
+		return false; \
+	&((self)->count= 0; \
+	&((self)->alloc= alloc_count; \
+	&((self)->symbol_tree= NULL; \
+	&((self)->chardata= NULL;
+
+#define DESTROY_SYMTABLE(self) \
+	if (self->chardata) \
+		userp_bstr_free(env, &((self)->chardata)); \
+	if (self->symbol_tree) \
+		USERP_FREE(env, &((self)->symbol_tree)); \
+	if (self->symbols) \
+		USERP_FREE(env, &((self)->symbols));
+
+userp_symbol userp_scope_get_symbol(userp_scope scope, const char *name, userp_search_flags flags) {
+	// if current scope has symbols, look it up first, either using tree or binary search
+	// search parent scopes for symbol, unless flags request local-only
+	// if needs added:
+	//   if scope is finalized, emit an error
+	//   if tree is not built, and symbol does not compare greater than previous,
+	//     allocate and build the tree
+	//   find length of string
+	//   If symbol storage not allocated, allocate a default size
+	//   add symbol to the storage
+	//   If symbols vector not allocated, allocate a default size
+	//   add symbol to the vector
+	//   if tree not allocated, allodate it
+	//   add symbol to the tree
+	// return symbol
+}
+
+bool userp_scope_parse_symbols(userp_scope scope, struct userp_bstr_part *parts, size_t part_count, int sym_count, int flags) {
+	// If scope is finalized, emit an error
+	// If chardata is not initialized, allocate input.part_count*2 - 1 parts
+	// ensure symbol vector has sym_count slots allocated (if provided)
+	// loop through the parts of input
+	//   loop through the characters of current part
+	//   If invalid character encountered, emit error and return false.
+	//   If a NUL is found
+	//     If the symbol started in the current part,
+	//       If the buffer was not added to chardata, add it.
+	//     else
+	//       allocate a new buffer to hold this symbol, and copy it
+    //     If tree is initialized, add it to the tree as well.
+	//     else check if the symbol compares greater than previous.
+	//       If not, allocate tree and load it and all previous into the tree
+	//     Add the symbol to the vector
+	// If the input ran out of characters before sym_count (and provided), emit an error
+	// If the input had extra characters, no problem.
+	// If the symbols were not in order, emit a warning
+}
+
+/*----------------------------------------------------------------------------
+
+## Type Tables
+
+The type tables are always parsed from a buffer.  Types can be defined in
+terms of arbitrary other types, so the best way to represent a type is with
+its protocol encoding.  As the scope parses a type table, it of course pulls
+out the interesting bits into structures.  The static-sized structures are
+allocated in a vector, and the dynamic-sized structures are packed end-to-end
+in an auxiliary buffer.  (types cannot be un-defined, so there is no reason
+to allocate them as individual objects)
+
+TODO: come up with an API that helps the user get an encoder to define types,
+to save them the trouble of the buffers.
+
+*/
+
+userp_type userp_scope_get_type(userp_scope scope, userp_symbol name, userp_search_flags flags) {
+	// look up the symbol (binary search on symbol table), return the type if it exists,
+	// If not found, go to parent scope and look up symbol of same name
+}
+userp_type userp_scope_type_by_name(userp_scope scope, const char *name, userp_search_flags flags) {
+	// look up the symbol (binary search on symbol table), return the type if it exists,
+	// If not found, go to parent scope and look up symbol of same name
+}
+
+int userp_scope_parse_types(userp_scope scope, struct userp_bstr_part *parts, size_t part_count, int type_count, int flags) {
+	// If scope is finalized, emit an error
+	// while there is more input and type_count hasn't been reached,
+	//   allocate an entry in the type vector
+	//   if the type has aux data, allocate space in the next aux buffer
+	//   when the type is fully decoded,
+	//     if the type name was already used in this scope, emit an error and return false
+	// push a new element onto the type vector
+	// have the new type point to the old type's aux data, with a flag to indicate it is shared
+	// return the id of the new type
+}
+
+// static bool userp_scope_finalize(userp_scope *scope, int flags);
+//   if symbol table has a tree, build a new buffer large enough for all symbol data,
+//   then walk the tree copying each symbol into the new buffer,
+//   then replace the vector with a new vector of sorted elements,
+//   then free the tree and the old vector.
 
 static void unimplemented(const char* msg) {
 	fprintf(stderr, "Unimplemented: %s", msg);
