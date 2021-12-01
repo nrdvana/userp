@@ -106,15 +106,12 @@ sub new {
 }
 
 sub run {
-	my $self;
-	if (ref($_[0]) && ref($_[0])->isa(__PACKAGE__)) {
-		$self= shift;
-	} else {
-		$self= __PACKAGE__->new;
-		unshift @_, @ARGV unless @_;
-	}
-	if (@_) {
-		$self->parse_options(@_) or Pod::Usage::pod2usage(2);
+	my ($self, @args)= @_;
+	$self= $self->new unless ref $self;
+	unshift @args, @ARGV unless @args;
+	if (@args) {
+		$self->parse_options(@args)
+			or Pod::Usage::pod2usage(2);
 	}
 	$self->scan_source_files;
 	$self->write_entrypoint;
