@@ -18,9 +18,11 @@ sub run_unittest {
 		-e $unittest_exe or croak "unittest binary '$unittest_exe' not found";
 		-x $unittest_exe or croak "unittest binary '$unittest_exe' is not executable";
 	}
-	my $out= `$unittest_exe $test_name`;
-	main::is( $?, 0, "unittest $test_name exit code" )
-		or croak "Unit test $test_name failed to execute";
+	my $out= `$unittest_exe $test_name 2>&1`;
+	unless (main::is( $?, 0, "unittest $test_name exit code" )) {
+		main::diag $out;
+		croak "Unit test $test_name failed to execute";
+	}
 	return $out;
 }
 
