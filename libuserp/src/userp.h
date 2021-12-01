@@ -5,7 +5,7 @@ typedef struct userp_env *userp_env;
 typedef struct userp_diag *userp_diag;
 typedef struct userp_scope *userp_scope;
 typedef int userp_symbol;
-typedef struct userp_type *userp_type;
+typedef int userp_type;
 typedef struct userp_enc *userp_enc;
 typedef struct userp_dec *userp_dec;
 typedef struct userp_buffer *userp_buffer;
@@ -203,6 +203,7 @@ extern bool userp_grab_scope(userp_scope scope);
 extern bool userp_drop_scope(userp_scope scope);
 
 extern userp_symbol userp_scope_get_symbol(userp_scope scope, const char * name, int flags);
+
 extern userp_type userp_scope_get_type(userp_scope scope, userp_symbol name, int flags);
 extern userp_type userp_scope_new_type(userp_scope scope, userp_symbol name, userp_type base_type);
 extern bool userp_scope_contains_type(userp_scope scope, userp_type type);

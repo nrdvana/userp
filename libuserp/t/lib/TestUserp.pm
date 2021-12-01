@@ -45,7 +45,7 @@ sub check_unittest_output {
 		# Match against the next portion of $actual
 		if ($actual =~ /$re_text/gc) {
 			# throw away line ending
-			$actual =~ /\G\s*/gc;
+			$actual =~ /\G[\r\n]*/gc;
 			main::pass("Found output: $line");
 			$resync= 0;
 		} else {

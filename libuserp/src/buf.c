@@ -183,6 +183,7 @@ extern userp_buffer userp_new_buffer(userp_env env, void *data, size_t alloc_len
 			USERP_FREE(env, &buf);
 			return NULL;
 		}
+		buf->alloc_len= alloc_len;
 		buf->flags |= USERP_BUFFER_DATA_ALLOC;
 	}
 	userp_grab_env(env);

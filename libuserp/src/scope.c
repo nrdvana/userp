@@ -70,9 +70,6 @@ static bool symbol_tree_insert31(struct symbol_table *st) {
 		tree[pos].left= newest;
 	else
 		tree[pos].right= newest;
-	tree[newest].left= 0;
-	tree[newest].right= 0;
-	tree[newest].color= 1;
 	// balance the tree.  Pos points at the parent node of the new node.
 	// if current is a black node, no rotations needed
 	while (i > 1 && tree[pos].color) {
@@ -191,9 +188,6 @@ static bool symbol_tree_insert15(struct symbol_table *st) {
 		tree[pos].left= newest;
 	else
 		tree[pos].right= newest;
-	tree[newest].left= 0;
-	tree[newest].right= 0;
-	tree[newest].color= 1;
 	// balance the tree.  Pos points at the parent node of the new node.
 	// if current is a black node, no rotations needed
 	while (i > 1 && tree[pos].color) {
@@ -279,101 +273,122 @@ static bool symbol_tree_insert15(struct symbol_table *st) {
 
 userp_symbol userp_scope_get_symbol(userp_scope scope, const char *name, int flags) {
 	int i, pos, start, limit, cmp, len;
+	bool need_tree= false;
 	size_t size;
 	struct symbol_table *st;
 	userp_env env= scope->env;
 	struct symbol_tree_node15 *tree15;
 	struct symbol_tree_node31 *tree31;
 	
-	// search self and parent scopes for symbol, unless flags request local-only
-	for (i= scope->symtable_count - 1; i >= 0; --i) {
-		st= scope->symtable_stack[i];
-		if (st->tree) {
-			// tree search
-			if (st->alloc >> 15) { // more than 15 bits of entries uses a tree of 31-bit integers.
-				tree31= ((struct symbol_tree_node31*) st->tree);
-				for (pos= st->tree_root; pos;) {
-					cmp= strcmp(name, st->symbols[pos].name);
-					if (cmp == 0) return st->id_offset + pos;
-					else if (cmp > 0) pos= tree31[pos].right;
-					else pos= tree31[pos].left;
+	// Optimize case of sorted inserts; adding new value to local symtable larger than all others
+	// when every addition so far has been in order (no tree) can skip a lot of stuff.
+	if (
+		(flags & (USERP_CREATE|USERP_GET_LOCAL)) == (USERP_CREATE|USERP_GET_LOCAL)
+		&& scope->symtable.used > 1
+		&& strcmp(name, scope->symtable.symbols[scope->symtable.used-1].name) > 0
+	) {
+		pos= scope->symtable.used;
+	}
+	else {
+		// search self and parent scopes for symbol (but flags can request local-only)
+		for (i= scope->symtable_count - 1; i >= 0; --i) {
+			st= scope->symtable_stack[i];
+			if (st->tree) {
+				// tree search
+				if (st->alloc >> 15) { // more than 15 bits of entries uses a tree of 31-bit integers.
+					tree31= ((struct symbol_tree_node31*) st->tree);
+					for (pos= st->tree_root; pos;) {
+						cmp= strcmp(name, st->symbols[pos].name);
+						if (cmp == 0) return st->id_offset + pos;
+						else if (cmp > 0) pos= tree31[pos].right;
+						else pos= tree31[pos].left;
+					}
+				}
+				else {
+					tree15= ((struct symbol_tree_node15*) st->tree);
+					for (pos= st->tree_root; pos;) {
+						cmp= strcmp(name, st->symbols[pos].name);
+						if (cmp == 0) return st->id_offset + pos;
+						else if (cmp > 0) pos= tree15[pos].right;
+						else pos= tree15[pos].left;
+					}
 				}
 			}
 			else {
-				tree15= ((struct symbol_tree_node15*) st->tree);
-				for (pos= st->tree_root; pos;) {
+				// binary search, but optimize case of new value larger than all previous
+				for (start= 1, limit= st->used; start < limit;) {
+					pos= (start+limit)>>1;
 					cmp= strcmp(name, st->symbols[pos].name);
 					if (cmp == 0) return st->id_offset + pos;
-					else if (cmp > 0) pos= tree15[pos].right;
-					else pos= tree15[pos].left;
+					else if (cmp > 0) start= pos+1;
+					else limit= pos;
 				}
+				// capture whether it was greater than all others in local symtable or not
+				if (st == &scope->symtable)
+					need_tree= (limit < st->used);
 			}
+			// User can request only searching immediate scope
+			if (flags & USERP_GET_LOCAL)
+				break;
 		}
-		else {
-			// binary search
-			for (start= 1, limit= st->used; start < limit;) {
-				pos= (start+limit)>>1;
-				cmp= strcmp(name, st->symbols[pos].name);
-				if (cmp == 0) return st->id_offset + pos;
-				else if (cmp > 0) start= pos+1;
-				else limit= pos;
-			}
-		}
-		// User can request only searching immediate scope
-		if (flags & USERP_GET_LOCAL)
-			break;
+		// Not found.  Does it need added?
+		if (!(flags & USERP_CREATE))
+			return 0;
+		
+		// In case it's the first symbol
+		if (!scope->has_symbols)
+			scope_init_symtable(scope);
+
+		pos= scope->symtable.used;
+		if (!pos) ++pos; // leave slot 0 blank
 	}
-	// if needs added:
-	if (!(flags & USERP_CREATE))
-		return 0;
 	// if scope is finalized, emit an error
 	if (scope->is_final) {
 		userp_diag_set(&env->err, USERP_ESCOPEFINAL, "Can't add symbol to a finalized scope");
 		USERP_DISPATCH_ERROR(env);
 		return 0;
 	}
-	if (!scope->has_symbols)
-		scope_init_symtable(scope);
-	pos= scope->symtable.used;
-	if (!pos) ++pos; // leave slot 0 blank
 	// Grow the symbols array if needed
 	if (pos >= scope->symtable.alloc) {
 		limit= USERP_SCOPE_TABLE_ALLOC_ROUND(pos+1);
 		if (!USERP_ALLOC_ARRAY(env, &scope->symtable.symbols, limit))
 			return 0;
 		// But also, if this is the moment that the size exceeds the limit of 15-bits, upgrade the tree.
-		if (scope->symtable.tree && (limit >> 15) && !(scope->symtable.alloc >> 15)) {
-			// well that would be a lot of symbols
-			if (scope->symtable.alloc >> 31) {
-				userp_diag_set(&env->err, USERP_EDOINGITWRONG, "Symbol table full (at 2**31 entries)");
-				USERP_DISPATCH_ERROR(env);
-				return 0;
+		if (scope->symtable.tree) {
+			if ((limit >> 15) && !(scope->symtable.alloc >> 15)) {
+				// well that would be a lot of symbols
+				if (scope->symtable.alloc >> 31) {
+					userp_diag_set(&env->err, USERP_EDOINGITWRONG, "Symbol table full (at 2**31 entries)");
+					USERP_DISPATCH_ERROR(env);
+					return 0;
+				}
+				tree15= (struct symbol_tree_node15*) scope->symtable.tree;
+				tree31= NULL;
+				if (!USERP_ALLOC_ARRAY(env, &tree31, limit))
+					return 0;
+				for (i= 0; i < scope->symtable.used; i++) {
+					tree31[i].left=  tree15[i].left;
+					tree31[i].right= tree15[i].right;
+					tree31[i].color= tree15[i].color;
+				}
+				USERP_FREE(env, tree15);
+				scope->symtable.tree= tree31;
 			}
-			tree15= (struct symbol_tree_node15*) scope->symtable.tree;
-			tree31= NULL;
-			if (!USERP_ALLOC_ARRAY(env, &tree31, limit))
-				return 0;
-			for (i= 0; i < scope->symtable.used; i++) {
-				tree31[i].left=  tree15[i].left;
-				tree31[i].right= tree15[i].right;
-				tree31[i].color= tree15[i].color;
+			else {
+				size= limit * ((limit>>15)? sizeof(struct symbol_tree_node31) : sizeof(struct symbol_tree_node15));
+				if (!userp_alloc(env, &scope->symtable.tree, size, 0))
+					return 0;
 			}
-			USERP_FREE(env, tree15);
-			scope->symtable.tree= tree31;
-		}
-		else {
-			size= limit * ((limit>>15)? sizeof(struct symbol_tree_node31) : sizeof(struct symbol_tree_node15));
-			if (!userp_alloc(env, &scope->symtable.tree, size, 0))
-				return 0;
 		}
 		scope->symtable.alloc= limit;
 	}
 	// if tree is not built, and symbol does not compare greater than previous, need the tree.
-	if (!scope->symtable.tree && (pos > 1 && strcmp(name, scope->symtable.symbols[pos-1].name) <= 0)) {
+	if (need_tree) {
 		size= limit * ((limit>>15)? sizeof(struct symbol_tree_node31) : sizeof(struct symbol_tree_node15));
 		if (!userp_alloc(env, &scope->symtable.tree, size, 0))
 			return 0;
 		// TODO: build tree
+		free(NULL);
 	}
 	len= strlen(name);
 	// Copy the name into scope storage.  This can initialize a NULL pointer with a new bstr.
@@ -381,7 +396,7 @@ userp_symbol userp_scope_get_symbol(userp_scope scope, const char *name, int fla
 		return 0;
 	// add symbol to the vector
 	scope->symtable.symbols[pos].name= name; // name was replaced with the local pointer, above
-	scope->symtable.symbols[pos].type_ref= NULL;
+	scope->symtable.symbols[pos].type_ref= 0;
 	scope->symtable.used= pos+1;
 	if (scope->symtable.tree) {
 		// add symbol to the tree.  The new node is automatically implied to be the final on the vector
@@ -848,6 +863,87 @@ drop outer = 0
 /alloc 0x\w+ to 0 = 0x0+/
 /alloc 0x\w+ to 0 = 0x0+/
 drop inner = 1
+*/
+
+void dump_scope(userp_scope scope) {
+	struct userp_bstr_part *p;
+	int i;
+
+	printf("Scope level=%d  refcnt=%d%s%s%s\n",
+		(int)scope->level, (int)scope->refcnt,
+		scope->is_final?    " is_final":"",
+		scope->has_symbols? " has_symbols":"",
+		scope->has_types?   " has_types":""
+	);
+	printf("  Symbol Table: stack of %d tables, %d symbols\n",
+		(int) scope->symtable_count,
+		(int)(!scope->symtable_count? 0
+			: scope->symtable_stack[scope->symtable_count-1]->id_offset
+			+ scope->symtable_stack[scope->symtable_count-1]->used - 1 )
+	);
+	printf("   local table: %d/%d %s\n",
+		(int)scope->symtable.used, (int)scope->symtable.alloc,
+		!scope->symtable.tree? "binary-search"
+			: (scope->symtable.alloc >> 15)? "31-bit-tree"
+			: "15-bit-tree"
+	);
+	printf("       buffers:");
+	if (scope->symtable.chardata && scope->symtable.chardata->part_count) {
+		for (i= 0; i < scope->symtable.chardata->part_count; i++) {
+			p= &scope->symtable.chardata->parts[i];
+			printf("  [%ld-%ld]/%ld",
+				(long)( p->data - p->buf->data ),
+				(long) p->len, (long) p->buf->alloc_len
+			);
+		}
+		printf("\n");
+	} else {
+		printf("  (none)\n");
+	}
+	printf("  Type Table: stack of %d tables, %d types\n",
+		(int)scope->typetable_count,
+		(int)(!scope->typetable_count? 0
+			: scope->typetable_stack[scope->typetable_count-1]->id_offset
+			+ scope->typetable_stack[scope->typetable_count-1]->used - 1)
+	);
+}
+
+static const char *sorted[]= {
+	"ace",
+	"bat",
+	"car",
+	"dog",
+	"egg",
+	NULL
+};
+
+UNIT_TEST(scope_symbol_sorted) {
+	userp_env env= userp_new_env(logging_alloc, userp_file_logger, stdout, 0);
+	userp_scope scope= userp_new_scope(env, NULL);
+	for (const char** str_p= sorted; *str_p; ++str_p)
+		userp_scope_get_symbol(scope, *str_p, USERP_CREATE);
+	dump_scope(scope);
+	userp_drop_scope(scope);
+	userp_drop_env(env);
+}
+/*OUTPUT
+/alloc 0x0+ to \d+ = 0x\w+/
+/alloc 0x0+ to \d+ = 0x\w+/
+/alloc 0x0+ to \d+ = 0x\w+/
+/alloc 0x0+ to \d+ = 0x\w+/
+/alloc 0x0+ to \d+ = 0x\w+/
+/alloc 0x0+ to \d+ = 0x\w+ POINTER_IS_BUFFER_DATA/
+Scope level=0  refcnt=1 has_symbols
+  Symbol Table: stack of 1 tables, 5 symbols
+   local table: 6/256 binary-search
+       buffers:  [0-20]/4096
+  Type Table: stack of 0 tables, 0 types
+/alloc 0x\w+ to 0 = 0x0+ POINTER_IS_BUFFER_DATA/
+/alloc 0x\w+ to 0 = 0x0+/
+/alloc 0x\w+ to 0 = 0x0+/
+/alloc 0x\w+ to 0 = 0x0+/
+/alloc 0x\w+ to 0 = 0x0+/
+/alloc 0x\w+ to 0 = 0x0+/
 */
 
 #endif

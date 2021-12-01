@@ -3,10 +3,10 @@
 
 bool userp_bstr_alloc(userp_env env, userp_bstr *ptr, size_t part_count) {
 	size_t n_alloc= USERP_BSTR_PART_ALLOC_ROUND(part_count);
-	int i;
+	int i, was_null= !*ptr;
 	// If the user is requesting to shrink the bstr, free the parts that will get trimmed
 	if (*ptr && (*ptr)->part_count > part_count) {
-		for (i= (*ptr)->part_count-1; i >= part_count; --i) {
+		for (i= (*ptr)->part_count-1; i >= (int)part_count; --i) {
 			userp_drop_buffer((*ptr)->parts[i].buf);
 		}
 		(*ptr)->part_count= part_count;
@@ -20,6 +20,8 @@ bool userp_bstr_alloc(userp_env env, userp_bstr *ptr, size_t part_count) {
 	if (!USERP_ALLOC_OBJPLUS(env, ptr, n_alloc * sizeof(struct userp_bstr_part)))
 		return false;
 	(*ptr)->part_alloc= n_alloc;
+	if (was_null)
+		(*ptr)->part_count= 0;
 	return true;
 }
 
