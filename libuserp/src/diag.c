@@ -169,7 +169,7 @@ int userp_diag_print(userp_diag diag, FILE *fh) {
 int userp_process_diag_tpl(userp_diag diag, char *buf, size_t buf_len, FILE *fh) {
 	const char *from, *pos= diag->tpl, *p1, *p2;
 	char tmp_buf[64], id;
-	size_t n= 0, tmp_len, str_len= 0;
+	size_t n= 0, str_len= 0;
 	int i;
 	while (*pos) {
 		// here, *pos is either \x01 followed by a code indicating which variable to insert,
@@ -185,7 +185,7 @@ int userp_process_diag_tpl(userp_diag diag, char *buf, size_t buf_len, FILE *fh)
 				break;
 			// Buffer, hexdump the contents
 			case USERP_DIAG_BUFHEX_ID:
-				p1= diag->buf->data + diag->pos;
+				p1= (char*) diag->buf->data + diag->pos;
 				p2= p1 + diag->len;
 				for (n= 0; (n+1)*3 < sizeof(tmp_buf) && p1 < p2; p1++) {
 					tmp_buf[n++]= "0123456789ABCDEF"[(*p1>>4) & 0xF];
@@ -220,7 +220,7 @@ int userp_process_diag_tpl(userp_diag diag, char *buf, size_t buf_len, FILE *fh)
 				if (0)
 			// Buffer, printed as a string
 			case USERP_DIAG_BUFSTR_ID:
-				from= diag->buf->data + diag->pos;
+				from= (char*) diag->buf->data + diag->pos;
 				n= diag->len;
 				break;
 			case USERP_DIAG_CSTR1_ID:
@@ -416,7 +416,7 @@ UNIT_TEST(diag_ref_buf_hex) {
 	bzero(&d, sizeof(d));
 	bzero(&buf, sizeof(buf));
 
-	buf.data= "\x01\x02\x03\x04";
+	buf.data= (uint8_t*) "\x01\x02\x03\x04";
 	userp_diag_setf(&d, 1, "Some Hex: " USERP_DIAG_BUFHEX, &buf, 1, 3);
 	wrote= userp_diag_print(&d, stdout);
 	printf("\nwrote=%d\n", wrote);
@@ -436,6 +436,7 @@ UNIT_TEST(diag_ref_bufaddr) {
 	buf.data= (uint8_t*) 0x1000;
 	userp_diag_setf(&d, 1, "Buffer address: " USERP_DIAG_BUFADDR "\n", &buf, 1, 0);
 	wrote= userp_diag_print(&d, stdout);
+	(void)wrote;
 }
 /*OUTPUT
 /Buffer address: .*1001/

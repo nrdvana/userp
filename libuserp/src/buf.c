@@ -214,12 +214,11 @@ static void userp_free_buffer(userp_buffer buf) {
 
 bool userp_grab_buffer(userp_buffer buf) {
 	// Refcount will be zero if buffer is not dynamically allocated
-	if (buf->refcnt) {
-		// check for rollover
-		if (!++buf->refcnt) {
-			--buf->refcnt; // back up to UINT_MAX
-			return false;
-		}
+	if (buf->refcnt && !++buf->refcnt) { // check for rollover
+		--buf->refcnt; // back up to UINT_MAX
+		if (buf->env)
+			userp_diag_set(&buf->env->err, USERP_EALLOC, "Refcount limit reached for userp_buffer");
+		return false;
 	}
 	return true;
 }
@@ -264,7 +263,7 @@ UNIT_TEST(buf_new_static) {
 */
 
 UNIT_TEST(buf_on_stack) {
-	char stack_buffer[1024];
+	uint8_t stack_buffer[1024];
 	userp_env env= userp_new_env(logging_alloc, userp_file_logger, stdout, 0);
 	struct userp_buffer buf= { .data= stack_buffer, .alloc_len= sizeof(stack_buffer) };
 	userp_drop_buffer(&buf);

@@ -26,10 +26,11 @@ typedef uint_least32_t userp_env_flags, userp_alloc_flags, userp_buffer_flags;
 #define USERP_ERROR         0x4000 // Generic recoverable error
 #define USERP_EALLOC        0x4001 // failure to alloc or realloc or grab a reference
 #define USERP_EDOINGITWRONG 0x4002 // bad request made to the API, or exceed library internal limitation
-#define USERP_EFOREIGNSCOPE 0x4002 // scope belongs to a different env
-#define USERP_EUNKNOWN      0x4003 // Unknown enum value passed to API
-#define USERP_ETYPESCOPE    0x4004 // userp_type is not available in the current scope
-#define USERP_ESYS          0x4005 // You asked libuserp to make a system call, and the system call failed
+#define USERP_ESCOPEFINAL   0x4003 // attempt to modify scope after finalized
+#define USERP_EFOREIGNSCOPE 0x4004 // scope belongs to a different env
+#define USERP_EUNKNOWN      0x4005 // Unknown enum value passed to API
+#define USERP_ETYPESCOPE    0x4006 // userp_type is not available in the current scope
+#define USERP_ESYS          0x4007 // You asked libuserp to make a system call, and the system call failed
 #define USERP_EPROTOCOL     0x4100 // Generic error while decoding protocol
 #define USERP_EFEEDME       0x4101 // More data required to continue decoding
 #define USERP_ELIMIT        0x4102 // decoded data exceeds a limit
@@ -95,13 +96,16 @@ extern void userp_file_logger(void *callback_data, userp_diag diag, int code);
 extern void userp_env_set_logger(userp_env env, userp_diag_fn diag_callback, void *callback_data);
 extern userp_diag userp_env_get_last_error(userp_env env);
 
-// ------------------------------- buf.c ------------------------------------
+// ------------------------------- buf.c -------------------------------------
 
 // buf->data was allocated with env's alloc, needs freed, and can be re-allocated.
 #define USERP_BUFFER_DATA_ALLOC    0x001000
 
 // buf->data was allocated with mmap, and needs freed with munmap
 #define USERP_BUFFER_DATA_MMAP     0x002000
+
+// buffer can have new data appended up to the alloc_len
+#define USERP_BUFFER_APPENDABLE    0x004000
 
 typedef bool userp_reader_fn(void *callback_data, userp_bstr* buffers, size_t bytes_needed, userp_env env);
 typedef void userp_buffer_destructor(void *callback_data, userp_buffer *buf);
@@ -164,37 +168,48 @@ extern userp_buffer userp_new_buffer(userp_env env, void *data, size_t alloc_len
 extern bool userp_grab_buffer(userp_buffer buf);
 extern bool userp_drop_buffer(userp_buffer buf);
 
+// ------------------------------- bstr.c ------------------------------------
+
 struct userp_bstr_part {
 	uint8_t *data;
 	userp_buffer buf;
 	size_t ofs, len;
 };
 struct userp_bstr {
-	userp_env env;
 	size_t part_count, part_alloc;
 	struct userp_bstr_part parts[];
 };
 
 #define USERP_SIZEOF_BSTR(n_parts) (sizeof(struct userp_bstr) + sizeof(struct userp_bstr_part)*n_parts)
 
+extern bool userp_bstr_alloc(userp_env env, userp_bstr *ptr, size_t part_count);
+extern uint8_t* userp_bstr_append_bytes(userp_env env, userp_bstr *ptr, const uint8_t *bytes, size_t n);
+
 extern userp_bstr userp_new_bstr(userp_env env, int part_alloc_count);
 extern void userp_free_bstr(userp_bstr *str);
-extern void* userp_bstr_append_bytes(userp_bstr *str, size_t n_bytes, const void* src_bytes);
 extern bool userp_bstr_append_parts(userp_bstr *str, size_t n_parts, const struct userp_bstr_part *src_parts);
 extern bool userp_bstr_append_stream(userp_bstr *str, FILE *f, int64_t length);
 extern bool userp_bstr_map_file(userp_bstr *str, FILE *f, int64_t offset, int64_t length);
 extern bool userp_bstr_splice(userp_bstr *dst, size_t dst_ofs, size_t dst_len, userp_bstr *src, size_t src_ofs, size_t src_len);
 extern void userp_bstr_crop(userp_bstr *str, size_t trim_head, size_t trim_tail);
 
+// ------------------------------ scope.c ------------------------------------
+
+#define USERP_GET_LOCAL      1
+#define USERP_CREATE         2
+
 extern userp_scope userp_new_scope(userp_env env, userp_scope parent);
 extern bool userp_grab_scope(userp_scope scope);
-extern void userp_drop_scope(userp_scope scope);
-extern userp_symbol userp_scope_get_symbol(userp_scope scope, const char * name, bool create);
-extern userp_type userp_scope_get_type(userp_scope scope, userp_symbol name);
+extern bool userp_drop_scope(userp_scope scope);
+
+extern userp_symbol userp_scope_get_symbol(userp_scope scope, const char * name, int flags);
+extern userp_type userp_scope_get_type(userp_scope scope, userp_symbol name, int flags);
 extern userp_type userp_scope_new_type(userp_scope scope, userp_symbol name, userp_type base_type);
 extern bool userp_scope_contains_type(userp_scope scope, userp_type type);
 extern userp_enc userp_type_encode(userp_type type);
 extern userp_dec userp_type_decode(userp_type type);
+
+extern bool user_scope_finalize(userp_scope scope);
 
 /* Stream API */
 extern const userp_scope userp_stream1_scope;       /* The global scope object for version 1 of the stream protocol */

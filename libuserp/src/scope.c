@@ -33,56 +33,364 @@ lookup from a binary tree to a binary search on an array.
 
 */
 
-struct symbol_entry {
-	const char *data;
-	userp_type type_ref;
-};
-struct symbol_tree_node31 {
-	uint16_t left, right:31, color:1;
-};
-struct symbol_tree_node15 {
-	uint16_t left, right:15, color:1;
-};
+static bool scope_init_symtable(userp_scope scope);
 
-struct symbol_table {
-	struct symbol_entry *symbols; // an array pointing to each symbol
-	size_t count, alloc;
-	void *symbol_tree;            // an optional red/black tree sorting the symbols
-	userp_bstr chardata;          // stores all buffers used by the symbols
-};
-typedef struct symbol_table symtable;
+static bool symbol_tree_insert31(struct symbol_table *st) {
+	// element 0 is the "sentinel" leaf, and 'last' is the element being added
+	struct symbol_tree_node31 *tree= (struct symbol_tree_node31 *) st->tree;
+	struct symbol_entry *symbols= st->symbols;
+	int cmp;
+	uint32_t stack[64], pos, newest= (uint32_t) st->used, parent, new_head, i= 0;
+	
+	tree[newest].left= 0;
+	tree[newest].right= 0;
 
-#define INIT_SYMTABLE(self, alloc_count) \
-	if (!USERP_ALLOC_ARRAY(env, &((self)->symbols), alloc_count)) \
-		return false; \
-	&((self)->count= 0; \
-	&((self)->alloc= alloc_count; \
-	&((self)->symbol_tree= NULL; \
-	&((self)->chardata= NULL;
+	// If there is no root, the new node is the root.
+	if (!st->tree_root) {
+		st->tree_root= newest;
+		tree[newest].color= 0;
+		return true;
+	}
+	tree[newest].color= 1;
 
-#define DESTROY_SYMTABLE(self) \
-	if (self->chardata) \
-		userp_bstr_free(env, &((self)->chardata)); \
-	if (self->symbol_tree) \
-		USERP_FREE(env, &((self)->symbol_tree)); \
-	if (self->symbols) \
-		USERP_FREE(env, &((self)->symbols));
+	// leaf-sentinel will double as the head-sentinel
+	stack[i++]= 0;
+	pos= (uint32_t) st->tree_root;
+	while (pos && i < 64) {
+		stack[i++]= pos;
+		cmp= strcmp(symbols[newest].name, symbols[pos].name);
+		pos= cmp < 0? tree[pos].left : tree[pos].right;
+	}
+	if (i >= 64) {
+		assert(i < 64);
+		return false;
+	}
+	pos= stack[--i];
+	if (cmp < 0)
+		tree[pos].left= newest;
+	else
+		tree[pos].right= newest;
+	tree[newest].left= 0;
+	tree[newest].right= 0;
+	tree[newest].color= 1;
+	// balance the tree.  Pos points at the parent node of the new node.
+	// if current is a black node, no rotations needed
+	while (i > 1 && tree[pos].color) {
+		// current is red, the imbalanced child is red, and parent is black.
+		parent= stack[--i];
+		// if the current is on the right of the parent, the parent is to the left
+		if (tree[parent].right == pos) {
+			// if the sibling is also red, we can pull down the color black from the parent
+			if (tree[tree[parent].left].color) {
+				tree[tree[parent].left].color= 0;
+				tree[pos].color= 0;
+				tree[parent].color= 1;
+				// jump twice up the tree
+				pos= stack[--i];
+				continue;
+			}
+			// if the imbalance (red node) is on the left, and the parent is on the left,
+			//  rotate the inner tree to the right
+			if (tree[tree[pos].left].color) {
+				// rotate right
+				new_head= tree[pos].left;
+				if (tree[parent].right == pos) tree[parent].right= new_head;
+				else tree[parent].left= new_head;
+				tree[pos].left= tree[new_head].right;
+				tree[new_head].right= pos;
+				pos= new_head;
+			}
 
-userp_symbol userp_scope_get_symbol(userp_scope scope, const char *name, userp_search_flags flags) {
-	// if current scope has symbols, look it up first, either using tree or binary search
-	// search parent scopes for symbol, unless flags request local-only
+			// Now we can do the left rotation to balance the tree.
+			pos= parent;
+			parent= stack[--i];
+			new_head= tree[pos].right;
+			if (!parent) st->tree_root= new_head;
+			else if (tree[parent].right == pos) tree[parent].right= new_head;
+			else tree[parent].left= new_head;
+			tree[pos].right= tree[new_head].left;
+			tree[new_head].left= pos;
+			tree[pos].color= 1;
+			tree[parent].color= 0;
+			return true;
+		}
+		// else the parent is to the right
+		else {
+			// if the sibling is also red, we can pull down the color black from the parent
+			if (tree[tree[parent].right].color) {
+				tree[tree[parent].right].color= 0;
+				tree[pos].color= 0;
+				tree[parent].color= 1;
+				// jump twice up the tree
+				pos= stack[--i];
+				continue;
+			}
+			// if the imbalance (red node) is on the right, and the parent is on the right,
+			//  rotate the inner tree to the left
+			if (tree[tree[pos].right].color) {
+				// rotate left
+				new_head= tree[pos].right;
+				if (tree[parent].right == pos) tree[parent].right= new_head;
+				else tree[parent].left= new_head;
+				tree[pos].right= tree[new_head].left;
+				tree[new_head].left= pos;
+				pos= new_head;
+			}
+
+			// Now we can do the right rotation to balance the tree.
+			pos= parent;
+			parent= stack[--i];
+			new_head= tree[pos].left;
+			if (!parent) st->tree_root= new_head;
+			else if (tree[parent].right == pos) tree[parent].right= new_head;
+			else tree[parent].left= new_head;
+			tree[pos].left= tree[new_head].right;
+			tree[new_head].right= pos;
+			tree[pos].color= 1;
+			tree[parent].color= 0;
+			return true;
+		}
+	}
+	// ensure the root node is black
+	tree[st->tree_root].color= 0;
+	return true;
+}
+
+static bool symbol_tree_insert15(struct symbol_table *st) {
+	// element 0 is the "sentinel" leaf, and 'last' is the element being added
+	struct symbol_tree_node15 *tree= (struct symbol_tree_node15 *) st->tree;
+	struct symbol_entry *symbols= st->symbols;
+	int cmp;
+	uint16_t stack[64], pos, newest= (uint16_t) st->used, parent, new_head, i= 0;
+	
+	tree[newest].left= 0;
+	tree[newest].right= 0;
+	
+	// If there is no root, the new node is the root.
+	if (!st->tree_root) {
+		st->tree_root= newest;
+		tree[newest].color= 0;
+		return true;
+	}
+	tree[newest].color= 1;
+	
+	// leaf-sentinel will double as the head-sentinel
+	stack[i++]= 0;
+	pos= (uint16_t) st->tree_root;
+	while (pos && i < 32) {
+		stack[i++]= pos;
+		cmp= strcmp(symbols[newest].name, symbols[pos].name);
+		pos= cmp < 0? tree[pos].left : tree[pos].right;
+	}
+	if (i >= 32) {
+		assert(i < 32);
+		return false;
+	}
+	pos= stack[--i];
+	if (cmp < 0)
+		tree[pos].left= newest;
+	else
+		tree[pos].right= newest;
+	tree[newest].left= 0;
+	tree[newest].right= 0;
+	tree[newest].color= 1;
+	// balance the tree.  Pos points at the parent node of the new node.
+	// if current is a black node, no rotations needed
+	while (i > 1 && tree[pos].color) {
+		// current is red, the imbalanced child is red, and parent is black.
+		parent= stack[--i];
+		// if the current is on the right of the parent, the parent is to the left
+		if (tree[parent].right == pos) {
+			// if the sibling is also red, we can pull down the color black from the parent
+			if (tree[tree[parent].left].color) {
+				tree[tree[parent].left].color= 0;
+				tree[pos].color= 0;
+				tree[parent].color= 1;
+				// jump twice up the tree
+				pos= stack[--i];
+				continue;
+			}
+			// if the imbalance (red node) is on the left, and the parent is on the left,
+			//  rotate the inner tree to the right
+			if (tree[tree[pos].left].color) {
+				// rotate right
+				new_head= tree[pos].left;
+				if (tree[parent].right == pos) tree[parent].right= new_head;
+				else tree[parent].left= new_head;
+				tree[pos].left= tree[new_head].right;
+				tree[new_head].right= pos;
+				pos= new_head;
+			}
+
+			// Now we can do the left rotation to balance the tree.
+			pos= parent;
+			parent= stack[--i];
+			new_head= tree[pos].right;
+			if (!parent) st->tree_root= new_head;
+			else if (tree[parent].right == pos) tree[parent].right= new_head;
+			else tree[parent].left= new_head;
+			tree[pos].right= tree[new_head].left;
+			tree[new_head].left= pos;
+			tree[pos].color= 1;
+			tree[parent].color= 0;
+			return true;
+		}
+		// else the parent is to the right
+		else {
+			// if the sibling is also red, we can pull down the color black from the parent
+			if (tree[tree[parent].right].color) {
+				tree[tree[parent].right].color= 0;
+				tree[pos].color= 0;
+				tree[parent].color= 1;
+				// jump twice up the tree
+				pos= stack[--i];
+				continue;
+			}
+			// if the imbalance (red node) is on the right, and the parent is on the right,
+			//  rotate the inner tree to the left
+			if (tree[tree[pos].right].color) {
+				// rotate left
+				new_head= tree[pos].right;
+				if (tree[parent].right == pos) tree[parent].right= new_head;
+				else tree[parent].left= new_head;
+				tree[pos].right= tree[new_head].left;
+				tree[new_head].left= pos;
+				pos= new_head;
+			}
+
+			// Now we can do the right rotation to balance the tree.
+			pos= parent;
+			parent= stack[--i];
+			new_head= tree[pos].left;
+			if (!parent) st->tree_root= new_head;
+			else if (tree[parent].right == pos) tree[parent].right= new_head;
+			else tree[parent].left= new_head;
+			tree[pos].left= tree[new_head].right;
+			tree[new_head].right= pos;
+			tree[pos].color= 1;
+			tree[parent].color= 0;
+			return true;
+		}
+	}
+	// ensure the root node is black
+	tree[st->tree_root].color= 0;
+	return true;
+}
+
+userp_symbol userp_scope_get_symbol(userp_scope scope, const char *name, int flags) {
+	int i, pos, start, limit, cmp, len;
+	size_t size;
+	struct symbol_table *st;
+	userp_env env= scope->env;
+	struct symbol_tree_node15 *tree15;
+	struct symbol_tree_node31 *tree31;
+	
+	// search self and parent scopes for symbol, unless flags request local-only
+	for (i= scope->symtable_count - 1; i >= 0; --i) {
+		st= scope->symtable_stack[i];
+		if (st->tree) {
+			// tree search
+			if (st->alloc >> 15) { // more than 15 bits of entries uses a tree of 31-bit integers.
+				tree31= ((struct symbol_tree_node31*) st->tree);
+				for (pos= st->tree_root; pos;) {
+					cmp= strcmp(name, st->symbols[pos].name);
+					if (cmp == 0) return st->id_offset + pos;
+					else if (cmp > 0) pos= tree31[pos].right;
+					else pos= tree31[pos].left;
+				}
+			}
+			else {
+				tree15= ((struct symbol_tree_node15*) st->tree);
+				for (pos= st->tree_root; pos;) {
+					cmp= strcmp(name, st->symbols[pos].name);
+					if (cmp == 0) return st->id_offset + pos;
+					else if (cmp > 0) pos= tree15[pos].right;
+					else pos= tree15[pos].left;
+				}
+			}
+		}
+		else {
+			// binary search
+			for (start= 1, limit= st->used; start < limit;) {
+				pos= (start+limit)>>1;
+				cmp= strcmp(name, st->symbols[pos].name);
+				if (cmp == 0) return st->id_offset + pos;
+				else if (cmp > 0) start= pos+1;
+				else limit= pos;
+			}
+		}
+		// User can request only searching immediate scope
+		if (flags & USERP_GET_LOCAL)
+			break;
+	}
 	// if needs added:
-	//   if scope is finalized, emit an error
-	//   if tree is not built, and symbol does not compare greater than previous,
-	//     allocate and build the tree
-	//   find length of string
-	//   If symbol storage not allocated, allocate a default size
-	//   add symbol to the storage
-	//   If symbols vector not allocated, allocate a default size
-	//   add symbol to the vector
-	//   if tree not allocated, allodate it
-	//   add symbol to the tree
-	// return symbol
+	if (!(flags & USERP_CREATE))
+		return 0;
+	// if scope is finalized, emit an error
+	if (scope->is_final) {
+		userp_diag_set(&env->err, USERP_ESCOPEFINAL, "Can't add symbol to a finalized scope");
+		USERP_DISPATCH_ERROR(env);
+		return 0;
+	}
+	if (!scope->has_symbols)
+		scope_init_symtable(scope);
+	pos= scope->symtable.used;
+	if (!pos) ++pos; // leave slot 0 blank
+	// Grow the symbols array if needed
+	if (pos >= scope->symtable.alloc) {
+		limit= USERP_SCOPE_TABLE_ALLOC_ROUND(pos+1);
+		if (!USERP_ALLOC_ARRAY(env, &scope->symtable.symbols, limit))
+			return 0;
+		// But also, if this is the moment that the size exceeds the limit of 15-bits, upgrade the tree.
+		if (scope->symtable.tree && (limit >> 15) && !(scope->symtable.alloc >> 15)) {
+			// well that would be a lot of symbols
+			if (scope->symtable.alloc >> 31) {
+				userp_diag_set(&env->err, USERP_EDOINGITWRONG, "Symbol table full (at 2**31 entries)");
+				USERP_DISPATCH_ERROR(env);
+				return 0;
+			}
+			tree15= (struct symbol_tree_node15*) scope->symtable.tree;
+			tree31= NULL;
+			if (!USERP_ALLOC_ARRAY(env, &tree31, limit))
+				return 0;
+			for (i= 0; i < scope->symtable.used; i++) {
+				tree31[i].left=  tree15[i].left;
+				tree31[i].right= tree15[i].right;
+				tree31[i].color= tree15[i].color;
+			}
+			USERP_FREE(env, tree15);
+			scope->symtable.tree= tree31;
+		}
+		else {
+			size= limit * ((limit>>15)? sizeof(struct symbol_tree_node31) : sizeof(struct symbol_tree_node15));
+			if (!userp_alloc(env, &scope->symtable.tree, size, 0))
+				return 0;
+		}
+		scope->symtable.alloc= limit;
+	}
+	// if tree is not built, and symbol does not compare greater than previous, need the tree.
+	if (!scope->symtable.tree && (pos > 1 && strcmp(name, scope->symtable.symbols[pos-1].name) <= 0)) {
+		size= limit * ((limit>>15)? sizeof(struct symbol_tree_node31) : sizeof(struct symbol_tree_node15));
+		if (!userp_alloc(env, &scope->symtable.tree, size, 0))
+			return 0;
+		// TODO: build tree
+	}
+	len= strlen(name);
+	// Copy the name into scope storage.  This can initialize a NULL pointer with a new bstr.
+	if (!(name= (char*) userp_bstr_append_bytes(env, &scope->symtable.chardata, (const uint8_t*) name, len+1)))
+		return 0;
+	// add symbol to the vector
+	scope->symtable.symbols[pos].name= name; // name was replaced with the local pointer, above
+	scope->symtable.symbols[pos].type_ref= NULL;
+	scope->symtable.used= pos+1;
+	if (scope->symtable.tree) {
+		// add symbol to the tree.  The new node is automatically implied to be the final on the vector
+		if (scope->symtable.alloc >> 15)
+			symbol_tree_insert15(&scope->symtable);
+		else
+			symbol_tree_insert31(&scope->symtable);
+	}
+	return pos + scope->symtable.id_offset;
 }
 
 bool userp_scope_parse_symbols(userp_scope scope, struct userp_bstr_part *parts, size_t part_count, int sym_count, int flags) {
@@ -104,6 +412,7 @@ bool userp_scope_parse_symbols(userp_scope scope, struct userp_bstr_part *parts,
 	// If the input ran out of characters before sym_count (and provided), emit an error
 	// If the input had extra characters, no problem.
 	// If the symbols were not in order, emit a warning
+	return false;
 }
 
 /*----------------------------------------------------------------------------
@@ -123,13 +432,15 @@ to save them the trouble of the buffers.
 
 */
 
-userp_type userp_scope_get_type(userp_scope scope, userp_symbol name, userp_search_flags flags) {
+userp_type userp_scope_get_type(userp_scope scope, userp_symbol name, int flags) {
 	// look up the symbol (binary search on symbol table), return the type if it exists,
 	// If not found, go to parent scope and look up symbol of same name
+	return 0;
 }
-userp_type userp_scope_type_by_name(userp_scope scope, const char *name, userp_search_flags flags) {
+userp_type userp_scope_type_by_name(userp_scope scope, const char *name, int flags) {
 	// look up the symbol (binary search on symbol table), return the type if it exists,
 	// If not found, go to parent scope and look up symbol of same name
+	return 0;
 }
 
 int userp_scope_parse_types(userp_scope scope, struct userp_bstr_part *parts, size_t part_count, int type_count, int flags) {
@@ -142,177 +453,142 @@ int userp_scope_parse_types(userp_scope scope, struct userp_bstr_part *parts, si
 	// push a new element onto the type vector
 	// have the new type point to the old type's aux data, with a flag to indicate it is shared
 	// return the id of the new type
+	return 0;
 }
 
-// static bool userp_scope_finalize(userp_scope *scope, int flags);
-//   if symbol table has a tree, build a new buffer large enough for all symbol data,
-//   then walk the tree copying each symbol into the new buffer,
-//   then replace the vector with a new vector of sorted elements,
-//   then free the tree and the old vector.
+/*----------------------------------------------------------------------------
 
-static void unimplemented(const char* msg) {
-	fprintf(stderr, "Unimplemented: %s", msg);
-	abort();
-}
+## Scope
+
+The scope is just a container for a symbol table and type table, and some
+efficient lookup functions that make the parent scope's symbols and types
+available.
+
+*/
 
 userp_scope userp_new_scope(userp_env env, userp_scope parent) {
-	size_t num_sym_tables, num_type_tables, size;
-	userp_scope scope;
+	size_t num_sym_tables, num_type_tables;
+	userp_scope scope= NULL;
 
-	// Parent must be final
-	if (parent && !parent->is_final) {
-		env->diag_code= USERP_EINVAL;
-		env->diag_tpl= "Cannot create a nested scope until the parent is finalized";
+	if (parent) {
+		// Parent must belong to the same environment
+		if (parent->env != env) {
+			userp_diag_set(&env->err, USERP_EFOREIGNSCOPE, "Parent scope does not belong to this userp_env");
+			USERP_DISPATCH_ERROR(env);
+			return NULL;
+		}
+		// Parent must be final
+		if (!parent->is_final) {
+			userp_diag_set(&env->err, USERP_EDOINGITWRONG, "Cannot create a nested scope until the parent is finalized");
+			USERP_DISPATCH_ERROR(env);
+			return NULL;
+		}
+		if (parent->level >= env->scope_stack_max) {
+			userp_diag_setf(&env->err, USERP_ELIMIT,
+				"Scope nesting level exceeds limit of " USERP_DIAG_SIZE,
+				(size_t) env->scope_stack_max);
+			USERP_DISPATCH_ERROR(env);
+			return NULL;
+		}
+		if (!userp_grab_scope(parent))
+			return NULL;
+	}
+	if (!userp_grab_env(env)) {
+		if (parent)
+			userp_drop_scope(parent);
 		return NULL;
 	}
-
 	// Allocation tricks - allocate the main struct and its arrays of table stacks in one piece
 	num_sym_tables= 1 + (parent? parent->symtable_count : 0);
 	num_type_tables= 1 + (parent? parent->typetable_count : 0);
-	size= sizeof(struct userp_scope)
-		+ num_sym_tables * sizeof(void*)
-		+ num_type_tables * sizeof(void*);
-	if (parent && parent->level >= SYMBOL_SCOPE_LIMIT) {
-		env->diag_code= USERP_EDOINGITWRONG;
-		env->diag_size= SYMBOL_SCOPE_LIMIT;
-		env->diag_tpl= "Scope nesting level exceeds sensible limit of " USERP_DIAG_SIZE;
-		return NULL;
-	}
-	if (parent && !userp_grab_scope(parent))
-		return NULL;
-	if (!USERP_ALLOC(env, &scope, size, USERP_HINT_STATIC)) {
+	if (!USERP_ALLOC_OBJPLUS(env, &scope, (num_sym_tables+num_type_tables) * sizeof(void*))) {
 		if (parent) userp_drop_scope(parent);
 		return NULL;
 	}
-	bzero(scope, size);
+	bzero(scope, sizeof(*scope));
 	scope->env= env;
 	scope->parent= parent;
 	scope->level= parent? parent->level + 1 : 0;
 	scope->refcnt= 1;
 	scope->symtable_count= num_sym_tables-1; // final element is left off until first use
-	scope->symtable_stack= (symbol_table*) (((char*)scope) + sizeof(struct userp_scope));
+	scope->symtable_stack= (struct symbol_table**) (scope->typetable_stack + num_type_tables);
 	scope->typetable_count= num_type_tables-1; // final element is left off until first use
-	scope->typetable_stack= (type_table*) (((char*)scope) + sizeof(struct userp_scope) + num_sym_tables * sizeof(void*));
+	if (parent) {
+		memcpy(scope->symtable_stack, parent->symtable_stack, parent->symtable_count);
+		memcpy(scope->typetable_stack, parent->typetable_stack, parent->typetable_count);
+	}
 	return scope;
 }
 
-static void free_scope(userp_scope scope) {
+static bool scope_init_symtable(userp_scope scope) {
+	// sanity check
+	if (scope->is_final || scope->has_symbols) return false;
+
+	scope->symtable.id_offset= !scope->symtable_count? 0
+		: scope->symtable_stack[scope->symtable_count-1]->id_offset
+		  + scope->symtable_stack[scope->symtable_count-1]->used
+		  - 1; // because slot 0 of each symbol table is used as a NUL element.
+
+	// When allocated, the userp_scope left room in symtable_stack for one extra
+	scope->symtable_stack[scope->symtable_count++]= &scope->symtable;
+	scope->has_symbols= true;
+
+	// All other fields were blanked during the userp_scope constructor
+	return true;
+}
+
+static void userp_free_scope(userp_scope scope) {
 	userp_env env= scope->env;
-	if (scope->symtable) free_symtable(env, &scope->symtable);
-	if (scope->typetable) free_typetable(env, &scope->typetable);
+	userp_scope parent= scope->parent;
+	if (scope->symtable.chardata)
+		userp_bstr_alloc(scope->env, &scope->symtable.chardata, 0);
+	if (scope->symtable.tree)
+		USERP_FREE(env, &scope->symtable.tree);
+	if (scope->symtable.symbols)
+		USERP_FREE(env, &scope->symtable.symbols);
 	USERP_FREE(env, &scope);
+	if (parent) userp_drop_scope(parent);
+	userp_drop_env(env);
 }
 
 bool userp_grab_scope(userp_scope scope) {
-	if (!scope) return false;
-	if (!scope->refcnt) return true;
-	if (!(scope->refcnt+1)) {
-		scope->env->diag_code= USERP_EDOINGITWRONG;
-		scope->env->diag_tpl= "Max number of references reached for scope";
+	if (!scope || !scope->refcnt) {
+		fprintf(stderr, "fatal: attemp to grab a destroyed scope\n");
+		abort();
+	}
+	if (!++scope->refcnt) { // check for rollover
+		--scope->refcnt; // back up to UINT_MAX
+		userp_diag_set(&scope->env->err, USERP_EALLOC, "Refcount limit reached for userp_scope");
+		USERP_DISPATCH_ERROR(scope->env);
 		return false;
 	}
-	++scope->refcnt;
 	return true;
 }
 
-void userp_drop_scope(userp_scope scope) {
-	if (scope && scope->refcnt) {
-		if (!--scope->refcnt && scope->env)
-			free_scope(scope);
+bool userp_drop_scope(userp_scope scope) {
+	if (!scope || !scope->refcnt) {
+		fprintf(stderr, "fatal: attempt to drop a destroyed scope\n");
+		abort();
 	}
-}
-
-userp_symbol userp_scope_get_symbol(userp_scope scope, const char * name, bool create) {
-	unsigned table_i, i, lim;
-	size_t len, pos;
-	symbol_table t;
-	// TODO: use hash table
-	for (table_i= scope->symtable_count; table_i > 0;) {
-		--table_i;
-		t= scope->symtable_stack[table_i];
-		for (i= 0, lim= t->count; i < lim; i++) {
-			if (0 == strcmp(t->symbol_text.start + (i==0? 0 : t->symbol_end[i-1]+1), name)) {
-				assert(i < SYMBOL_OFS_LIMIT);
-				assert(table_i < SYMBOL_SCOPE_LIMIT);
-				return (i << SYMBOL_SCOPE_BITS) | table_i;
-			}
-		}
-	}
-	return create? userp_scope_add_symbol(scope, name) : 0;
-}
-
-userp_symbol userp_scope_add_symbol(userp_scope scope, const char *name) {
-	size_t pos, len, sym_i, tbl_i;
-
-	if (scope->is_final) {
-		scope->env->diag_code= USERP_EINVAL;
-		scope->env->diag_tpl= "Can't modify a finalized scope";
-		return 0;
-	}
-	len= strlen(name);
-	// Create the symbol table for this scope if it wasn't initialized yet
-	if (!scope->symtable) {
-		if (!alloc_symtable(scope->env, &scope->symtable, 2, USERP_HINT_DYNAMIC))
-			return 0;
-		if (!(scope->symtable->symbol_text.buf= userp_new_buffer(scope->env, NULL, (len+1+1023)&~1023)))
-			return 0;
-		// symtable_stack was originally allocated with a spare slot for this exact purpose
-		tbl_i= scope->symtable_count++;
-		scope->symtable_stack[tbl_i]= scope->symtable;
-	}
-	else {
-		// Ensure space for one more symbol entry
-		if (scope->symtable->count >= scope->symtable->n_alloc)
-			if (!alloc_symtable(scope->env, &scope->symtable, scope->symtable->count+1, USERP_HINT_DYNAMIC))
-				return 0;
-		tbl_i= scope->symtable_count-1;
-	}
-	if (!userp_bstring_grow(scope->env, &scope->symtable->symbol_text, len+1, name))
-		return 0;
-	sym_i= scope->symtable->count++;
-	scope->symtable->symbol_end[sym_i]= scope->symtable->symbol_text.len-1;
-	return (sym_i << SYMBOL_SCOPE_BITS) | tbl_i;
-}
-
-userp_type userp_scope_get_type(userp_scope scope, userp_symbol name) {
-	return NULL;
-}
-
-userp_type userp_scope_new_type(userp_scope scope, userp_symbol name, userp_type base_type) {
-	return NULL;
-}
-
-userp_enc userp_type_encode(userp_type type) {
-	return NULL;
-}
-
-userp_dec userp_type_decode(userp_type type) {
-	return NULL;
-}
-
-
-bool alloc_symtable(userp_env env, symbol_table *st_p, size_t count, int flags) {
-	size_t n;
-	bool is_new= !*st_p;
-	if (!is_new && (*st_p)->n_alloc >= count)
+	if (!--scope->refcnt) {
+		userp_free_scope(scope);
 		return true;
-	n= is_new? count : (count + 63)&~63;
-	if (!USERP_ALLOC(env, st_p, sizeof(struct symbol_table) + sizeof((*st_p)->symbol_end[0]) * n, flags))
-		return false;
-	if (is_new)
-		bzero(*st_p, sizeof(struct symbol_table));
-	(*st_p)->n_alloc= n;
+	}
+	return false;
+}
+
+bool userp_scope_finalize(userp_scope scope, int flags) {
+	// If user requests 'optimize' flag,
+	//   if symbol table has a tree, build a new buffer large enough for all symbol data,
+	//   then walk the tree copying each symbol into the new buffer,
+	//   then replace the vector with a new vector of sorted elements,
+	//   then free the tree and the old vector.
+	// TODO: make sure there aren't incomplete type definitions
+	scope->is_final= 1;
 	return true;
 }
 
-void free_symtable(userp_env env, symbol_table *st_p) {
-	if (*st_p) {
-		if ((*st_p)->symbol_text.buf)
-			userp_drop_buffer((*st_p)->symbol_text.buf);
-		USERP_FREE(env, st_p);
-	}
-}
-
+/*
 #define SYMBOL_PARSE_EOF -1
 #define SYMBOL_PARSE_BAD_UTF8 -2
 #define SYMBOL_PARSE_OVERLONG_UTF8 -3
@@ -511,35 +787,67 @@ void free_type(userp_env env, userp_type t) {
 	unimplemented("free_type");
 }
 
-#ifdef WITH_UNIT_TESTS
+*/
 
-UNIT_TEST(test_userp_scope_parse_symtable) {
-	int i, ofs;
-	userp_env env= userp_new_env(NULL,NULL,NULL);
-	userp_scope scope= userp_new_scope(env, NULL);
-	struct userp_bstring str= { .start= argv[0], .len= strlen(argv[0])+1
-	bool ret= userp_scope_parse_symtable(scope, argv[0], );
-	printf("return: %d\n", ret);
-	if (ret) {
-		printf("symtable: %p\n", scope->symtable);
-		printf("symtable->count: %d\n", scope->symtable->count);
-		printf("symtable->n_alloc: %d\n", scope->symtable->n_alloc);
-		printf("symtable->symbol_text.start: %p\n", scope->symtable->symbol_text.start);
-		printf("symtable->symbol_text.len: %d\n", scope->symtable->symbol_text.len);
-		fflush(stdout);
-		for (i= 0; i < scope->symtable->count; i++) {
-			ofs= (i == 0? 0 : scope->symtable->symbol_end[i-1]+1);
-			printf("symbol %d: %d %s\n", i,
-				scope->symtable->symbol_end[i] - ofs,
-				scope->symtable->symbol_text.start + ofs
-			);
-		}
-		fflush(stdout);
-	}
-	else {
-		userp_env_print_diag(env, stdout);
-	}
-	return ret? 0 : 2;
+#ifdef UNIT_TEST
+
+//NIT_TEST(test_userp_scope_parse_symtable) {
+//	int i, ofs;
+//	userp_env env= userp_new_env(NULL,NULL,NULL);
+//	userp_scope scope= userp_new_scope(env, NULL);
+//	struct userp_bstring str= { .start= argv[0], .len= strlen(argv[0])+1
+//	bool ret= userp_scope_parse_symtable(scope, argv[0], );
+//	printf("return: %d\n", ret);
+//	if (ret) {
+//		printf("symtable: %p\n", scope->symtable);
+//		printf("symtable->count: %d\n", scope->symtable->count);
+//		printf("symtable->n_alloc: %d\n", scope->symtable->n_alloc);
+//		printf("symtable->symbol_text.start: %p\n", scope->symtable->symbol_text.start);
+//		printf("symtable->symbol_text.len: %d\n", scope->symtable->symbol_text.len);
+//		fflush(stdout);
+//		for (i= 0; i < scope->symtable->count; i++) {
+//			ofs= (i == 0? 0 : scope->symtable->symbol_end[i-1]+1);
+//			printf("symbol %d: %d %s\n", i,
+//				scope->symtable->symbol_end[i] - ofs,
+//				scope->symtable->symbol_text.start + ofs
+//			);
+//		}
+//		fflush(stdout);
+//	}
+//	else {
+//		userp_env_print_diag(env, stdout);
+//	}
+//	return ret? 0 : 2;
+//}
+
+UNIT_TEST(scope_alloc_free) {
+	userp_env env= userp_new_env(logging_alloc, userp_file_logger, stdout, 0);
+	printf("# alloc outer\n");
+	userp_scope outer= userp_new_scope(env, NULL);
+	userp_scope_finalize(outer, 0);
+	printf("# alloc inner\n");
+	userp_scope inner= userp_new_scope(env, outer);
+	printf("# env->refcnt=%d  outer->refcnt=%d  inner->refcnt=%d\n",
+		env->refcnt, outer->refcnt, inner->refcnt);
+	printf("drop env = %d\n", userp_drop_env(env));
+	printf("drop outer = %d\n", userp_drop_scope(outer));
+	printf("# free all via refcnt\n");
+	printf("drop inner = %d\n", userp_drop_scope(inner));
 }
+/*OUTPUT
+/alloc 0x0+ to \d+ = 0x\w+/
+# alloc outer
+/alloc 0x0+ to \d+ = 0x\w+/
+# alloc inner
+/alloc 0x0+ to \d+ = 0x\w+/
+# env->refcnt=3  outer->refcnt=2  inner->refcnt=1
+drop env = 0
+drop outer = 0
+# free all via refcnt
+/alloc 0x\w+ to 0 = 0x0+/
+/alloc 0x\w+ to 0 = 0x0+/
+/alloc 0x\w+ to 0 = 0x0+/
+drop inner = 1
+*/
 
 #endif

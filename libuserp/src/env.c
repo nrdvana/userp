@@ -92,6 +92,10 @@ userp_env userp_new_env(userp_alloc_fn alloc_fn, userp_diag_fn diag_fn, void *cb
 	env->diag_cb_data= diag_callback_data;
 	env->refcnt= 1;
 	env->log_warn= 1;
+	env->scope_stack_max=    USERP_DEFAULT_SCOPE_STACK_MAX;
+	env->enc_output_parts=   USERP_DEFAULT_ENC_OUTPUT_PARTS;
+	env->enc_output_bufsize= USERP_DEFAULT_ENC_OUTPUT_BUFSIZE;
+	
 	return env;
 }
 
@@ -323,7 +327,6 @@ There are currently three settings:
 */
 
 void userp_env_set_attr(userp_env env, int attr_id, size_t value) {
-	int n;
 	const char *attr_name= NULL;
 	switch (attr_id) {
 	case USERP_LOG_LEVEL:

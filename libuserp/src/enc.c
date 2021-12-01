@@ -3,9 +3,6 @@
 
 userp_enc userp_new_enc(userp_env env, userp_scope scope, userp_type root_type) {
 	userp_enc enc= NULL;
-	int default_output_parts= env->default_enc_output_parts? env->default_enc_output_parts
-		: USERP_ENC_DEFAULT_OUTPUT_PARTS;
-
 	if (!scope || scope->env != env) {
 		userp_diag_set(&env->err, USERP_EFOREIGNSCOPE, "userp_scope does not belong to this userp_env");
 		USERP_DISPATCH_ERROR(env);
@@ -17,7 +14,7 @@ userp_enc userp_new_enc(userp_env env, userp_scope scope, userp_type root_type) 
 		return NULL;
 	}
 
-	if (!USERP_ALLOC_OBJPLUS(env, &enc, default_output_parts * sizeof(struct userp_bstr_part)))
+	if (!USERP_ALLOC_OBJPLUS(env, &enc, env->enc_output_parts * sizeof(struct userp_bstr_part)))
 		return NULL;
 	if (!userp_grab_scope(scope)) {
 		USERP_FREE(env, &enc);
@@ -29,7 +26,7 @@ userp_enc userp_new_enc(userp_env env, userp_scope scope, userp_type root_type) 
 	enc->scope= scope;
 	enc->output= &enc->output_inst;
 	enc->output_inst.part_count= 0;
-	enc->output_inst.part_alloc= default_output_parts;
+	enc->output_inst.part_alloc= env->enc_output_parts;
 	return enc;
 }
 
@@ -52,7 +49,7 @@ static struct userp_bstr_part * userp_enc_make_room(userp_enc enc, size_t n, int
 	size_t ofs= 0;
 	userp_buffer buf= NULL;
 	// TODO: grow the allocation size each time
-	size_t alloc_n= USERP_ENC_DEFAULT_OUTPUT_BUFSIZE;
+	size_t alloc_n= enc->env->enc_output_bufsize;
 
 	// "commit" the progress from out_pos back to the bstr
 	if (enc->out_pos) {
