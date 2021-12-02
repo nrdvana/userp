@@ -85,7 +85,7 @@ const char * userp_diag_code_name(int code) {
 /*
 #### buffer
 
-  userp_buffer buf;
+  char *data;
   size_t pos, len;
   bool success= userp_diag_get_buffer(diag, &buf, &pos, &len);
 
@@ -96,7 +96,7 @@ current position and length of relevant bytes.
 The output parameters are optional (if they are NULL, the value is not copied).
 It returns true if a buffer was referenced by this diagnistic.
 
-*/
+*
 
 bool userp_diag_get_buffer(userp_diag diag, userp_buffer *buf_p, size_t *pos_p, size_t *len_p) {
 	if (!diag->buf)
@@ -168,61 +168,89 @@ int userp_diag_print(userp_diag diag, FILE *fh) {
 
 int userp_process_diag_tpl(userp_diag diag, char *buf, size_t buf_len, FILE *fh) {
 	const char *from, *pos= diag->tpl, *p1, *p2;
-	char tmp_buf[64], id;
+	char tmp_buf[sizeof(diag->buffer)*4], id;
 	size_t n= 0, str_len= 0;
-	int i;
+	bool hex= false, at_pos;
+	long long val= 0;
 	while (*pos) {
 		// here, *pos is either \x01 followed by a code indicating which variable to insert,
 		// or any other character means to scan forward.
 		if (*pos == '\x01') {
-			n= 0;
-			from= tmp_buf;
+			from= tmp_buf; // source of next block of character data to emit
+			n= 0; // number of chars to copy from 'from'
 			++pos;
 			switch (id= *pos++) {
 			// Buffer, displayed as a pointer address
-			case USERP_DIAG_BUFADDR_ID:
-				n= snprintf(tmp_buf, sizeof(tmp_buf), "%p", diag->buf->data + diag->pos);
+			case USERP_DIAG_PTR_ID:
+				n= snprintf(tmp_buf, sizeof(tmp_buf), "%p", diag->ptr);
 				break;
 			// Buffer, hexdump the contents
 			case USERP_DIAG_BUFHEX_ID:
-				p1= (char*) diag->buf->data + diag->pos;
-				p2= p1 + diag->len;
-				for (n= 0; (n+1)*3 < sizeof(tmp_buf) && p1 < p2; p1++) {
-					tmp_buf[n++]= "0123456789ABCDEF"[(*p1>>4) & 0xF];
-					tmp_buf[n++]= "0123456789ABCDEF"[*p1 & 0xF];
-					tmp_buf[n++]= ' ';
+				hex= true;
+				n= 0;
+				if (0) {
+			// Buffer, printed as a string with escapes
+			case USERP_DIAG_BUFSTR_ID:
+					hex= false;
+					tmp_buf[0]= '"';
+					n= 1;
 				}
-				if (n) --n;
+				p1= (char*) diag->buffer;
+				p2= p1 + diag->len;
+				if (p2 > p1 + sizeof(diag->buffer))
+					p2= p1 + sizeof(diag->buffer);
+				for (; n+9 < sizeof(tmp_buf) && p1 < p2; p1++) {
+					at_pos= p1 == (diag->buffer + diag->pos);
+					if (hex || *p1 < 32 || *p1 >= 0x7F || *p1 == '\\' || *p1 == '"') {
+						if (at_pos) {
+							if (hex) {
+								tmp_buf[n++]= '>';
+							} else {
+								tmp_buf[n++]= '"';
+								tmp_buf[n++]= ' ';
+								tmp_buf[n++]= '>';
+								tmp_buf[n++]= '"';
+							}
+						}
+						if (!hex) {
+							tmp_buf[n++]= '\\';
+							tmp_buf[n++]= 'x';
+						}
+						tmp_buf[n++]= "0123456789ABCDEF"[(*p1>>4) & 0xF];
+						tmp_buf[n++]= "0123456789ABCDEF"[*p1 & 0xF];
+						if (hex) {
+							tmp_buf[n++]= ' ';
+						}
+					}
+					else tmp_buf[n++]= *p1;
+				}
+				if (hex) n--;
+				else tmp_buf[n++]= '"';
 				tmp_buf[n]= '\0';
 				break;
 			// integer with "power of 2" notation
 			case USERP_DIAG_ALIGN_ID:
-				i= diag->align; if (0)
+				val= diag->align; if (0)
 			case USERP_DIAG_INDEX_ID:
-				i= diag->index;
-				n= snprintf(tmp_buf, sizeof(tmp_buf), "2**%d", i);
+				val= diag->index;
+				n= snprintf(tmp_buf, sizeof(tmp_buf), "2**%lld", val);
 				break;
 			// Generic integer fields
 			case USERP_DIAG_POS_ID:
-				n= diag->pos; if (0)
+				val= diag->pos; if (0)
 			case USERP_DIAG_LEN_ID:
-				n= diag->len; if (0)
+				val= diag->len; if (0)
 			case USERP_DIAG_SIZE_ID:
-				n= diag->size; if (0)
+				val= diag->size; if (0)
 			case USERP_DIAG_COUNT_ID:
-				n= diag->count;
-				n= snprintf(tmp_buf, sizeof(tmp_buf), "%ld", n);
+				val= diag->count;
+				n= snprintf(tmp_buf, sizeof(tmp_buf), "%lld", val);
 				break;
 			default:
 				// If we get here, it's a bug.  If the second byte was NUL, back up one, else substitute an error message
 				if (!pos[-1]) --pos;
 				from= "(unknown var)";
 				if (0)
-			// Buffer, printed as a string
-			case USERP_DIAG_BUFSTR_ID:
-				from= (char*) diag->buf->data + diag->pos;
-				n= diag->len;
-				break;
 			case USERP_DIAG_CSTR1_ID:
 				from= diag->cstr1; if (0)
 			case USERP_DIAG_CSTR2_ID:
@@ -259,31 +287,34 @@ int userp_process_diag_tpl(userp_diag diag, char *buf, size_t buf_len, FILE *fh)
 void userp_diag_set(userp_diag diag, int code, const char *tpl) {
 	diag->code= code;
 	diag->tpl= tpl;
-	if (diag->buf) {
-		userp_drop_buffer(diag->buf);
-		diag->buf= NULL;
-	}
 }
 
 void userp_diag_setf(userp_diag diag, int code, const char *tpl, ...) {
+	const char *from;
+	size_t skip;
 	va_list ap;
 	va_start(ap, tpl);
 	diag->code= code;
 	diag->tpl= tpl;
-	if (diag->buf) {
-		userp_drop_buffer(diag->buf);
-		diag->buf= NULL;
-	}
 	while (*tpl) {
 		if (*tpl++ == '\x01') {
 			switch (*tpl++) {
-			case USERP_DIAG_BUFADDR_ID:
 			case USERP_DIAG_BUFHEX_ID:
 			case USERP_DIAG_BUFSTR_ID:
-				diag->buf= va_arg(ap, userp_buffer);
-				//if (buf) userp_grab_buffer(diag->buf);
+				from= va_arg(ap, char*);
 				diag->pos= va_arg(ap, size_t);
 				diag->len= va_arg(ap, size_t);
+				// copy data into buffer, making sure to include 'pos' if the data is
+				// too large
+				if (diag->pos > sizeof(diag->buffer)*9/10) {
+					skip= diag->pos - sizeof(diag->buffer)*9/10;
+					from += skip;
+					diag->pos -= skip;
+					diag->len -= skip;
+				}
+				if (diag->len > sizeof(diag->buffer))
+					diag->len= sizeof(diag->buffer);
+				memcpy(diag->buffer, from, diag->len);
 				break;
 			case USERP_DIAG_ALIGN_ID:
 				diag->align= va_arg(ap, int);
@@ -308,6 +339,9 @@ void userp_diag_setf(userp_diag diag, int code, const char *tpl, ...) {
 				break;
 			case USERP_DIAG_CSTR2_ID:
 				diag->cstr2= va_arg(ap, const char *);
+				break;
+			case USERP_DIAG_PTR_ID:
+				diag->ptr= va_arg(ap, void *);
 				break;
 			default:
 				fprintf(stderr, "BUG: Unhandled diagnostic variable %d", *tpl);
@@ -412,34 +446,31 @@ wrote=0
 UNIT_TEST(diag_ref_buf_hex) {
 	int wrote;
 	struct userp_diag d;
-	struct userp_buffer buf;
 	bzero(&d, sizeof(d));
-	bzero(&buf, sizeof(buf));
 
-	buf.data= (uint8_t*) "\x01\x02\x03\x04";
-	userp_diag_setf(&d, 1, "Some Hex: " USERP_DIAG_BUFHEX, &buf, 1, 3);
+	userp_diag_setf(&d, 1, "Some Hex: " USERP_DIAG_BUFHEX,
+		"\x01\x02\x03\x04", 1, 3);
 	wrote= userp_diag_print(&d, stdout);
 	printf("\nwrote=%d\n", wrote);
 }
 /*OUTPUT
-Some Hex: 02 03 04
-wrote=18
+Some Hex: 01 >02 03
+wrote=19
 */
 
-UNIT_TEST(diag_ref_bufaddr) {
+UNIT_TEST(diag_ref_bufstr) {
 	int wrote;
 	struct userp_diag d;
-	struct userp_buffer buf;
 	bzero(&d, sizeof(d));
-	bzero(&buf, sizeof(buf));
 
-	buf.data= (uint8_t*) 0x1000;
-	userp_diag_setf(&d, 1, "Buffer address: " USERP_DIAG_BUFADDR "\n", &buf, 1, 0);
+	userp_diag_setf(&d, 1, "String: " USERP_DIAG_BUFSTR,
+		"test\0\x01\x02", 7, 7);
 	wrote= userp_diag_print(&d, stdout);
-	(void)wrote;
+	printf("\nwrote=%d\n", wrote);
 }
 /*OUTPUT
-/Buffer address: .*1001/
+String: "test\x00\x01\x02"
+wrote=26
 */
 
 #endif

@@ -7,7 +7,8 @@
 struct userp_diag {
 	int code;
 	const char *tpl, *cstr1, *cstr2;
-	userp_buffer buf;
+	void *ptr;
+	char buffer[64];
 	int align, index;
 	size_t pos, len, size, count;
 };
@@ -27,12 +28,12 @@ struct userp_diag {
 #define USERP_DIAG_CSTR1       "\x01\x07"
 #define USERP_DIAG_CSTR2_ID         0x08
 #define USERP_DIAG_CSTR2       "\x01\x08"
-#define USERP_DIAG_BUFADDR_ID       0x09
-#define USERP_DIAG_BUFADDR     "\x01\x09"
+#define USERP_DIAG_BUFSTR_ID        0x09
+#define USERP_DIAG_BUFSTR      "\x01\x09"
 #define USERP_DIAG_BUFHEX_ID        0x0A
 #define USERP_DIAG_BUFHEX      "\x01\x0A"
-#define USERP_DIAG_BUFSTR_ID        0x0B
-#define USERP_DIAG_BUFSTR      "\x01\x0B"
+#define USERP_DIAG_PTR_ID           0x0B
+#define USERP_DIAG_PTR         "\x01\x0B"
 
 void userp_diag_set(userp_diag diag, int code, const char *tpl);
 void userp_diag_setf(userp_diag diag, int code, const char *tpl, ...);
@@ -73,8 +74,6 @@ struct userp_env {
 	int enc_output_bufsize;
 };
 
-extern bool userp_alloc_math(userp_env env, void **pointer, size_t elem_size, size_t count, size_t extra, userp_alloc_flags flags);
-
 #define USERP_CLEAR_ERROR(env) ((env)->err.code= 0)
 #define USERP_DISPATCH_ERROR(env) do { if ((env)->err.code) env->diag(env->diag_cb_data, &env->err, env->err.code); } while (0)
 
@@ -85,6 +84,17 @@ extern bool userp_alloc_math(userp_env env, void **pointer, size_t elem_size, si
 	) \
 	>> sizeof(size_t)*4 )
 
+#if 0
+#define USERP_ALLOC_OBJ(env, ptr) fprintf(stderr, "alloc_obj %s at %s %d\n", #ptr, __FILE__, __LINE__), userp_alloc(env, (void**)ptr, sizeof(**ptr), USERP_HINT_STATIC)
+#define USERP_ALLOC_OBJPLUS(env, ptr, extra_bytes) fprintf(stderr, "alloc_objplus %s + %d at %s %d\n", #ptr, (int)extra_bytes, __FILE__, __LINE__), userp_alloc(env, (void**)ptr, sizeof(**ptr) + extra_bytes, USERP_HINT_STATIC)
+#define USERP_ALLOC_ARRAY(env, ptr, count) fprintf(stderr, "alloc_array %s[%d] at %s %d\n", #ptr, (int)count, __FILE__, __LINE__), userp_alloc(env, (void**)ptr, sizeof(**ptr) * count, USERP_HINT_DYNAMIC)
+#define USERP_FREE(env, ptr) fprintf(stderr, "free %s at %s %d", #ptr, __FILE__, __LINE__), userp_alloc(env, (void**) ptr, 0, 0)
+#else
+#define USERP_ALLOC_OBJ(env, ptr) userp_alloc(env, (void**)ptr, sizeof(**ptr), USERP_HINT_STATIC)
+#define USERP_ALLOC_OBJPLUS(env, ptr, extra_bytes) userp_alloc(env, (void**)ptr, sizeof(**ptr) + extra_bytes, USERP_HINT_STATIC)
+#define USERP_ALLOC_ARRAY(env, ptr, count) userp_alloc(env, (void**)ptr, sizeof(**ptr) * count, USERP_HINT_DYNAMIC)
+#define USERP_FREE(env, ptr) userp_alloc(env, (void**) ptr, 0, 0);
+#endif
 
 #ifndef USERP_BUFFER_DATA_ALLOC_ROUND
 #define USERP_BUFFER_DATA_ALLOC_ROUND(x) (((x) + 4095) & ~4095)

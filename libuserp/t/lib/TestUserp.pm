@@ -53,7 +53,7 @@ sub check_unittest_output {
 			main::fail("Found output: $line");
 			$success= 0;
 			# cut off the output at the following comment, if any.
-			$actual =~ /\G(.[^#]+)/;
+			$actual =~ /\G(.?[^#]*)/;
 			main::diag("Output does not match /$re_text/ : ".output_text_to_perl($1));
 			$resync= 1;
 		}
@@ -88,7 +88,8 @@ sub output_text_to_perl {
 	sub esc {
 		defined $escapes{$_}? $escapes{$_} : sprintf("\\x%02X", ord)
 	}
-	return ' '.join "\n.", map { s/[\$\@\"\\\x00-\x1F\x7F-\xFF]/esc/eg; qq{"$_\\n"} }
+	return ' ""' unless length $string;
+	return ' "'.join "\n.", map { s/[\$\@\"\\\x00-\x1F\x7F-\xFF]/esc/eg; qq{"$_\\n"} }
 		split /\n/, $string;
 }
 

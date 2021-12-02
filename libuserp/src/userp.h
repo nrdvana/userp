@@ -36,11 +36,12 @@ struct userp_bstr;
 #define USERP_ETYPESCOPE    0x4006 // userp_type is not available in the current scope
 #define USERP_ESYS          0x4007 // You asked libuserp to make a system call, and the system call failed
 #define USERP_EPROTOCOL     0x4100 // Generic error while decoding protocol
-#define USERP_EFEEDME       0x4101 // More data required to continue decoding
-#define USERP_ELIMIT        0x4102 // decoded data exceeds a limit
-#define USERP_ESYMBOL       0x4103 // symbol table entry is not valid
-#define USERP_ETYPE         0x4104 // type definition is not valid
-#define USERP_EBUFPOINTER   0x4105 // specified pointer is not within specified buffer
+#define USERP_EOVERRUN      0x4101 // The protocol describes data larger than its container
+#define USERP_EFEEDME       0x4102 // More data required to continue decoding
+#define USERP_ELIMIT        0x4103 // decoded data exceeds a limit
+#define USERP_ESYMBOL       0x4104 // symbol table entry is not valid
+#define USERP_ETYPE         0x4105 // type definition is not valid
+#define USERP_EBUFPOINTER   0x4106 // specified pointer is not within specified buffer
 // Warnings
 #define USERP_WARN          0x2000 // generic warning
 #define USERP_WLARGEMETA    0x2001 // encoded or decoded metadata is suspiciously large
@@ -68,11 +69,6 @@ typedef bool userp_alloc_fn(void *callback_data, void **pointer, size_t new_size
 typedef void userp_diag_fn(void *callback_data, userp_diag diag, int diag_code);
 
 extern bool userp_alloc(userp_env env, void **pointer, size_t new_size, userp_alloc_flags flags);
-
-#define USERP_ALLOC_OBJ(env, ptr) userp_alloc(env, (void**)ptr, sizeof(**ptr), USERP_HINT_STATIC)
-#define USERP_ALLOC_OBJPLUS(env, ptr, extra_bytes) userp_alloc(env, (void**)ptr, sizeof(**ptr) + extra_bytes, USERP_HINT_STATIC)
-#define USERP_ALLOC_ARRAY(env, ptr, count) userp_alloc(env, (void**)ptr, sizeof(**ptr) * count, USERP_HINT_DYNAMIC)
-#define USERP_FREE(env, ptr) userp_alloc(env, (void**) ptr, 0, 0);
 
 extern userp_env userp_new_env(userp_alloc_fn alloc_callback, userp_diag_fn diag_callback, void *callback_data, userp_env_flags flags);
 extern bool userp_grab_env(userp_env env);
@@ -110,6 +106,8 @@ extern userp_diag userp_env_get_last_error(userp_env env);
 
 // buffer can have new data appended up to the alloc_len
 #define USERP_BUFFER_APPENDABLE    0x004000
+
+#define USERP_BUFFER_ALLOC_EXACT   0x008000
 
 typedef bool userp_reader_fn(void *callback_data, struct userp_bstr* buffers, size_t bytes_needed, userp_env env);
 typedef void userp_buffer_destructor(void *callback_data, userp_buffer *buf);
@@ -190,8 +188,8 @@ struct userp_bstr {
 extern bool userp_bstr_partalloc(struct userp_bstr *str, size_t part_count);
 extern uint8_t* userp_bstr_append_bytes(struct userp_bstr *ptr, const uint8_t *bytes, size_t n);
 extern struct userp_bstr_part* userp_bstr_append_parts(struct userp_bstr *ptr, const struct userp_bstr_part *parts, size_t n);
-inline void userp_bstr_init(struct userp_bstr *str, userp_env env) { str->part_count= str->part_alloc= 0; str->parts= NULL; str->env= env; }
-inline void userp_bstr_destroy(struct userp_bstr *str) { userp_bstr_partalloc(str, 0); }
+static inline void userp_bstr_init(struct userp_bstr *str, userp_env env) { str->part_count= str->part_alloc= 0; str->parts= NULL; str->env= env; }
+static inline void userp_bstr_destroy(struct userp_bstr *str) { userp_bstr_partalloc(str, 0); }
 
 //extern userp_bstr userp_new_bstr(userp_env env, int part_alloc_count);
 //extern void userp_free_bstr(userp_bstr *str);

@@ -106,10 +106,6 @@ static void userp_free_env(userp_env env) {
 	void *alloc_cb_data= env->alloc_cb_data;
 	struct userp_diag err;
 
-	if (env->err.buf) {
-		//TODO:userp_drop_buffer(env->err.buf);
-		env->err.buf= NULL;
-	}
 	if (env->measure_twice) {
 		bzero(env, sizeof(*env)); // help identify freed env
 		env->measure_twice= 1;

@@ -176,7 +176,8 @@ extern userp_buffer userp_new_buffer(userp_env env, void *data, size_t alloc_len
 	buf->refcnt= 1;
 	buf->flags= flags;
 	if (!buf->data && alloc_len) {
-		alloc_len= USERP_BUFFER_DATA_ALLOC_ROUND(alloc_len);
+		if (!(flags & USERP_BUFFER_ALLOC_EXACT))
+			alloc_len= USERP_BUFFER_DATA_ALLOC_ROUND(alloc_len);
 		if (!userp_alloc(env, (void**) &buf->data, alloc_len,
 				(flags&USERP_ALLOC_FLAG_MASK)|USERP_POINTER_IS_BUFFER_DATA)
 		) {
@@ -196,15 +197,6 @@ static void userp_free_buffer(userp_buffer buf) {
 	// Free the data if it came from env->alloc
 	if (buf->flags & USERP_BUFFER_DATA_ALLOC)
 		userp_alloc(env, (void**) &buf->data, 0, USERP_POINTER_IS_BUFFER_DATA);
-
-	// userp_env can have a weak reference to a buffer, for diagnostics.
-	// If this is that buffer, set the reference to NULL.
-	if (env->err.buf == buf)
-		env->err.buf= NULL;
-	else if (env->warn.buf == buf)
-		env->warn.buf= NULL;
-	else if (env->msg.buf == buf)
-		env->msg.buf= NULL;
 
 	// Free the buffer struct
 	USERP_FREE(env, &buf);

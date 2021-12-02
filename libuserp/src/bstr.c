@@ -2,7 +2,7 @@
 #include "userp_private.h"
 
 bool userp_bstr_partalloc(struct userp_bstr *str, size_t part_count) {
-	size_t n_alloc= USERP_BSTR_PART_ALLOC_ROUND(part_count);
+	size_t n_alloc= part_count? USERP_BSTR_PART_ALLOC_ROUND(part_count) : 0;
 	int i;
 	if (!str) return false;
 
@@ -17,7 +17,7 @@ bool userp_bstr_partalloc(struct userp_bstr *str, size_t part_count) {
 		if (part_count && str->part_count < (n_alloc<<4))
 			return true;
 	}
-	if (!str->env)
+	if (!str->env) // If no env, then the parts might be allocated from some other source
 		return false;
 	if (!USERP_ALLOC_ARRAY(str->env, &str->parts, n_alloc))
 		return false;

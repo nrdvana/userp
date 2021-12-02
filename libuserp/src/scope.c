@@ -35,12 +35,12 @@ lookup from a binary tree to a binary search on an array.
 
 static bool scope_init_symtable(userp_scope scope);
 
-static bool symbol_tree_insert31(struct symbol_table *st) {
+static bool symbol_tree_insert31(struct symbol_table *st, uint32_t newest) {
 	// element 0 is the "sentinel" leaf, and 'last' is the element being added
 	struct symbol_tree_node31 *tree= (struct symbol_tree_node31 *) st->tree;
 	struct symbol_entry *symbols= st->symbols;
 	int cmp;
-	uint32_t stack[64], pos, newest= (uint32_t) st->used, parent, new_head, i= 0;
+	uint32_t stack[64], pos, parent, new_head, i= 0;
 	
 	tree[newest].left= 0;
 	tree[newest].right= 0;
@@ -153,12 +153,12 @@ static bool symbol_tree_insert31(struct symbol_table *st) {
 	return true;
 }
 
-static bool symbol_tree_insert15(struct symbol_table *st) {
+static bool symbol_tree_insert15(struct symbol_table *st, uint16_t newest) {
 	// element 0 is the "sentinel" leaf, and 'last' is the element being added
 	struct symbol_tree_node15 *tree= (struct symbol_tree_node15 *) st->tree;
 	struct symbol_entry *symbols= st->symbols;
 	int cmp;
-	uint16_t stack[64], pos, newest= (uint16_t) st->used, parent, new_head, i= 0;
+	uint16_t stack[64], pos, parent, new_head, i= 0;
 	
 	tree[newest].left= 0;
 	tree[newest].right= 0;
@@ -271,6 +271,58 @@ static bool symbol_tree_insert15(struct symbol_table *st) {
 	return true;
 }
 
+// This handles both the case of limiting symbols to the 2**31 limit imposed by the tree,
+// and also guards against overflow of size_t for allocations on 32-bit systems.
+#define MAX_SYMTABLE_STRUCT_ALLOC  (SIZE_MAX/(sizeof(struct symbol_tree_node31)+sizeof(struct symbol_entry)))
+#define MAX_SYMTABLE_ENTRIES (MAX_SYMTABLE_STRUCT_ALLOC < (size_t)(1<<31)? MAX_SYMTABLE_STRUCT_ALLOC : (size_t)(1<<31))
+
+static bool symbol_vec_alloc(userp_scope scope, size_t n) {
+	userp_env env= scope->env;
+	struct symbol_tree_node15 *tree15;
+	struct symbol_tree_node31 *tree31;
+	size_t size, i;
+	n= USERP_SCOPE_TABLE_ALLOC_ROUND(n);
+	if (n <= scope->symtable.alloc)
+		return true; // nothing to do
+	// well that would be a lot of symbols
+	if (n >= MAX_SYMTABLE_ENTRIES) {
+		userp_diag_setf(&env->err, USERP_EDOINGITWRONG,
+			"Can't resize symbol table larger than " USERP_DIAG_SIZE " entries",
+			(size_t) MAX_SYMTABLE_ENTRIES
+		);
+		USERP_DISPATCH_ERROR(env);
+		return 0;
+	}
+
+	if (!USERP_ALLOC_ARRAY(env, &scope->symtable.symbols, n))
+		return false;
+
+	// But also, if this is the moment that the size exceeds the limit of 15-bits, upgrade the tree.
+	if (scope->symtable.tree) {
+		if ((n >> 15) && !(scope->symtable.alloc >> 15)) {
+			tree15= (struct symbol_tree_node15*) scope->symtable.tree;
+			tree31= NULL;
+			if (!USERP_ALLOC_ARRAY(env, &tree31, n))
+				return 0;
+			for (i= 0; i < scope->symtable.used; i++) {
+				tree31[i].left=  tree15[i].left;
+				tree31[i].right= tree15[i].right;
+				tree31[i].color= tree15[i].color;
+			}
+			USERP_FREE(env, tree15);
+			scope->symtable.tree= tree31;
+		}
+		else {
+			size= n * ((n>>15)? sizeof(struct symbol_tree_node31) : sizeof(struct symbol_tree_node15));
+			if (!userp_alloc(env, &scope->symtable.tree, size, 0))
+				return 0;
+		}
+	}
+	scope->symtable.alloc= n;
+	scope->symtable.used= 1; // elem 0 is always reserved
+	return true;
+}
+
 userp_symbol userp_scope_get_symbol(userp_scope scope, const char *name, int flags) {
 	int i, pos, start, limit, cmp, len;
 	bool need_tree= false;
@@ -324,7 +376,7 @@ userp_symbol userp_scope_get_symbol(userp_scope scope, const char *name, int fla
 					else limit= pos;
 				}
 				// capture whether it was greater than all others in local symtable or not
-				if (st == &scope->symtable)
+				if (st == &scope->symtable && !scope->symtable.tree)
 					need_tree= (limit < st->used);
 			}
 			// User can request only searching immediate scope
@@ -349,39 +401,9 @@ userp_symbol userp_scope_get_symbol(userp_scope scope, const char *name, int fla
 		return 0;
 	}
 	// Grow the symbols array if needed
-	if (pos >= scope->symtable.alloc) {
-		limit= USERP_SCOPE_TABLE_ALLOC_ROUND(pos+1);
-		if (!USERP_ALLOC_ARRAY(env, &scope->symtable.symbols, limit))
+	if (pos >= scope->symtable.alloc)
+		if (!symbol_vec_alloc(scope, pos+1))
 			return 0;
-		// But also, if this is the moment that the size exceeds the limit of 15-bits, upgrade the tree.
-		if (scope->symtable.tree) {
-			if ((limit >> 15) && !(scope->symtable.alloc >> 15)) {
-				// well that would be a lot of symbols
-				if (scope->symtable.alloc >> 31) {
-					userp_diag_set(&env->err, USERP_EDOINGITWRONG, "Symbol table full (at 2**31 entries)");
-					USERP_DISPATCH_ERROR(env);
-					return 0;
-				}
-				tree15= (struct symbol_tree_node15*) scope->symtable.tree;
-				tree31= NULL;
-				if (!USERP_ALLOC_ARRAY(env, &tree31, limit))
-					return 0;
-				for (i= 0; i < scope->symtable.used; i++) {
-					tree31[i].left=  tree15[i].left;
-					tree31[i].right= tree15[i].right;
-					tree31[i].color= tree15[i].color;
-				}
-				USERP_FREE(env, tree15);
-				scope->symtable.tree= tree31;
-			}
-			else {
-				size= limit * ((limit>>15)? sizeof(struct symbol_tree_node31) : sizeof(struct symbol_tree_node15));
-				if (!userp_alloc(env, &scope->symtable.tree, size, 0))
-					return 0;
-			}
-		}
-		scope->symtable.alloc= limit;
-	}
 	// if tree is not built, and symbol does not compare greater than previous, need the tree.
 	if (need_tree) {
 		size= limit * ((limit>>15)? sizeof(struct symbol_tree_node31) : sizeof(struct symbol_tree_node15));
@@ -391,44 +413,338 @@ userp_symbol userp_scope_get_symbol(userp_scope scope, const char *name, int fla
 		free(NULL);
 	}
 	len= strlen(name);
-	// Copy the name into scope storage.  This can initialize a NULL pointer with a new bstr.
-	if (!(name= (char*) userp_bstr_append_bytes(env, &scope->symtable.chardata, (const uint8_t*) name, len+1)))
+	// Copy the name into scope storage
+	if (!(name= (char*) userp_bstr_append_bytes(&scope->symtable.chardata, (const uint8_t*) name, len+1)))
 		return 0;
 	// add symbol to the vector
 	scope->symtable.symbols[pos].name= name; // name was replaced with the local pointer, above
 	scope->symtable.symbols[pos].type_ref= 0;
 	scope->symtable.used= pos+1;
 	if (scope->symtable.tree) {
-		// add symbol to the tree.  The new node is automatically implied to be the final on the vector
+		// add symbol to the tree
 		if (scope->symtable.alloc >> 15)
-			symbol_tree_insert15(&scope->symtable);
+			symbol_tree_insert31(&scope->symtable, pos);
 		else
-			symbol_tree_insert31(&scope->symtable);
+			symbol_tree_insert15(&scope->symtable, pos);
 	}
 	return pos + scope->symtable.id_offset;
 }
 
-bool userp_scope_parse_symbols(userp_scope scope, struct userp_bstr_part *parts, size_t part_count, int sym_count, int flags) {
-	// If scope is finalized, emit an error
-	// If chardata is not initialized, allocate input.part_count*2 - 1 parts
-	// ensure symbol vector has sym_count slots allocated (if provided)
-	// loop through the parts of input
-	//   loop through the characters of current part
-	//   If invalid character encountered, emit error and return false.
-	//   If a NUL is found
-	//     If the symbol started in the current part,
-	//       If the buffer was not added to chardata, add it.
-	//     else
-	//       allocate a new buffer to hold this symbol, and copy it
-    //     If tree is initialized, add it to the tree as well.
-	//     else check if the symbol compares greater than previous.
-	//       If not, allocate tree and load it and all previous into the tree
-	//     Add the symbol to the vector
-	// If the input ran out of characters before sym_count (and provided), emit an error
-	// If the input had extra characters, no problem.
-	// If the symbols were not in order, emit a warning
+struct symbol_parse_state {
+	uint8_t
+		*start,           // character where the most recent token started
+		*limit,           // one-beyond-end of buffer to parse
+		*pos,             // current character to consider
+		*prev;            // previous symbol, used for testing 'sorted' status
+	struct symbol_entry
+		*dest_pos,        // current position for recording the next symbol
+		*dest_lim;        // one-beyond-end of the symbol buffer
+	bool sorted;          // whether elements found so far are in correct order
+	struct userp_diag diag;
+};
+static bool parse_symbols(struct symbol_parse_state *parse) {
+	const uint8_t
+		*limit= parse->limit,
+		*pos= parse->pos;
+	uint_least32_t codepoint;
+
+	while (pos < limit && parse->dest_pos < parse->dest_lim) {
+		parse->start= (uint8_t*) pos;
+		// Begin one symbol
+		while (1) {
+			// 1-byte code: 0x00-0x7F
+			// 2-byte code: 0xE0-0xEF + 6 bits
+			// 3-byte code: 0xF0-0xF7 + 12 bits
+			// 4-byte code: 0xF8-0xFB + 18 bits
+			// larger byte sequences are currently disallowed by unicode standard
+			// continuation bytes are all 0xC0-0xDF
+			// Nothing above cares about the low 3 bits except 4-byte code, so optimize the switch a bit
+			switch (pos[0] >> 3) {
+			// Disallow control chars
+			case 0:
+				if (!pos[0])
+					goto end_of_string;
+			case 1: case 2: case 3: 
+				goto invalid_char;
+			case 15:
+				if (pos[0] == 0x7F)
+					goto invalid_char;
+			case 4: case 5: case 6: case 7: case 8: case 9: case 10: case 11: case 12: case 13: case 14:
+				if (pos+1 >= limit)
+					goto invalid_eof;
+				++pos;
+				continue; // valid single-byte char
+			case 0b11100: case 0b11101:
+				if (pos + 1 + 1 >= limit)
+					goto invalid_eof;
+				if ((pos[1] >> 6) != 2)
+					goto invalid_encoding;
+				codepoint= ((uint_least32_t)(pos[0] & 0x0F) << 6)
+						| (uint_least32_t)(pos[1] & 0x3F);
+				if (!(codepoint >> 7))
+					goto invalid_overlong;
+				pos += 2;
+				break;
+			case 0b11110:
+				if (pos + 2 + 1 >= limit)
+					goto invalid_eof;
+				if ((pos[1] >> 6) != 2 || (pos[2] >> 6) != 2)
+					goto invalid_encoding;
+				codepoint= ((((uint_least32_t)(pos[0] & 0x07) << 6)
+						| (uint_least32_t)(pos[1] & 0x3F)) << 6)
+						| (uint_least32_t)(pos[2] & 0x3F);
+				if (!(codepoint >> 10))
+					goto invalid_overlong;
+				pos += 3;
+				break;
+			case 0b11111:
+				// need to also check the bit that got clipped on shift-right
+				if (!(pos[0] & 4)) {
+					if (pos + 3 + 1 >= limit)
+						goto invalid_eof;
+					if ((pos[1] >> 6) != 2 || (pos[2] >> 6) != 2 || (pos[3] >> 6) != 2)
+						goto invalid_encoding;
+					codepoint= (((((
+						(uint_least32_t)(pos[0] & 0x03) << 6)
+						| (uint_least32_t)(pos[1] & 0x3F)) << 6)
+						| (uint_least32_t)(pos[2] & 0x3F)) << 6)
+						| (uint_least32_t)(pos[3] & 0x3F);
+					if (!(codepoint >> 15))
+						goto invalid_overlong;
+					pos += 4;
+					break;
+				}
+			default: // any other prefix is invalid
+				goto invalid_encoding;
+			}
+			// TODO: further restrictions on charset for identifiers
+		}
+		end_of_string:
+		// Here, pos points to the NUL character and start is the beginning of the string
+
+		// zero-length identifier is forbidden
+		if (pos == parse->start)
+			goto invalid_char;
+		if (parse->sorted) {
+			if (parse->prev)
+				parse->sorted= (strcmp((char*)parse->prev, (char*)parse->start) < 0);
+			parse->prev= parse->start;
+		}
+		parse->dest_pos->name= (char*)parse->start;
+		++parse->dest_pos;
+		++pos; // resume parsing at char beyond '\0'
+	}
+	parse->pos= (uint8_t*) pos;
+	return true;
+
+	CATCH(invalid_encoding) {
+		userp_diag_setf(&parse->diag, USERP_ESYMBOL, "Symbol table: encountered invalid UTF-8 sequence at '" USERP_DIAG_BUFSTR "'",
+			parse->start, (size_t)(pos - parse->start), (size_t)(pos - parse->start + 1));
+	}
+	CATCH(invalid_overlong) {
+		userp_diag_setf(&parse->diag, USERP_ESYMBOL, "Symbol table: encountered over-long UTF-8 sequence at '" USERP_DIAG_BUFSTR "'",
+			parse->start, (size_t)(pos - parse->start), (size_t)(pos - parse->start + 1));
+	}
+	CATCH(invalid_char) {
+		userp_diag_setf(&parse->diag, USERP_ESYMBOL, "Symbol table: encountered forbidden codepoint " USERP_DIAG_SIZE " at '" USERP_DIAG_BUFSTR "'",
+			(size_t)codepoint,
+			parse->start, (size_t)(pos - parse->start), (size_t)(pos - parse->start + 1));
+	}
+	CATCH(invalid_eof) {
+		userp_diag_set(&parse->diag, USERP_EOVERRUN, "Symbol table ended mid-symbol");
+	}
+	parse->pos= (uint8_t*) pos;
 	return false;
 }
+
+bool userp_scope_parse_symbols(userp_scope scope, struct userp_bstr_part *parts, size_t part_count, int sym_count, int flags) {
+	userp_env env= scope->env;
+	struct userp_bstr_part *part, *part2, *plim;
+	userp_buffer buf;
+	bool success;
+	struct symbol_parse_state parse;
+	size_t n, i, size, segment, orig_sym_used, orig_sym_partcnt, syms_added;
+	uint8_t *p1, *p2;
+
+	// If scope is finalized, emit an error
+	if (scope->is_final) {
+		userp_diag_set(&env->err, USERP_ESCOPEFINAL, "Can't add symbol to a finalized scope");
+		USERP_DISPATCH_ERROR(env);
+		return false;
+	}
+	// If no input, return
+	if (!part_count || (part_count == 1 && !parts[0].len)) {
+		if (!sym_count)
+			return true;
+		userp_diag_setf(&env->err, USERP_EOVERRUN, "Can't parse " USERP_DIAG_COUNT " symbols from empty buffer",
+			(size_t) sym_count);
+		USERP_DISPATCH_ERROR(env);
+		return false;
+	}
+	// Initialize chardata (if not already) and ensure space for input.part_count*2 - 1 new parts.
+	// There can be at most one part added for each input part and one for each boundary between input parts.
+	if (!scope->has_symbols)
+		scope_init_symtable(scope);
+	n= scope->symtable.chardata.part_count + part_count*2 - 1;
+	if (n > scope->symtable.chardata.part_alloc)
+		if (!userp_bstr_partalloc(&scope->symtable.chardata, n))
+			return false;
+	
+	// ensure symbol vector has sym_count slots allocated (if sym_count provided)
+	// if sym_coun not given, start with 32. TODO: make it configurable.
+	n= scope->symtable.used + (sym_count > 0? sym_count : 32);
+	if (n > scope->symtable.alloc)
+		if (!symbol_vec_alloc(scope, n))
+			return false;
+	// Record the original status of the symbol table, to be able to revert changes
+	orig_sym_used= scope->symtable.used;
+	orig_sym_partcnt= scope->symtable.chardata.part_count;
+	// Set up the parser's view of the situation
+	bzero(&parse, sizeof(parse));
+	parse.dest_pos= scope->symtable.symbols + scope->symtable.used;
+	parse.dest_lim= scope->symtable.symbols
+		+ (sym_count? scope->symtable.used+sym_count : scope->symtable.alloc);
+	parse.sorted= !scope->symtable.tree;
+	parse.prev= scope->symtable.used <= 1? NULL
+		: (uint8_t*) scope->symtable.symbols[scope->symtable.used-1].name;
+	parse.pos= parts[0].data;
+	parse.limit= parts[0].data + parts[0].len;
+	// loop through the parts of input
+	for (part= parts, plim= parts + part_count; part < plim;) {
+		p1= parse.pos;
+		while (
+			(success= parse_symbols(&parse))
+			// If the parse ran out of symbol table slots (which will only happen if
+			//  part_count was not known) allocate more and try again.
+			&& part_count == 0 && parse.dest_pos == parse.dest_lim && parse.pos < parse.limit
+		) {
+			if (!symbol_vec_alloc(scope, scope->symtable.alloc * 2)) {
+				success= false;
+				break;
+			}
+			parse.dest_lim= scope->symtable.symbols + scope->symtable.alloc;
+		}
+		// Add all consumed bytes to the chardata string
+		syms_added= parse.dest_pos - scope->symtable.symbols - scope->symtable.used;
+		if (syms_added) {
+			if (!userp_grab_buffer(part->buf))
+				success= false;
+			else {
+				// vector space was pre-allocated above
+				part2= scope->symtable.chardata.parts + scope->symtable.chardata.part_count++;
+				part2->buf= part->buf;
+				part2->data= p1;
+				part2->len= parse.pos - p1;
+				scope->symtable.used += syms_added;
+			}
+		}
+		if (success) {
+			// set up the next loop iteration
+			part++;
+			parse.pos= part->data;
+			parse.limit= part->data + part->len;
+		}
+		// check for failure due to symbol split between parts
+		else if (parse.diag.code == USERP_EOVERRUN && part+1 < plim) {
+			// Make a temporary buffer to store the entire unbroken symbol,
+			// then parse again to verify unicode status.
+			n= parse.limit - parse.start;
+			// find end of the symbol in next buffer (or any buffer after)
+			for (part2= part+1; part2 < plim; part2++) {
+				for (p1= part2->data, p2= part2->data + part2->len; p1 < p2 && *p1; p1++);
+				n += p1 - part2->data;
+				if (p1 < p2)
+					break;
+			}
+			if (part2 >= plim)
+				goto parse_failure; // the error code of EOF was accurate afterall
+			// found the end of the symbol
+			++n; // include the NUL terminator
+			parse.diag.code= 0;
+			// need a new buffer n bytes long
+			if (!(buf= userp_new_buffer(env, NULL, n, USERP_BUFFER_ALLOC_EXACT)))
+				goto failure;
+			// Now repeat the iteration copying the data
+			i= parse.limit - parse.start;
+			memcpy(buf->data, parse.start, i);
+			for (part2= part; i < n;) {
+				++part2;
+				segment= n - i < part2->len? n - i : part2->len;
+				memcpy(buf->data + i, part2->data, segment);
+				i+= segment;
+			}
+			// Now have the symbol loaded into a single buffer, re-parse it.
+			parse.pos= buf->data;
+			parse.limit= buf->data + n;
+			// If success, it will have parsed exactly one symbol, and this buffer
+			// needs added to the chardata
+			if (!parse_symbols(&parse)) {
+				userp_drop_buffer(buf);
+				goto parse_failure;
+			}
+			part2= scope->symtable.chardata.parts + scope->symtable.chardata.part_count++;
+			part2->buf= buf; // already has refcnt of 1.
+			part2->data= buf->data;
+			part2->len= n;
+			// set up the next loop iteration
+			part= part2;
+			parse.pos= p1;
+			parse.limit= p2;
+		}
+		else goto parse_failure;
+	}
+	// If the input ran out of characters before sym_count (and provided), emit an error
+	if (sym_count && scope->symtable.used - orig_sym_used < sym_count) {
+		userp_diag_setf(&env->err, USERP_EOVERRUN,
+			"Symbol table: only found " USERP_DIAG_POS " of " USERP_DIAG_SIZE " symbols before end of buffer",
+			(size_t) (scope->symtable.used - orig_sym_used),
+			(size_t) sym_count
+		);
+		USERP_DISPATCH_ERROR(env);
+		goto failure;
+	}		
+	// If the input had extra characters, no problem.  Maybe add a flag to error on that?
+	// If the tree is already being used, or if the elements were not in sorted order,
+	// need to add every new element to the tree.
+	if (!parse.sorted) {
+		n= scope->symtable.alloc;
+		if (!scope->symtable.tree) {
+			size= n * ((n>>15)? sizeof(struct symbol_tree_node31) : sizeof(struct symbol_tree_node15));
+			if (!userp_alloc(env, &scope->symtable.tree, size, 0))
+				goto failure;
+		}
+		if (n >> 15) {
+			for (i= orig_sym_used; i < scope->symtable.used; i++)
+				symbol_tree_insert31(&scope->symtable, i);
+		} else {
+			for (i= orig_sym_used; i < scope->symtable.used; i++)
+				symbol_tree_insert15(&scope->symtable, i);
+		}
+	}
+	return true;
+
+	CATCH(failure) {
+		CATCH(parse_failure) {
+			memcpy(&env->err, &parse.diag, sizeof(parse.diag));
+			USERP_DISPATCH_ERROR(env);
+		}
+		// Remove new additions to the symbol table
+		for (i= orig_sym_partcnt; i < scope->symtable.chardata.part_count; i++)
+			userp_drop_buffer(scope->symtable.chardata.parts[i].buf);
+		scope->symtable.chardata.part_count= orig_sym_partcnt;
+		scope->symtable.used= orig_sym_used;
+	}
+	return false;
+}
+
+//bool userp_validate_symbol(const char *buf, size_t buflen) {
+//	struct symbol_parse_state pst;
+//	size_t end;
+//	bzero(&pst, sizeof(pst));
+//	pst.ends= &end;
+//	pst.ends_max= 1;
+//	return parse_symbols(&pst, buf, buflen) && pst.pos == buflen;
+//}
 
 /*----------------------------------------------------------------------------
 
@@ -546,8 +862,8 @@ static bool scope_init_symtable(userp_scope scope) {
 
 	// When allocated, the userp_scope left room in symtable_stack for one extra
 	scope->symtable_stack[scope->symtable_count++]= &scope->symtable;
+	scope->symtable.chardata.env= scope->env;
 	scope->has_symbols= true;
-
 	// All other fields were blanked during the userp_scope constructor
 	return true;
 }
@@ -555,8 +871,7 @@ static bool scope_init_symtable(userp_scope scope) {
 static void userp_free_scope(userp_scope scope) {
 	userp_env env= scope->env;
 	userp_scope parent= scope->parent;
-	if (scope->symtable.chardata)
-		userp_bstr_alloc(scope->env, &scope->symtable.chardata, 0);
+	userp_bstr_destroy(&scope->symtable.chardata);
 	if (scope->symtable.tree)
 		USERP_FREE(env, &scope->symtable.tree);
 	if (scope->symtable.symbols)
@@ -602,178 +917,7 @@ bool userp_scope_finalize(userp_scope scope, int flags) {
 	scope->is_final= 1;
 	return true;
 }
-
 /*
-#define SYMBOL_PARSE_EOF -1
-#define SYMBOL_PARSE_BAD_UTF8 -2
-#define SYMBOL_PARSE_OVERLONG_UTF8 -3
-#define SYMBOL_PARSE_FORBIDDEN_CHAR -4
-struct symbol_parse_state {
-	size_t pos;
-	size_t *ends, ends_max, ends_count;
-	const char *diag_tpl;
-	size_t diag_code, diag_count, diag_size;
-};
-bool parse_symbols(struct symbol_parse_state *parse, const uint8_t *data, size_t len) {
-	size_t pos= parse->pos, start;
-	uint_least32_t codepoint;
-	while (pos < len && parse->ends_count < parse->ends_max) {
-		start= pos;
-		// Begin one symbol
-		while (1) {
-			// 1-byte code: 0x00-0x7F
-			// 2-byte code: 0xE0-0xEF + 6 bits
-			// 3-byte code: 0xF0-0xF7 + 12 bits
-			// 4-byte code: 0xF8-0xFB + 18 bits
-			// larger byte sequences are currently disallowed by unicode standard
-			// continuation bytes are all 0xC0-0xDF
-			// Nothing above cares about the low 3 bits except 4-byte code, so optimize the switch a bit
-			switch (data[pos] >> 3) {
-			// Disallow control chars
-			case 0:
-				if (!data[pos]) goto end_of_string;
-			case 1: case 2: case 3: 
-				goto invalid_char;
-			case 15:
-				if (data[pos] == 0x7F) goto invalid_char;
-			case 4: case 5: case 6: case 7: case 8: case 9: case 10: case 11: case 12: case 13: case 14:
-				if (++pos >= len) goto invalid_eof;
-				continue; // valid single-byte char
-			case 0b11100: case 0b11101:
-				if (pos + 1 + 1 >= len) goto invalid_eof;
-				if ((data[pos+1] >> 6) != 2) goto invalid_encoding;
-				codepoint= ((uint_least32_t)(data[pos] & 0x0F) << 6)
-						| (uint_least32_t)(data[pos+1] & 0x3F);
-				if (!(codepoint >> 7)) goto invalid_overlong;
-				pos += 2;
-				break;
-			case 0b11110:
-				if (pos + 2 + 1 >= len) goto invalid_eof;
-				if ((data[pos+1] >> 6) != 2 || (data[pos+2] >> 6) != 2) goto invalid_encoding;
-				codepoint= ((((uint_least32_t)(data[pos] & 0x07) << 6)
-						| (uint_least32_t)(data[pos+1] & 0x3F)) << 6)
-						| (uint_least32_t)(data[pos+2] & 0x3F);
-				if (!(codepoint >> 10)) goto invalid_overlong;
-				pos += 3;
-				break;
-			case 0b11111:
-				// need to also check the bit that got clipped on shift-right
-				if (!(data[pos] & 4)) {
-					if (pos + 3 + 1 >= len) goto invalid_eof;
-					if ((data[pos+1] >> 6) != 2 || (data[pos+2] >> 6) != 2 || (data[pos+3] >> 6) != 2) goto invalid_encoding;
-					codepoint= (((((
-						(uint_least32_t)(data[pos] & 0x03) << 6)
-						| (uint_least32_t)(data[pos+1] & 0x3F)) << 6)
-						| (uint_least32_t)(data[pos+2] & 0x3F)) << 6)
-						| (uint_least32_t)(data[pos+3] & 0x3F);
-					if (!(codepoint >> 15)) goto invalid_overlong;
-					pos += 4;
-					break;
-				}
-			default: // any other prefix is invalid
-				goto invalid_encoding;
-			}
-			// TODO: further restrictions on charset for identifiers
-		}
-		end_of_string:
-		// Here, pos points to the NUL character and start is the beginning of the string
-
-		// zero-length identifier is forbidden
-		if (pos == start)
-			goto invalid_char;
-		parse->ends[parse->ends_count++]= pos;
-		++pos; // resume parsing at char beyond '\0'
-	}
-	parse->pos= pos;
-	return true;
-
-	{
-		CATCH(invalid_encoding) {
-			parse->diag_tpl= "Symbol table entry " USERP_DIAG_COUNT " is not valid UTF-8";
-		}
-		CATCH(invalid_overlong) {
-			parse->diag_tpl= "Symbol table entry " USERP_DIAG_COUNT " contains over-long UTF-8 encoding";
-		}
-		CATCH(invalid_char) {
-			parse->diag_size= codepoint;
-			parse->diag_tpl= "Symbol table entry " USERP_DIAG_COUNT " contains forbidden codepoint " USERP_DIAG_SIZE;
-		}
-		parse->diag_count= parse->ends_count;
-		parse->diag_code= USERP_ESYMBOL;
-	}
-	CATCH(invalid_eof) {
-		parse->diag_code= USERP_EEOF;
-		parse->diag_tpl= "Symbol table ended mid-symbol";
-	}
-	parse->pos= pos;
-	return false;
-}
-
-bool userp_validate_symbol(const char *buf, size_t buflen) {
-	struct symbol_parse_state pst;
-	size_t end;
-	bzero(&pst, sizeof(pst));
-	pst.ends= &end;
-	pst.ends_max= 1;
-	return parse_symbols(&pst, buf, buflen) && pst.pos == buflen;
-}
-
-bool userp_scope_parse_symtable(userp_scope scope, struct userp_bstring *symbol_text) {
-	symbol_table st= NULL;
-	struct symbol_parse_state pst;
-	size_t end;
-	
-	if (!scope || !scope->env) return false;
-	if (scope->is_final || scope->symtable) {
-		scope->env->diag_code= USERP_EINVAL;
-		scope->env->diag_tpl= scope->is_final? "Can't modify a finalized scope"
-			: "Can't parse symbols after symbol table initialized";
-		return false;
-	}
-	if (!symbol_text->len) return true; // no symbols.
-	// guess at initial allocation of bytes / 32  (identifiers will probably be smaller) round up to 16
-	if (!alloc_symtable(scope->env, &st, ((symbol_text->len >> 5) + 15) & ~15, USERP_HINT_DYNAMIC))
-		goto alloc_fail;
-
-	bzero(&pst, sizeof(pst));
-	pst.ends= st->symbol_end;
-	pst.ends_max= st->n_alloc;
-	while (parse_symbols(&pst, symbol_text->start, symbol_text->len)) {
-		st->count= pst.ends_count;
-		// Did the parse reach the end of the buffer? or did it fill up the table first?
-		if (pst.pos >= symbol_text->len) {
-			// The Scope needs to retain a reference to the buffer
-			st->symbol_text= *symbol_text;
-			if (!userp_grab_buffer(st->symbol_text.buf))
-				goto alloc_fail;
-			// All done.  Keep this symbol table
-			scope->symtable= st;
-			// When allocated, the stack has room for one more element if scope->symtable was not set.
-			scope->symtable_stack[scope->symtable_count++]= st;
-			return true;
-		}
-		else {
-			// parse_symbols should only return true if len reached or ends_max reached
-			assert(pst.ends_count == pst.ends_max);
-			if (!alloc_symtable(scope->env, &st, st->n_alloc + (st->n_alloc >> 1), USERP_HINT_DYNAMIC))
-				goto alloc_fail;
-			pst.ends_max= st->n_alloc;
-		}
-	}
-	// Parse failure.  Copy the message into the userp_env
-	scope->env->diag_tpl= pst.diag_tpl;
-	scope->env->diag_code= pst.diag_code;
-	scope->env->diag_count= pst.diag_count;
-	scope->env->diag_size= pst.diag_size;
-
-	CATCH(alloc_fail) {
-		free_symtable(scope->env, &st);
-		// diag_code and diag_size have already been set, but change the message
-		scope->env->diag_tpl= "Unable to allocate symbol table of " USERP_DIAG_SIZE " bytes";
-	}
-	return false;
-}
-
 bool alloc_typetable(userp_env env, type_table *tt_p, size_t count, int flags) {
 	size_t n;
 	bool is_new= !*tt_p;
@@ -805,35 +949,6 @@ void free_type(userp_env env, userp_type t) {
 */
 
 #ifdef UNIT_TEST
-
-//NIT_TEST(test_userp_scope_parse_symtable) {
-//	int i, ofs;
-//	userp_env env= userp_new_env(NULL,NULL,NULL);
-//	userp_scope scope= userp_new_scope(env, NULL);
-//	struct userp_bstring str= { .start= argv[0], .len= strlen(argv[0])+1
-//	bool ret= userp_scope_parse_symtable(scope, argv[0], );
-//	printf("return: %d\n", ret);
-//	if (ret) {
-//		printf("symtable: %p\n", scope->symtable);
-//		printf("symtable->count: %d\n", scope->symtable->count);
-//		printf("symtable->n_alloc: %d\n", scope->symtable->n_alloc);
-//		printf("symtable->symbol_text.start: %p\n", scope->symtable->symbol_text.start);
-//		printf("symtable->symbol_text.len: %d\n", scope->symtable->symbol_text.len);
-//		fflush(stdout);
-//		for (i= 0; i < scope->symtable->count; i++) {
-//			ofs= (i == 0? 0 : scope->symtable->symbol_end[i-1]+1);
-//			printf("symbol %d: %d %s\n", i,
-//				scope->symtable->symbol_end[i] - ofs,
-//				scope->symtable->symbol_text.start + ofs
-//			);
-//		}
-//		fflush(stdout);
-//	}
-//	else {
-//		userp_env_print_diag(env, stdout);
-//	}
-//	return ret? 0 : 2;
-//}
 
 UNIT_TEST(scope_alloc_free) {
 	userp_env env= userp_new_env(logging_alloc, userp_file_logger, stdout, 0);
@@ -888,9 +1003,9 @@ void dump_scope(userp_scope scope) {
 			: "15-bit-tree"
 	);
 	printf("       buffers:");
-	if (scope->symtable.chardata && scope->symtable.chardata->part_count) {
-		for (i= 0; i < scope->symtable.chardata->part_count; i++) {
-			p= &scope->symtable.chardata->parts[i];
+	if (scope->symtable.chardata.part_count) {
+		for (i= 0; i < scope->symtable.chardata.part_count; i++) {
+			p= &scope->symtable.chardata.parts[i];
 			printf("  [%ld-%ld]/%ld",
 				(long)( p->data - p->buf->data ),
 				(long) p->len, (long) p->buf->alloc_len
@@ -943,6 +1058,53 @@ Scope level=0  refcnt=1 has_symbols
 /alloc 0x\w+ to 0 = 0x0+/
 /alloc 0x\w+ to 0 = 0x0+/
 /alloc 0x\w+ to 0 = 0x0+/
+/alloc 0x\w+ to 0 = 0x0+/
+*/
+
+static const char symbol_data_sorted[]=
+	"ace\0bat\0car\0dog\0egg\0";
+
+UNIT_TEST(scope_parse_symtable_sorted) {
+	userp_env env= userp_new_env(logging_alloc, userp_file_logger, stdout, 0);
+	userp_scope scope= userp_new_scope(env, NULL);
+	struct userp_bstr_part str[]= {
+		{ .buf= userp_new_buffer(env, symbol_data_sorted, sizeof(symbol_data_sorted), 0),
+		  .len= sizeof(symbol_data_sorted),
+		  .data= symbol_data_sorted,
+		}
+	};
+	bool ret= userp_scope_parse_symbols(scope, str, 1, 5, 0);
+	printf("return: %d\n", (int)ret);
+	if (ret)
+		dump_scope(scope);
+	else
+		userp_diag_print(&env->err, stdout);
+	printf("# drop buffer\n");
+	userp_drop_buffer(str[0].buf);
+	printf("# drop scope\n");
+	userp_drop_scope(scope);
+	printf("# drop env\n");
+	userp_drop_env(env);
+}
+/*OUTPUT
+/alloc 0x0+ to \d+ = 0x\w+/
+/alloc 0x0+ to \d+ = 0x\w+/
+/alloc 0x0+ to \d+ = 0x\w+/
+/alloc 0x0+ to \d+ = 0x\w+/
+/alloc 0x0+ to \d+ = 0x\w+/
+return: 1
+Scope level=0  refcnt=1 has_symbols
+  Symbol Table: stack of 1 tables, 5 symbols
+   local table: 6/256 binary-search
+       buffers:  [0-20]/21
+  Type Table: stack of 0 tables, 0 types
+# drop buffer
+# drop scope
+/alloc 0x\w+ to 0 = 0x0+/
+/alloc 0x\w+ to 0 = 0x0+/
+/alloc 0x\w+ to 0 = 0x0+/
+/alloc 0x\w+ to 0 = 0x0+/
+# drop env
 /alloc 0x\w+ to 0 = 0x0+/
 */
 
