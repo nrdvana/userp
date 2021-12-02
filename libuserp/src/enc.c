@@ -24,9 +24,8 @@ userp_enc userp_new_enc(userp_env env, userp_scope scope, userp_type root_type) 
 	bzero(enc, sizeof(struct userp_enc));
 	enc->env= env;
 	enc->scope= scope;
-	enc->output= &enc->output_inst;
-	enc->output_inst.part_count= 0;
-	enc->output_inst.part_alloc= env->enc_output_parts;
+	enc->output.parts= enc->output_initial_parts;
+	enc->output.part_alloc= env->enc_output_parts;
 	return enc;
 }
 
@@ -34,54 +33,55 @@ void userp_free_enc(userp_enc enc) {
 	struct userp_bstr_part *p, *p2;
 	// TODO: free each of the encoder frames
 	// Release each buffer of the output
-	for (p= enc->output->parts, p2= p + enc->output->part_count; p < p2; p++)
+	for (p= enc->output.parts, p2= p + enc->output.part_count; p < p2; p++)
 		userp_drop_buffer(p->buf);
 	// Free the bstr unless it was allocated as part of this object
-	if (enc->output != &enc->output_inst)
-		USERP_FREE(enc->env, enc->output);
+	if (enc->output.parts != enc->output_initial_parts)
+		USERP_FREE(enc->env, enc->output.parts);
 	userp_drop_scope(enc->scope);
 	USERP_FREE(enc->env, enc);
 }
 
 static struct userp_bstr_part * userp_enc_make_room(userp_enc enc, size_t n, int align) {
-	userp_bstr bstr= enc->output;
 	struct userp_bstr_part *part;
 	size_t ofs= 0;
 	userp_buffer buf= NULL;
-	// TODO: grow the allocation size each time
-	size_t alloc_n= enc->env->enc_output_bufsize;
+	size_t alloc_n;
 
 	// "commit" the progress from out_pos back to the bstr
 	if (enc->out_pos) {
-		part= &bstr->parts[bstr->part_count-1];
+		part= &enc->output.parts[enc->output.part_count-1];
 		part->len= enc->out_pos - part->data;
 		ofs= part->ofs + part->len;
 	}
 
 	// Is there room in the bstr?
-	if (bstr->part_count >= bstr->part_alloc) {
+	if (enc->output.part_count >= enc->output.part_alloc) {
+		alloc_n= enc->output.part_alloc * 2;
 		// If output is the one built into the record, can't resize it.
-		if (bstr == &enc->output_inst) {
-			bstr= NULL;
-			if (!USERP_ALLOC_ARRAY(enc->env, &bstr, enc->output_inst.part_alloc * 2))
+		if (enc->output.parts == enc->output_initial_parts) {
+			part= NULL;
+			if (!USERP_ALLOC_ARRAY(enc->env, &part, alloc_n))
 				return NULL;
-			memcpy(bstr, &enc->output_inst, USERP_SIZEOF_BSTR(enc->output_inst.part_alloc));
-			enc->output_inst.part_count= 0;
-			enc->output= bstr;
+			memcpy(part, enc->output.parts, sizeof(struct userp_bstr_part) * enc->output.part_count);
+			enc->output.parts= part;
+			enc->output.part_alloc= alloc_n;
+			enc->output.env= enc->env;
 		}
 		else {
-			if (!USERP_ALLOC_ARRAY(enc->env, &enc->output, enc->output->part_alloc * 2))
+			if (!USERP_ALLOC_ARRAY(enc->env, &enc->output.parts, alloc_n))
 				return NULL;
-			bstr= enc->output;
 		}
 	}
 
 	// Allocate a new buffer for the bstr
+	// TODO: grow the allocation size each time
+	alloc_n= enc->env->enc_output_bufsize;
 	if (!(buf= userp_new_buffer(enc->env, NULL, alloc_n, 0)))
 		return NULL;
 
 	// Initialize the new part with the new buffer
-	part= &bstr->parts[bstr->part_count++];
+	part= &enc->output.parts[enc->output.part_count++];
 	part->buf= buf;
 	part->data= buf->data;
 	part->len= 0;
@@ -105,13 +105,13 @@ bool userp_enc_int(userp_enc enc, int value) {
 	return true;
 }
 
-userp_bstr userp_enc_finish(userp_enc enc) {
+struct userp_bstr* userp_enc_finish(userp_enc enc) {
 	struct userp_bstr_part *part;
 	// TODO: finish any current frames
 	// "commit" the progress from out_pos back to the bstr
 	if (enc->out_pos) {
-		part= &enc->output->parts[enc->output->part_count-1];
+		part= &enc->output.parts[enc->output.part_count-1];
 		part->len= enc->out_pos - part->data;
 	}
-	return enc->output;
+	return &enc->output;
 }

@@ -1,31 +1,29 @@
 #include "local.h"
 #include "userp_private.h"
 
-bool userp_bstr_alloc(userp_env env, userp_bstr *ptr, size_t part_count) {
+bool userp_bstr_partalloc(struct userp_bstr *str, size_t part_count) {
 	size_t n_alloc= USERP_BSTR_PART_ALLOC_ROUND(part_count);
-	int i, was_null= !*ptr;
+	int i;
+	if (!str) return false;
+
 	// If the user is requesting to shrink the bstr, free the parts that will get trimmed
-	if (*ptr && (*ptr)->part_count > part_count) {
-		for (i= (*ptr)->part_count-1; i >= (int)part_count; --i) {
-			userp_drop_buffer((*ptr)->parts[i].buf);
+	if (str->part_count >= part_count) {
+		for (i= str->part_count-1; i >= (int)part_count; --i) {
+			userp_drop_buffer(str->parts[i].buf);
 		}
-		(*ptr)->part_count= part_count;
+		str->part_count= part_count;
 		// Ignore requests to reallocate smaller unless it would save a lot of memory,
 		// or unless it would free the bstr.
-		if (part_count && (*ptr)->part_count < (n_alloc<<4))
+		if (part_count && str->part_count < (n_alloc<<4))
 			return true;
 	}
-	if (!part_count)
-		return USERP_FREE(env, ptr);
-	if (!USERP_ALLOC_OBJPLUS(env, ptr, n_alloc * sizeof(struct userp_bstr_part)))
+	if (!str->env)
 		return false;
-	(*ptr)->part_alloc= n_alloc;
-	if (was_null)
-		(*ptr)->part_count= 0;
+	if (!USERP_ALLOC_ARRAY(str->env, &str->parts, n_alloc))
+		return false;
+	str->part_alloc= n_alloc;
 	return true;
 }
-
-
 
 //bool userp_grow_buffer(userp_buffer buf, size_t alloc_len) {
 //	if (!buf->env) return false;
@@ -58,16 +56,17 @@ bool userp_bstr_alloc(userp_env env, userp_bstr *ptr, size_t part_count) {
 //}
 //
 
-uint8_t* userp_bstr_append_bytes(userp_env env, userp_bstr *str, const uint8_t* bytes, size_t n) {
+uint8_t* userp_bstr_append_bytes(struct userp_bstr *str, const uint8_t *bytes, size_t n) {
 	userp_buffer buf;
 	struct userp_bstr_part *part;
 	uint8_t *ret= NULL;
+	if (!str) return NULL;
 	// In order to append to an existing buffer, it must have the same 'env', it must be flagged
 	// USERP_BUFFER_APPENDABLE, and must have a refcnt of 1.
-	if (*str && (*str)->part_count) {
-		part= &(*str)->parts[(*str)->part_count-1];
+	if (str->part_count) {
+		part= &str->parts[str->part_count - 1];
 		buf= part->buf;
-		if (buf && buf->env == env                      // from same env
+		if (buf && buf->env == str->env                 // from same env
 			&& (buf->flags & USERP_BUFFER_APPENDABLE)   // and marked as writable
 			&& buf->refcnt == 1                         // and not used by anything else
 			&& part->data + part->len + n < buf->data + buf->alloc_len // and has room
@@ -76,24 +75,41 @@ uint8_t* userp_bstr_append_bytes(userp_env env, userp_bstr *str, const uint8_t* 
 			part->len += n;
 		}
 	}
-	if (!ret) { // need a new buffer?
+	if (!ret && str->env) { // need a new buffer?
 		// Ensure room for a new part
-		if (!*str || (*str)->part_count >= (*str)->part_alloc)
-			if (!userp_bstr_alloc(env, str, *str? (*str)->part_count+1 : 1))
+		if (str->part_count >= str->part_alloc)
+			if (!userp_bstr_partalloc(str, str->part_count+1))
 				return NULL;
 		// Then allocate another buffer for this new part
-		if (!(buf= userp_new_buffer(env, NULL, n, USERP_BUFFER_APPENDABLE)))
+		if (!(buf= userp_new_buffer(str->env, NULL, n, USERP_BUFFER_APPENDABLE)))
 			return NULL;
 		// Add the part
-		part= &(*str)->parts[(*str)->part_count++];
+		part= &str->parts[str->part_count++];
 		part->buf= buf;
-		part->data= buf->data;
 		part->len= n;
-		ret= part->data;
+		ret= part->data= buf->data;
 	}
 	// bytes does not need to be defined.
 	if (bytes)
 		memcpy(ret, bytes, n);
+	return ret;
+}
+
+struct userp_bstr_part* userp_bstr_append_parts(struct userp_bstr *str, const struct userp_bstr_part *parts, size_t n) {
+	struct userp_bstr_part *ret;
+	if (!str) return NULL;
+	if (str->part_count + n > str->part_alloc)
+		if (!userp_bstr_partalloc(str, str->part_count + n))
+			return NULL;
+
+	ret= str->parts + str->part_count;
+	memcpy(ret, parts, sizeof(struct userp_bstr_part) * n);
+	while (n > 0) {
+		if (!userp_grab_buffer(str->parts[str->part_count].buf))
+			return NULL;
+		str->part_count++;
+		n--;
+	}
 	return ret;
 }
 

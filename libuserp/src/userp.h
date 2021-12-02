@@ -1,6 +1,10 @@
 #ifndef USERP_H
 #define USERP_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct userp_env *userp_env;
 typedef struct userp_diag *userp_diag;
 typedef struct userp_scope *userp_scope;
@@ -9,8 +13,8 @@ typedef int userp_type;
 typedef struct userp_enc *userp_enc;
 typedef struct userp_dec *userp_dec;
 typedef struct userp_buffer *userp_buffer;
-typedef struct userp_bstr *userp_bstr;
 typedef uint_least32_t userp_env_flags, userp_alloc_flags, userp_buffer_flags;
+struct userp_bstr;
 
 // ----------------------------- diag.c --------------------------------------
 
@@ -107,7 +111,7 @@ extern userp_diag userp_env_get_last_error(userp_env env);
 // buffer can have new data appended up to the alloc_len
 #define USERP_BUFFER_APPENDABLE    0x004000
 
-typedef bool userp_reader_fn(void *callback_data, userp_bstr* buffers, size_t bytes_needed, userp_env env);
+typedef bool userp_reader_fn(void *callback_data, struct userp_bstr* buffers, size_t bytes_needed, userp_env env);
 typedef void userp_buffer_destructor(void *callback_data, userp_buffer *buf);
 
 /** Reference-counted buffer wrapper
@@ -177,21 +181,24 @@ struct userp_bstr_part {
 };
 struct userp_bstr {
 	size_t part_count, part_alloc;
-	struct userp_bstr_part parts[];
+	struct userp_bstr_part *parts;
+	userp_env env;
 };
 
 #define USERP_SIZEOF_BSTR(n_parts) (sizeof(struct userp_bstr) + sizeof(struct userp_bstr_part)*n_parts)
 
-extern bool userp_bstr_alloc(userp_env env, userp_bstr *ptr, size_t part_count);
-extern uint8_t* userp_bstr_append_bytes(userp_env env, userp_bstr *ptr, const uint8_t *bytes, size_t n);
+extern bool userp_bstr_partalloc(struct userp_bstr *str, size_t part_count);
+extern uint8_t* userp_bstr_append_bytes(struct userp_bstr *ptr, const uint8_t *bytes, size_t n);
+extern struct userp_bstr_part* userp_bstr_append_parts(struct userp_bstr *ptr, const struct userp_bstr_part *parts, size_t n);
+inline void userp_bstr_init(struct userp_bstr *str, userp_env env) { str->part_count= str->part_alloc= 0; str->parts= NULL; str->env= env; }
+inline void userp_bstr_destroy(struct userp_bstr *str) { userp_bstr_partalloc(str, 0); }
 
-extern userp_bstr userp_new_bstr(userp_env env, int part_alloc_count);
-extern void userp_free_bstr(userp_bstr *str);
-extern bool userp_bstr_append_parts(userp_bstr *str, size_t n_parts, const struct userp_bstr_part *src_parts);
-extern bool userp_bstr_append_stream(userp_bstr *str, FILE *f, int64_t length);
-extern bool userp_bstr_map_file(userp_bstr *str, FILE *f, int64_t offset, int64_t length);
-extern bool userp_bstr_splice(userp_bstr *dst, size_t dst_ofs, size_t dst_len, userp_bstr *src, size_t src_ofs, size_t src_len);
-extern void userp_bstr_crop(userp_bstr *str, size_t trim_head, size_t trim_tail);
+//extern userp_bstr userp_new_bstr(userp_env env, int part_alloc_count);
+//extern void userp_free_bstr(userp_bstr *str);
+//extern bool userp_bstr_append_stream(userp_bstr *str, FILE *f, int64_t length);
+//extern bool userp_bstr_map_file(userp_bstr *str, FILE *f, int64_t offset, int64_t length);
+//extern bool userp_bstr_splice(userp_bstr *dst, size_t dst_ofs, size_t dst_len, userp_bstr *src, size_t src_ofs, size_t src_len);
+//extern void userp_bstr_crop(userp_bstr *str, size_t trim_head, size_t trim_tail);
 
 // ------------------------------ scope.c ------------------------------------
 
@@ -309,4 +316,8 @@ bool userp_dec_double(userp_dec dec, double *out);
 //bool userp_dec_bytes(userp_dec dec, void *out, size_t *length_inout, size_t elem_size, userp_flags flags);
 //userp_bstr userp_dec_bytes_zerocopy(userp_dec dec, size_t elem_size, userp_flags flags);
 
+#ifdef __cplusplus
+}
 #endif
+
+#endif  /* USERP_H */

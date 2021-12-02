@@ -39,6 +39,16 @@ void userp_diag_setf(userp_diag diag, int code, const char *tpl, ...);
 
 // ------------------------------ env.c --------------------------------------
 
+#ifndef USERP_DEFAULT_SCOPE_STACK_MAX
+#define USERP_DEFAULT_SCOPE_STACK_MAX 256
+#endif
+#ifndef USERP_DEFAULT_ENC_OUTPUT_PARTS
+#define USERP_DEFAULT_ENC_OUTPUT_PARTS 8
+#endif
+#ifndef USERP_DEFAULT_ENC_OUTPUT_BUFSIZE
+#define USERP_DEFAULT_ENC_OUTPUT_BUFSIZE 4096
+#endif
+
 struct userp_env {
 	userp_alloc_fn *alloc;
 	void *alloc_cb_data;
@@ -57,8 +67,10 @@ struct userp_env {
 		warn,              // Most recent warning
 		msg;               // Current message of less severity than error
 	
-	// Defaults for encoders
-	int default_enc_output_parts;
+	// Defaults values
+	int scope_stack_max;
+	int enc_output_parts;
+	int enc_output_bufsize;
 };
 
 extern bool userp_alloc_math(userp_env env, void **pointer, size_t elem_size, size_t count, size_t extra, userp_alloc_flags flags);
@@ -74,9 +86,6 @@ extern bool userp_alloc_math(userp_env env, void **pointer, size_t elem_size, si
 	>> sizeof(size_t)*4 )
 
 
-#ifndef USERP_BSTR_PART_ALLOC_ROUND
-#define USERP_BSTR_PART_ALLOC_ROUND(x) (((x) + 8 + 15) & ~15)
-#endif
 #ifndef USERP_BUFFER_DATA_ALLOC_ROUND
 #define USERP_BUFFER_DATA_ALLOC_ROUND(x) (((x) + 4095) & ~4095)
 #endif
@@ -85,12 +94,20 @@ extern bool userp_alloc_math(userp_env env, void **pointer, size_t elem_size, si
 
 #define USERP_SIZEOF_BSTR(n_parts) (sizeof(struct userp_bstr) + sizeof(struct userp_bstr_part)*n_parts)
 
+#ifndef USERP_BSTR_PART_ALLOC_ROUND
+#define USERP_BSTR_PART_ALLOC_ROUND(x) (((x) + 8 + 15) & ~15)
+#endif
+
 // -------------------------- userp_scope.c --------------------------
 
 #define SYMBOL_SCOPE_BITS  (sizeof(userp_symbol)*8/3)
 #define SYMBOL_OFS_BITS    (sizeof(userp_symbol)*8 - SYMBOL_SCOPE_BITS)
 #define SYMBOL_SCOPE_LIMIT (1 << SYMBOL_SCOPE_BITS)
 #define SYMBOL_OFS_LIMIT   (1 << SYMBOL_OFS_BITS)
+
+#ifndef USERP_SCOPE_TABLE_ALLOC_ROUND
+#define USERP_SCOPE_TABLE_ALLOC_ROUND(x) (((x) + 255) & ~255)
+#endif
 
 #define TYPE_CLASS_ANY      1
 #define TYPE_CLASS_INT      2
@@ -109,7 +126,7 @@ struct choice_option {
 	userp_type type;
 	bool is_value: 1;
 	intmax_t merge_ofs, merge_count;
-	userp_bstr value;
+	struct userp_bstr value;
 };
 
 struct record_field {
@@ -160,53 +177,61 @@ struct userp_type_record {
 	struct record_field fields[];
 };
 
-struct symbol_table {
-	int count, n_alloc;
-	userp_bstr symbol_text;
-	size_t symbol_end[];
-};
-typedef struct symbol_table *symbol_table;
-
 struct type_table {
-	int count, n_alloc;
-	userp_type types[];
+	userp_type *types;
+	userp_type id_offset;
+	int used, alloc;
 };
-typedef struct type_table *type_table;
+
+struct symbol_entry {
+	const char *name;
+	userp_type type_ref;
+};
+struct symbol_tree_node31 {
+	uint32_t left, right:31, color:1;
+};
+struct symbol_tree_node15 {
+	uint16_t left, right:15, color:1;
+};
+
+struct symbol_table {
+	struct symbol_entry *symbols; // an array pointing to each symbol.  Slot 0 is always empty.
+	size_t used, alloc;
+	userp_symbol id_offset;
+	void *tree;                   // an optional red/black tree sorting the symbols
+	int tree_root;
+	struct userp_bstr chardata;   // stores all buffers used by the symbols
+};
 
 struct userp_scope {
 	userp_env env;
 	userp_scope parent;
 	size_t level;
 	unsigned refcnt;
-	bool is_final;
+	bool is_final:1,
+		has_symbols:1,
+		has_types:1;
 
-	symbol_table symtable, *symtable_stack;
 	size_t symtable_count;
-	type_table typetable, *typetable_stack;
 	size_t typetable_count;
+	struct symbol_table symtable, 
+		**symtable_stack;
+	struct type_table typetable,
+		*typetable_stack[];
 };
 
-bool userp_grab_scope_silent(userp_env env, userp_scope scope);
-void userp_drop_scope_silent(userp_env env, userp_scope scope);
 userp_symbol userp_scope_add_symbol(userp_scope scope, const char *name);
 
 // ----------------------------- enc.c -------------------------------
 
-#ifndef USERP_ENC_DEFAULT_OUTPUT_PARTS
-#define USERP_ENC_DEFAULT_OUTPUT_PARTS 8
-#endif
-#ifndef USERP_ENC_DEFAULT_OUTPUT_BUFSIZE
-#define USERP_ENC_DEFAULT_OUTPUT_BUFSIZE 4096
-#endif
-
 struct userp_enc {
 	userp_env env;
 	userp_scope scope;
-	userp_bstr output;
+	struct userp_bstr output;
 	uint8_t *out_pos, *out_lim;
 	int out_align;
 	
-	struct userp_bstr output_inst;
+	struct userp_bstr_part output_initial_parts[];
 };
 
 // ----------------------------- dec.c -------------------------------
@@ -217,7 +242,7 @@ struct userp_dec {
 	struct userp_dec_frame *stack;
 	unsigned refcnt;
 	size_t stack_i, stack_lim;
-	userp_bstr input;
+	struct userp_bstr input;
 	userp_reader_fn *reader;
 	void * reader_cb_data;
 	// The struct ends with a userp_bstr instance, allocated to a default
