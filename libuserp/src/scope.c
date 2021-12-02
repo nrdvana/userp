@@ -464,11 +464,14 @@ static bool parse_symbols(struct symbol_parse_state *parse) {
 			case 0:
 				if (!pos[0])
 					goto end_of_string;
-			case 1: case 2: case 3: 
+			case 1: case 2: case 3:
+				codepoint= pos[0];
 				goto invalid_char;
 			case 15:
-				if (pos[0] == 0x7F)
+				if (pos[0] == 0x7F) {
+					codepoint= pos[0];
 					goto invalid_char;
+				}
 			case 4: case 5: case 6: case 7: case 8: case 9: case 10: case 11: case 12: case 13: case 14:
 				if (pos+1 >= limit)
 					goto invalid_eof;
@@ -523,8 +526,10 @@ static bool parse_symbols(struct symbol_parse_state *parse) {
 		// Here, pos points to the NUL character and start is the beginning of the string
 
 		// zero-length identifier is forbidden
-		if (pos == parse->start)
+		if (pos == parse->start) {
+			codepoint= 0;
 			goto invalid_char;
+		}
 		if (parse->sorted) {
 			if (parse->prev)
 				parse->sorted= (strcmp((char*)parse->prev, (char*)parse->start) < 0);
@@ -538,15 +543,15 @@ static bool parse_symbols(struct symbol_parse_state *parse) {
 	return true;
 
 	CATCH(invalid_encoding) {
-		userp_diag_setf(&parse->diag, USERP_ESYMBOL, "Symbol table: encountered invalid UTF-8 sequence at '" USERP_DIAG_BUFSTR "'",
+		userp_diag_setf(&parse->diag, USERP_ESYMBOL, "Symbol table: encountered invalid UTF-8 sequence at " USERP_DIAG_BUFSTR,
 			parse->start, (size_t)(pos - parse->start), (size_t)(pos - parse->start + 1));
 	}
 	CATCH(invalid_overlong) {
-		userp_diag_setf(&parse->diag, USERP_ESYMBOL, "Symbol table: encountered over-long UTF-8 sequence at '" USERP_DIAG_BUFSTR "'",
+		userp_diag_setf(&parse->diag, USERP_ESYMBOL, "Symbol table: encountered over-long UTF-8 sequence at " USERP_DIAG_BUFSTR,
 			parse->start, (size_t)(pos - parse->start), (size_t)(pos - parse->start + 1));
 	}
 	CATCH(invalid_char) {
-		userp_diag_setf(&parse->diag, USERP_ESYMBOL, "Symbol table: encountered forbidden codepoint " USERP_DIAG_SIZE " at '" USERP_DIAG_BUFSTR "'",
+		userp_diag_setf(&parse->diag, USERP_ESYMBOL, "Symbol table: encountered forbidden codepoint " USERP_DIAG_SIZE " at " USERP_DIAG_BUFSTR,
 			(size_t)codepoint,
 			parse->start, (size_t)(pos - parse->start), (size_t)(pos - parse->start + 1));
 	}
@@ -634,7 +639,7 @@ bool userp_scope_parse_symbols(userp_scope scope, struct userp_bstr_part *parts,
 				part2= scope->symtable.chardata.parts + scope->symtable.chardata.part_count++;
 				part2->buf= part->buf;
 				part2->data= p1;
-				part2->len= parse.pos - p1;
+				part2->len= (success? parse.pos : parse.start) - p1;
 				scope->symtable.used += syms_added;
 			}
 		}
@@ -660,6 +665,7 @@ bool userp_scope_parse_symbols(userp_scope scope, struct userp_bstr_part *parts,
 				goto parse_failure; // the error code of EOF was accurate afterall
 			// found the end of the symbol
 			++n; // include the NUL terminator
+			++p1;
 			parse.diag.code= 0;
 			// need a new buffer n bytes long
 			if (!(buf= userp_new_buffer(env, NULL, n, USERP_BUFFER_ALLOC_EXACT)))
@@ -682,14 +688,15 @@ bool userp_scope_parse_symbols(userp_scope scope, struct userp_bstr_part *parts,
 				userp_drop_buffer(buf);
 				goto parse_failure;
 			}
-			part2= scope->symtable.chardata.parts + scope->symtable.chardata.part_count++;
-			part2->buf= buf; // already has refcnt of 1.
-			part2->data= buf->data;
-			part2->len= n;
 			// set up the next loop iteration
 			part= part2;
 			parse.pos= p1;
 			parse.limit= p2;
+			// record the new part holding this buffer
+			part2= scope->symtable.chardata.parts + scope->symtable.chardata.part_count++;
+			part2->buf= buf; // already has refcnt of 1.
+			part2->data= buf->data;
+			part2->len= n;
 		}
 		else goto parse_failure;
 	}
@@ -1062,15 +1069,26 @@ Scope level=0  refcnt=1 has_symbols
 */
 
 static const char symbol_data_sorted[]=
-	"ace\0bat\0car\0dog\0egg\0";
+	"ace\0bat\0car\0dog\0egg";
+static struct userp_buffer symbol_data_sorted_buf= {
+	.data= (uint8_t*) symbol_data_sorted,
+	.alloc_len= sizeof(symbol_data_sorted)
+};
+
+static const char symbol_data_sorted2[]=
+	"fun\0get\0has\0imp\0jam";
+static struct userp_buffer symbol_data_sorted2_buf= {
+	.data= (uint8_t*) symbol_data_sorted2,
+	.alloc_len= sizeof(symbol_data_sorted2)
+};
 
 UNIT_TEST(scope_parse_symtable_sorted) {
 	userp_env env= userp_new_env(logging_alloc, userp_file_logger, stdout, 0);
 	userp_scope scope= userp_new_scope(env, NULL);
 	struct userp_bstr_part str[]= {
-		{ .buf= userp_new_buffer(env, symbol_data_sorted, sizeof(symbol_data_sorted), 0),
+		{ .buf= userp_new_buffer(env, (void*) symbol_data_sorted, sizeof(symbol_data_sorted), 0),
 		  .len= sizeof(symbol_data_sorted),
-		  .data= symbol_data_sorted,
+		  .data= (uint8_t*) symbol_data_sorted,
 		}
 	};
 	bool ret= userp_scope_parse_symbols(scope, str, 1, 5, 0);
@@ -1096,7 +1114,7 @@ return: 1
 Scope level=0  refcnt=1 has_symbols
   Symbol Table: stack of 1 tables, 5 symbols
    local table: 6/256 binary-search
-       buffers:  [0-20]/21
+       buffers:  [0-20]/20
   Type Table: stack of 0 tables, 0 types
 # drop buffer
 # drop scope
@@ -1106,6 +1124,107 @@ Scope level=0  refcnt=1 has_symbols
 /alloc 0x\w+ to 0 = 0x0+/
 # drop env
 /alloc 0x\w+ to 0 = 0x0+/
+*/
+
+
+/* This test parses a buffer of two segments each having a perfectly aligned
+ * list of symbols.  It should translate to two succesful calls to to
+ * parse_symbols(), each returning true.
+ */
+UNIT_TEST(scope_parse_split_symtable) {
+	userp_env env= userp_new_env(logging_alloc, userp_file_logger, stdout, 0);
+	userp_scope scope= userp_new_scope(env, NULL);
+	struct userp_bstr_part str[]= {
+		{ .buf= &symbol_data_sorted_buf,
+		  .data= symbol_data_sorted_buf.data,
+		  .len=  symbol_data_sorted_buf.alloc_len
+		},
+		{ .buf= &symbol_data_sorted2_buf,
+		  .data= symbol_data_sorted2_buf.data,
+		  .len=  symbol_data_sorted2_buf.alloc_len
+		},
+	};
+	bool ret= userp_scope_parse_symbols(scope, str, 2, 10, 0);
+	printf("return: %d\n", (int)ret);
+	if (ret)
+		dump_scope(scope);
+	else
+		userp_diag_print(&env->err, stdout);
+	printf("# drop scope\n");
+	userp_drop_scope(scope);
+	printf("# drop env\n");
+	userp_drop_env(env);
+}
+/*OUTPUT
+/alloc 0x0+ to \d+ = 0x\w+/
+/alloc 0x0+ to \d+ = 0x\w+/
+/alloc 0x0+ to \d+ = 0x\w+/
+/alloc 0x0+ to \d+ = 0x\w+/
+return: 1
+Scope level=0  refcnt=1 has_symbols
+  Symbol Table: stack of 1 tables, 10 symbols
+   local table: 11/256 binary-search
+       buffers:  [0-20]/20  [0-20]/20
+  Type Table: stack of 0 tables, 0 types
+# drop scope
+/alloc 0x\w+ to 0 = 0x0+/
+/alloc 0x\w+ to 0 = 0x0+/
+/alloc 0x\w+ to 0 = 0x0+/
+# drop env
+/alloc 0x\w+ to 0 = 0x0+/
+*/
+
+static const char symbol_fragment[]= "fragment1\0fragment2";
+static struct userp_buffer symbol_fragment_buf= {
+	.data= (uint8_t*) symbol_fragment,
+	.alloc_len= sizeof(symbol_fragment)-1
+};
+
+UNIT_TEST(scope_parse_split_symbol) {
+	userp_env env= userp_new_env(logging_alloc, userp_file_logger, stdout, 0);
+	userp_scope scope= userp_new_scope(env, NULL);
+	struct userp_bstr_part str[]= {
+		{ .buf= &symbol_fragment_buf,
+		  .data= symbol_fragment_buf.data,
+		  .len=  symbol_fragment_buf.alloc_len
+		},
+		{ .buf= &symbol_data_sorted2_buf,
+		  .data= symbol_data_sorted2_buf.data,
+		  .len=  symbol_data_sorted2_buf.alloc_len
+		},
+	};
+	bool ret= userp_scope_parse_symbols(scope, str, 2, 6, 0);
+	printf("return: %d\n", (int)ret);
+	if (ret)
+		dump_scope(scope);
+	else
+		userp_diag_print(&env->err, stdout);
+	printf("# drop scope\n");
+	userp_drop_scope(scope);
+	printf("# drop env\n");
+	userp_drop_env(env);
+}
+/*OUTPUT
+/alloc 0x0 to \d+ = 0x\w+/
+/alloc 0x0 to \d+ = 0x\w+/
+/alloc 0x0 to \d+ = 0x\w+/
+/alloc 0x0 to \d+ = 0x\w+/
+/alloc 0x0 to \d+ = 0x\w+/
+/alloc 0x0 to 13 = 0x\w+ POINTER_IS_BUFFER_DATA/
+return: 1
+Scope level=0  refcnt=1 has_symbols
+  Symbol Table: stack of 1 tables, 6 symbols
+   local table: 7/256 binary-search
+       buffers:  [0-10]/19  [0-13]/13  [4-16]/20
+  Type Table: stack of 0 tables, 0 types
+# drop scope
+/alloc 0x\w+ to 0 = 0x0 POINTER_IS_BUFFER_DATA/
+/alloc 0x\w+ to 0 = 0x0/
+/alloc 0x\w+ to 0 = 0x0/
+/alloc 0x\w+ to 0 = 0x0/
+/alloc 0x\w+ to 0 = 0x0/
+# drop env
+/alloc 0x\w+ to 0 = 0x0/
 */
 
 #endif

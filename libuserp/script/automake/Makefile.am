@@ -18,7 +18,7 @@ AM_CPPFLAGS=-I$(top_srcdir)
 CP=cp
 PERL=perl
 PROVE=prove
-CFLAGS=-Wall
+AM_CFLAGS=-Wall
 
 # This contains rules needed to auto-generate source files, but gets overwritten
 # with a blank file when distributed.
