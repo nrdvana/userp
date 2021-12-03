@@ -33,66 +33,13 @@ lookup from a binary tree to a binary search on an array.
 
 */
 
-#define USE_TREE31(x) (((x)-1)>>15)
-
 static bool scope_init_symtable(userp_scope scope);
-static bool scope_symbol_tree_init(userp_scope scope);
 static bool scope_symbol_vec_alloc(userp_scope scope, size_t n);
-static bool symbol_tree_insert31(struct symbol_table *st, uint32_t first, uint32_t limit);
-static bool symbol_tree_insert15(struct symbol_table *st, uint16_t first, uint16_t limit);
-static bool symbol_tree_walk31(struct symbol_table *st, const char *key,
-		bool (*walk_cb)(void *context, int sym_ofs), void *context);
-static bool symbol_tree_walk15(struct symbol_table *st, const char *key,
-		bool (*walk_cb)(void *context, int sym_ofs), void *context);
 
-static inline bool symbol_tree_insert(struct symbol_table *st, size_t first, size_t limit) {
-	return USE_TREE31(st->alloc)
-		? symbol_tree_insert31(st, (uint32_t) first, (uint32_t) limit)
-		: symbol_tree_insert15(st, (uint16_t) first, (uint16_t) limit);
-}
-
-static inline bool symbol_tree_walk(
-	struct symbol_table *st,
-	const char *key,
-	bool (*walk_cb)(void *context, int sym_ofs),
-	void *context
-) {
-	return USE_TREE31(st->alloc)
-		? symbol_tree_walk31(st, key, walk_cb, context)
-		: symbol_tree_walk15(st, key, walk_cb, context);
-}
-
-// This handles both the case of limiting symbols to the 2**31 limit imposed by the tree,
+// This handles both the case of limiting symbols to the 2**31 limit imposed by the hash table,
 // and also guards against overflow of size_t for allocations on 32-bit systems.
-#define MAX_SYMTABLE_STRUCT_ALLOC  (SIZE_MAX/(sizeof(struct symbol_tree_node31)+sizeof(struct symbol_entry)))
+#define MAX_SYMTABLE_STRUCT_ALLOC  (SIZE_MAX/sizeof(struct symbol_entry))
 #define MAX_SYMTABLE_ENTRIES (MAX_SYMTABLE_STRUCT_ALLOC < (size_t)(1<<31)? MAX_SYMTABLE_STRUCT_ALLOC : (size_t)(1<<31))
-
-static bool scope_symbol_tree_init(userp_scope scope) {
-	userp_env env= scope->env;
-	size_t nodesize, n= scope->symtable.alloc;
-
-	// extra guard against overflow
-	if (n >= MAX_SYMTABLE_ENTRIES) {
-		userp_diag_setf(&env->err, USERP_EDOINGITWRONG,
-			"Can't resize symbol table larger than " USERP_DIAG_SIZE " entries",
-			(size_t) MAX_SYMTABLE_ENTRIES
-		);
-		USERP_DISPATCH_ERROR(env);
-		return false;
-	}
-
-	// must at least alloc the root node
-	if (!n) n= 1;
-	nodesize= USE_TREE31(n)? sizeof(struct symbol_tree_node31) : sizeof(struct symbol_tree_node15);
-	if (!userp_alloc(scope->env, &scope->symtable.tree, n * nodesize, 0))
-		return false;
-	// leaf sentinel node must be zeroed.  The others will be initialized as they are added.
-	bzero(scope->symtable.tree, nodesize);
-
-	// TODO: assuming all symbols in symtable are sorted, build a perfect-balanced
-	// tree in N time instead of N(log N) inserts.
-	return symbol_tree_insert(&scope->symtable, 1, scope->symtable.used);
-}
 
 static bool scope_symbol_vec_alloc(userp_scope scope, size_t n) {
 	userp_env env= scope->env;
@@ -115,101 +62,160 @@ static bool scope_symbol_vec_alloc(userp_scope scope, size_t n) {
 	if (!USERP_ALLOC_ARRAY(env, &scope->symtable.symbols, n))
 		return false;
 
-	// If symbol tree exists, it needs the same new allocation count
-	if (scope->symtable.tree) {
-		// But also, if this is the moment that the size exceeds the limit of 15-bits, upgrade the tree.
-		if (USE_TREE31(n) && !USE_TREE31(scope->symtable.alloc)) {
-			tree15= scope->symtable.tree15;
-			tree31= NULL;
-			if (!USERP_ALLOC_ARRAY(env, &tree31, n))
-				return false;
-			for (i= 0; i < scope->symtable.used; i++) {
-				tree31[i].left=  tree15[i].left;
-				tree31[i].right= tree15[i].right;
-				tree31[i].color= tree15[i].color;
-			}
-			USERP_FREE(env, tree15);
-			scope->symtable.tree= tree31;
-		}
-		else {
-			size= n * (USE_TREE31(n)? sizeof(struct symbol_tree_node31) : sizeof(struct symbol_tree_node15));
-			if (!userp_alloc(env, &scope->symtable.tree, size, 0))
-				return false;
-		}
-	}
 	scope->symtable.alloc= n;
 	return true;
 }
+
+
+#define HASHTREE_GET_BUCKET(hashtree, symcount, bucketcount, hash) \
+	( ((symcount) >> 15)? (size_t) ((uint32_t *) (hashtree))[ (hash) % (bucketcount) ] \
+	: ((symcount) >>  7)? (size_t) ((uint16_t *) (hashtree))[ (hash) % (bucketcount) ] \
+	:                     (size_t) ((uint8_t  *) (hashtree))[ (hash) % (bucketcount) ] \
+    )
+
+#define HASHTREE_SET_BUCKET(hashtree, symcount, bucketcount, hash, value) \
+	( ((symcount) >> 15)? (size_t) (((uint32_t *) (hashtree))[ (hash) % (bucketcount) ]= (uint32_t) (value)) \
+	: ((symcount) >>  7)? (size_t) (((uint16_t *) (hashtree))[ (hash) % (bucketcount) ]= (uint16_t) (value)) \
+	:                     (size_t) (((uint8_t  *) (hashtree))[ (hash) % (bucketcount) ]= (uint8_t ) (value)) \
+    )
+
+#define HASHTREE_HASHAREA_SIZE(symcount, bucketcount) \
+	((bucketcount) * (((symcount) >> 15)? 4 : ((symcount) >> 7)? 2 : 1))
+
+struct rbtree_node15 {
+	uint16_t
+		sym,
+		hash,
+		left,
+		right: 15,
+		color: 1;
+};
+struct rbtree_node31 {
+	uint32_t
+		sym,
+		hash,
+		left,
+		right: 31,
+		color: 1;
+};
+
+#define HASHTREE_IS_TREE31(symcount) ( (symcount) >> 15 )
+
+#define HASHTREE_TREE15(hashtree, symcount, bucketcount) ( \
+	(struct rbtree_node15*) ( \
+		(((char*)(hashtree)) \
+		+ HASHTREE_HASHAREA_SIZE(symcount,bucketcount) \
+		+ 3) \
+	& ~(size_t) 3 ) \
+)
+
+#define HASHTREE_TREE31(hashtree, symcount, bucketcount) ( \
+	(struct rbtree_node31*) ( \
+		(((char*)(hashtree)) \
+		+ HASHTREE_HASHAREA_SIZE(symcount,bucketcount) \
+		+ 3) \
+	& ~(size_t) 3 ) \
+)
+
+#define HASHTREE_NODE_CMP(node1, node2, symbols) ( \
+	(node1)->hash < (node2)->hash? -1 \
+	: (node1)->hash > (node2)->hash? 1 \
+	: strcmp( (symbols)[(node1)->sym].name, (symbols)[(node2)->sym].name ) \
+)
+
+bool userp_symtable_hashtree_get(struct userp_symtable *st, const char *name) {
+	// Calculate a hash for 'name' using FNV-1a
+	uint64_t hash= 0xcbf29ce484222325LL;
+	for (p= name; *p;) {
+		hash ^= *p++;
+		hash *= 0x100000001b3;
+	}
+	hash ^= st->ht_salt;
+	hash *= 0x100000001b3;
+	// read the bucket for the hash
+	int bucket_val= HASHTREE_GET_BUCKET(st->hashtree, st->processed, st->ht_buckets, hash);
+	// If low bit is 1, there was a collision, and this is the root of a tree
+	if (bucket_val & 1) {
+		if (!HASHTREE_IS_TREE31(st->processed)) {
+			tree15= HASHTREE_TREE15(st->hashtree, st->processed, st->ht_buckets);
+			
+		}
+}
+
+bool hashtree_insert
+
+bool userp_symtable_update(struct userp_symtable *st) {
+}
+
+struct symbol_entry *userp_symtable_find(struct userp_symtable *st, const char *name) {
+	if (st->used > st->processed)
+		if (!userp_symtable_update(st))
+			return NULL;
+	// hash the input string
+}
+
 
 userp_symbol userp_scope_get_symbol(userp_scope scope, const char *name, int flags) {
 	int i, pos, start, limit, cmp, len;
 	bool need_tree= false;
 	struct symbol_table *st;
 	userp_env env= scope->env;
-	struct symbol_tree_node15 *tree15;
-	struct symbol_tree_node31 *tree31;
-	
-	// Optimize case of sorted inserts; adding new value to local symtable larger than all others
-	// when every addition so far has been in order (no tree) can skip a lot of stuff.
-	if (
-		(flags & (USERP_CREATE|USERP_GET_LOCAL)) == (USERP_CREATE|USERP_GET_LOCAL)
-		&& !scope->symtable.tree
-		&& scope->symtable.used > 1
-		&& strcmp(name, scope->symtable.symbols[scope->symtable.used-1].name) > 0
-	) {
-		// skip the search
-	}
-	else {
-		// search self and parent scopes for symbol (but flags can request local-only)
-		for (i= scope->symtable_count - 1; i >= 0; --i) {
-			st= scope->symtable_stack[i];
-			if (st->tree) {
-				// tree search
-				if (USE_TREE31(st->alloc)) { // more than 15 bits of entries uses a tree of 31-bit integers.
-					tree31= st->tree31;
-					for (pos= st->tree_root; pos;) {
-						cmp= strcmp(name, st->symbols[pos].name);
-						if (cmp == 0) return st->id_offset + pos;
-						else if (cmp > 0) pos= tree31[pos].right;
-						else pos= tree31[pos].left;
-					}
-				}
-				else {
-					tree15= st->tree15;
-					for (pos= st->tree_root; pos;) {
-						cmp= strcmp(name, st->symbols[pos].name);
-						if (cmp == 0) return st->id_offset + pos;
-						else if (cmp > 0) pos= tree15[pos].right;
-						else pos= tree15[pos].left;
-					}
+
+	// search self and parent scopes for symbol (but flags can request local-only)
+	for (i= scope->symtable_count - 1; i >= 0; --i) {
+		st= scope->symtable_stack[i];
+		// Does this symtable have a current hashtable?  If not, build it.
+		userp_symtable_
+		if (st->processed < st->used) {
+			userp_symtable_proces_symbols(st);
+		// Now use the hashtable
+		
+		if (st->tree) {
+			// tree search
+			if (USE_TREE31(st->alloc)) { // more than 15 bits of entries uses a tree of 31-bit integers.
+				tree31= st->tree31;
+				for (pos= st->tree_root; pos;) {
+					cmp= strcmp(name, st->symbols[pos].name);
+					if (cmp == 0) return st->id_offset + pos;
+					else if (cmp > 0) pos= tree31[pos].right;
+					else pos= tree31[pos].left;
 				}
 			}
 			else {
-				// binary search
-				for (start= 1, limit= st->used; start < limit;) {
-					pos= (start+limit)>>1;
+				tree15= st->tree15;
+				for (pos= st->tree_root; pos;) {
 					cmp= strcmp(name, st->symbols[pos].name);
 					if (cmp == 0) return st->id_offset + pos;
-					else if (cmp > 0) start= pos+1;
-					else limit= pos;
+					else if (cmp > 0) pos= tree15[pos].right;
+					else pos= tree15[pos].left;
 				}
-				// capture whether it was greater than all others in local symtable or not
-				if (st == &scope->symtable && !scope->symtable.tree)
-					need_tree= (limit < st->used);
 			}
-			// User can request only searching immediate scope
-			if (flags & USERP_GET_LOCAL)
-				break;
 		}
-		// Not found.  Does it need added?
-		if (!(flags & USERP_CREATE))
-			return 0;
-		
-		// In case it's the first symbol
-		if (!scope->has_symbols)
-			if (!scope_init_symtable(scope))
-				return 0;
+		else {
+			// binary search
+			for (start= 1, limit= st->used; start < limit;) {
+				pos= (start+limit)>>1;
+				cmp= strcmp(name, st->symbols[pos].name);
+				if (cmp == 0) return st->id_offset + pos;
+				else if (cmp > 0) start= pos+1;
+				else limit= pos;
+			}
+			// capture whether it was greater than all others in local symtable or not
+			if (st == &scope->symtable && !scope->symtable.tree)
+				need_tree= (limit < st->used);
+		}
+		// User can request only searching immediate scope
+		if (flags & USERP_GET_LOCAL)
+			break;
 	}
+	// Not found.  Does it need added?
+	if (!(flags & USERP_CREATE))
+		return 0;
+	
+	// In case it's the first symbol
+	if (!scope->has_symbols)
+		if (!scope_init_symtable(scope))
+			return 0;
 	// if scope is finalized, emit an error
 	if (scope->is_final) {
 		userp_diag_set(&env->err, USERP_ESCOPEFINAL, "Can't add symbol to a finalized scope");

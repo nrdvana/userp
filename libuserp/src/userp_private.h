@@ -196,26 +196,24 @@ struct type_table {
 struct symbol_entry {
 	const char *name;
 	userp_type type_ref;
-};
-struct symbol_tree_node31 {
-	uint32_t left, right:31, color:1;
-};
-struct symbol_tree_node15 {
-	uint16_t left, right:15, color:1;
+	userp_symbol canonical;
 };
 
-struct symbol_table {
+struct userp_symtable {
 	struct symbol_entry *symbols; // an array pointing to each symbol.  Slot 0 is always empty.
-	size_t used, alloc;
-	userp_symbol id_offset;
-	union {
-		void *tree;               // an optional red/black tree sorting the symbols
-		struct symbol_tree_node31 *tree31;
-		struct symbol_tree_node15 *tree15;
-	};
-	int tree_root;
 	struct userp_bstr chardata;   // stores all buffers used by the symbols
+	size_t used,                  // number of symbols[] occupied (including null symbol at [0])
+		alloc,                    // number of symbols[] allocated
+		processed;                // number of symbols which have been added to the hashtree
+	userp_symbol id_offset;       // difference between userp_symbol value and symbols[] index
+	void *hashtree;               // hash table + RB trees
+	size_t ht_alloc,              // number of bytes allocated to the hashtree
+		ht_buckets,               // number of hash buckets
+		ht_nodes,                 // number of tree nodes (aka number of hash collisions)
+		ht_salt;                  // salt value to ransomize hash layout
 };
+
+struct symbol_entry *userp_symtable_find(struct userp_symtable *st, const char *name);
 
 struct userp_scope {
 	userp_env env;
@@ -228,7 +226,7 @@ struct userp_scope {
 
 	size_t symtable_count;
 	size_t typetable_count;
-	struct symbol_table symtable, 
+	struct userp_symtable symtable, 
 		**symtable_stack;
 	struct type_table typetable,
 		*typetable_stack[];

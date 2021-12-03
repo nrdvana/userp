@@ -8,8 +8,8 @@ extern "C" {
 typedef struct userp_env *userp_env;
 typedef struct userp_diag *userp_diag;
 typedef struct userp_scope *userp_scope;
-typedef int userp_symbol;
-typedef int userp_type;
+typedef uint32_t userp_symbol;
+typedef uint32_t userp_type;
 typedef struct userp_enc *userp_enc;
 typedef struct userp_dec *userp_dec;
 typedef struct userp_buffer *userp_buffer;
