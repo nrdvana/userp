@@ -107,7 +107,8 @@ extern userp_diag userp_env_get_last_error(userp_env env);
 // buffer can have new data appended up to the alloc_len
 #define USERP_BUFFER_APPENDABLE    0x004000
 
-#define USERP_BUFFER_ALLOC_EXACT   0x008000
+// Need to copy data into a single span of memory / bstr part
+#define USERP_CONTIGUOUS           0x008000
 
 typedef bool userp_reader_fn(void *callback_data, struct userp_bstr* buffers, size_t bytes_needed, userp_env env);
 typedef void userp_buffer_destructor(void *callback_data, userp_buffer *buf);
@@ -183,10 +184,8 @@ struct userp_bstr {
 	userp_env env;
 };
 
-#define USERP_SIZEOF_BSTR(n_parts) (sizeof(struct userp_bstr) + sizeof(struct userp_bstr_part)*n_parts)
-
 extern bool userp_bstr_partalloc(struct userp_bstr *str, size_t part_count);
-extern uint8_t* userp_bstr_append_bytes(struct userp_bstr *ptr, const uint8_t *bytes, size_t n);
+extern uint8_t* userp_bstr_append_bytes(struct userp_bstr *ptr, const uint8_t *bytes, size_t n, int flags);
 extern struct userp_bstr_part* userp_bstr_append_parts(struct userp_bstr *ptr, const struct userp_bstr_part *parts, size_t n);
 static inline void userp_bstr_init(struct userp_bstr *str, userp_env env) { str->part_count= str->part_alloc= 0; str->parts= NULL; str->env= env; }
 static inline void userp_bstr_destroy(struct userp_bstr *str) { userp_bstr_partalloc(str, 0); }

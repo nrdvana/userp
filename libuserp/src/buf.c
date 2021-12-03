@@ -176,8 +176,20 @@ extern userp_buffer userp_new_buffer(userp_env env, void *data, size_t alloc_len
 	buf->refcnt= 1;
 	buf->flags= flags;
 	if (!buf->data && alloc_len) {
-		if (!(flags & USERP_BUFFER_ALLOC_EXACT))
+		// Round the buffer up to a power of 2, unless this is marked as a static allocation
+		if (!(flags & USERP_HINT_STATIC)) {
+			alloc_len |= alloc_len >> 1;
+			alloc_len |= alloc_len >> 2;
+			alloc_len |= alloc_len >> 4;
+			alloc_len |= alloc_len >> 8;
+			alloc_len |= alloc_len >> 16;
+			#if SIZE_MAX > 0xFFFFFFFF
+			alloc_len |= alloc_len >> 32;
+			#endif
 			alloc_len= USERP_BUFFER_DATA_ALLOC_ROUND(alloc_len);
+		}
+		// Let the allocator know that this is buffer data.  (allows the allocator to walk
+		// back the pointer to get to this buffer object itself)
 		if (!userp_alloc(env, (void**) &buf->data, alloc_len,
 				(flags&USERP_ALLOC_FLAG_MASK)|USERP_POINTER_IS_BUFFER_DATA)
 		) {

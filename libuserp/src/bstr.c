@@ -56,10 +56,11 @@ bool userp_bstr_partalloc(struct userp_bstr *str, size_t part_count) {
 //}
 //
 
-uint8_t* userp_bstr_append_bytes(struct userp_bstr *str, const uint8_t *bytes, size_t n) {
+uint8_t* userp_bstr_append_bytes(struct userp_bstr *str, const uint8_t *bytes, size_t len, int flags) {
 	userp_buffer buf;
 	struct userp_bstr_part *part;
 	uint8_t *ret= NULL;
+	size_t avail, n;
 	if (!str) return NULL;
 	// In order to append to an existing buffer, it must have the same 'env', it must be flagged
 	// USERP_BUFFER_APPENDABLE, and must have a refcnt of 1.
@@ -69,29 +70,38 @@ uint8_t* userp_bstr_append_bytes(struct userp_bstr *str, const uint8_t *bytes, s
 		if (buf && buf->env == str->env                 // from same env
 			&& (buf->flags & USERP_BUFFER_APPENDABLE)   // and marked as writable
 			&& buf->refcnt == 1                         // and not used by anything else
-			&& part->data + part->len + n < buf->data + buf->alloc_len // and has room
+			&& (avail= (buf->data + buf->alloc_len) - (part->data + part->len)) > 0 // and has some room
 		) {
-			ret= part->data + part->len;
-			part->len += n;
+			if (avail >= len || !(flags & USERP_CONTIGUOUS)) {
+				ret= part->data + part->len;
+				n= len < avail? len : avail;
+				if (bytes) memcpy(ret, bytes, n);
+				part->len += n;
+				len -= n;
+				bytes += n;
+			}
 		}
 	}
-	if (!ret && str->env) { // need a new buffer?
+	if (len && str->env) { // need a new buffer?
 		// Ensure room for a new part
 		if (str->part_count >= str->part_alloc)
 			if (!userp_bstr_partalloc(str, str->part_count+1))
 				return NULL;
-		// Then allocate another buffer for this new part
+		// Then allocate another buffer for this new part.  Make it at least 1.5x as large
+		// as the previous buffer.
+		part= &str->parts[str->part_count++];
+		n= len;
+		if (part > str->parts && n < part[-1].buf->alloc_len)
+			n= part[-1].buf->alloc_len + 1; // larger than previous.  new_buffer will round this up to a power of 2.
 		if (!(buf= userp_new_buffer(str->env, NULL, n, USERP_BUFFER_APPENDABLE)))
 			return NULL;
 		// Add the part
-		part= &str->parts[str->part_count++];
 		part->buf= buf;
-		part->len= n;
-		ret= part->data= buf->data;
+		part->len= len;
+		part->data= buf->data;
+		if (bytes) memcpy(part->data, bytes, len);
+		if (!ret) ret= part->data;
 	}
-	// bytes does not need to be defined.
-	if (bytes)
-		memcpy(ret, bytes, n);
 	return ret;
 }
 

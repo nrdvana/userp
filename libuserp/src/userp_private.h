@@ -105,7 +105,7 @@ struct userp_env {
 #define USERP_SIZEOF_BSTR(n_parts) (sizeof(struct userp_bstr) + sizeof(struct userp_bstr_part)*n_parts)
 
 #ifndef USERP_BSTR_PART_ALLOC_ROUND
-#define USERP_BSTR_PART_ALLOC_ROUND(x) (((x) + 8 + 15) & ~15)
+#define USERP_BSTR_PART_ALLOC_ROUND(x) (((x) + 8 + 15) & ~(size_t)15)
 #endif
 
 // -------------------------- userp_scope.c --------------------------
@@ -116,7 +116,7 @@ struct userp_env {
 #define SYMBOL_OFS_LIMIT   (1 << SYMBOL_OFS_BITS)
 
 #ifndef USERP_SCOPE_TABLE_ALLOC_ROUND
-#define USERP_SCOPE_TABLE_ALLOC_ROUND(x) (((x) + 255) & ~255)
+#define USERP_SCOPE_TABLE_ALLOC_ROUND(x) (((x) + 255) & ~(size_t)255)
 #endif
 
 #define TYPE_CLASS_ANY      1
@@ -208,7 +208,11 @@ struct symbol_table {
 	struct symbol_entry *symbols; // an array pointing to each symbol.  Slot 0 is always empty.
 	size_t used, alloc;
 	userp_symbol id_offset;
-	void *tree;                   // an optional red/black tree sorting the symbols
+	union {
+		void *tree;               // an optional red/black tree sorting the symbols
+		struct symbol_tree_node31 *tree31;
+		struct symbol_tree_node15 *tree15;
+	};
 	int tree_root;
 	struct userp_bstr chardata;   // stores all buffers used by the symbols
 };
