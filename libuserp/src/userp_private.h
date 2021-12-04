@@ -219,12 +219,14 @@ struct userp_symtable {
 		alloc,                    // number of symbols[] allocated
 		processed;                // number of symbols which have been added to the hashtree
 	userp_symbol id_offset;       // difference between userp_symbol value and symbols[] index
-	void *hashtree;               // hash table + RB trees
-	size_t ht_alloc,              // number of bytes allocated to the hashtree
-		ht_buckets,               // number of hash buckets
-		ht_bucketused,            // number of hash buckets occupied
-		ht_nodes,                 // number of tree nodes holding collisions
-		ht_salt;                  // salt value to randomize hash layout
+	void *buckets;                // hash table
+	void *nodes;                  // tree nodes, forming R/B trees for each hash collision
+	size_t
+		bucket_alloc,             // number of hash buckets
+		bucket_used,              // number of hash buckets occupied
+		hash_salt,                // salt value to randomize hash layout
+		node_alloc,               // number of allocated tree nodes (size depends on 'used')
+		node_used;                // number of tree nodes holding collisions
 };
 
 struct symbol_entry *userp_symtable_find(struct userp_symtable *st, const char *name);
@@ -293,6 +295,7 @@ extern bool userp_grab_dec_silent(userp_env env, userp_dec dec);
 extern void userp_drop_dec_silent(userp_env env, userp_dec dec);
 
 static inline size_t roundup_pow2(size_t s) {
+	--s;
 	s |= s >> 1;
 	s |= s >> 2;
 	s |= s >> 4;

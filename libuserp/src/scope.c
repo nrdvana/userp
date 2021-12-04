@@ -89,38 +89,28 @@ static bool scope_symbol_vec_alloc(userp_scope scope, size_t n) {
 #define HASHTREE_NODE_SIZE(count) \
 	( ((count) >> 15)? sizeof(struct hashtree_node31) : sizeof(struct hashtree_node15) )
 
-#define HASHTREE_ALLOC_SIZE(symtable, buckets, nodes) \
-	( ((HASHTREE_BUCKET_SIZE((symtable)->used) * (buckets) + 3) & ~(size_t) 3) \
-      + HASHTREE_NODE_SIZE((symtable)->used) * (nodes) )
-
 #define HASHTREE_GET_BUCKET(symtable, hash) \
-	( ((symtable)->used >> 15)? (size_t) ((uint32_t *) (symtable)->hashtree)[ (hash) % (symtable)->ht_buckets ] \
-	: ((symtable)->used >>  7)? (size_t) ((uint16_t *) (symtable)->hashtree)[ (hash) % (symtable)->ht_buckets ] \
-	:                           (size_t) ((uint8_t  *) (symtable)->hashtree)[ (hash) % (symtable)->ht_buckets ] \
+	( ((symtable)->used >> 15)? (size_t) ((uint32_t *) (symtable)->buckets)[ (hash) % (symtable)->bucket_alloc ] \
+	: ((symtable)->used >>  7)? (size_t) ((uint16_t *) (symtable)->buckets)[ (hash) % (symtable)->bucket_alloc ] \
+	:                           (size_t) ((uint8_t  *) (symtable)->buckets)[ (hash) % (symtable)->bucket_alloc ] \
     )
 
 #define HASHTREE_SET_BUCKET(symtable, hash, value) \
-	( ((symtable)->used >> 15)? (size_t) (((uint32_t *) (symtable)->hashtree)[ (hash) % (symtable)->ht_buckets ]= (uint32_t) (value)) \
-	: ((symtable)->used >>  7)? (size_t) (((uint16_t *) (symtable)->hashtree)[ (hash) % (symtable)->ht_buckets ]= (uint16_t) (value)) \
-	:                           (size_t) (((uint8_t  *) (symtable)->hashtree)[ (hash) % (symtable)->ht_buckets ]= (uint8_t ) (value)) \
+	( ((symtable)->used >> 15)? (size_t) (((uint32_t *) (symtable)->buckets)[ (hash) % (symtable)->bucket_alloc ]= (uint32_t) (value)) \
+	: ((symtable)->used >>  7)? (size_t) (((uint16_t *) (symtable)->buckets)[ (hash) % (symtable)->bucket_alloc ]= (uint16_t) (value)) \
+	:                           (size_t) (((uint8_t  *) (symtable)->buckets)[ (hash) % (symtable)->bucket_alloc ]= (uint8_t ) (value)) \
     )
 
-#define HASHTREE_IS_TREE31(symtable) ( (symtable)->used >> 15 )
-#define HASHTREE_TREE_OFFSET(symtable) ( \
-	( (symtable)->ht_buckets * HASHTREE_BUCKET_SIZE((symtable)->used) + 3 ) \
-    & ~(size_t) 3 \
-)
+#define HASHTREE_IS_NODE31(symtable) ( (symtable)->used >> 15 )
 
-#define HASHTREE_TREE15(symtable) \
-	((struct hashtree_node15*) ((char*)((symtable)->hashtree) + HASHTREE_TREE_OFFSET(symtable)))
+#define HASHTREE_NODES15(symtable) ( (struct hashtree_node15*) ((symtable)->nodes) )
 
-#define HASHTREE_TREE31(symtable) \
-	((struct hashtree_node31*) ((char*)((symtable)->hashtree) + HASHTREE_TREE_OFFSET(symtable)))
+#define HASHTREE_NODES31(symtable) ( (struct hashtree_node31*) ((symtable)->nodes) )
 
 #define HASHTREE_KEY_CMP(symtable, keyhash, key, node) ( \
 	(keyhash) < (node).hash? -1 \
 	: (keyhash) > (node).hash? 1 \
-	: strcmp( key, (symtable)->symbols[(node).sym].name ) \
+	: strcmp( (key), (symtable)->symbols[(node).sym].name ) \
 )
 
 #define HASHTREE_NODE_CMP(symtable, node1, node2) ( \
@@ -128,6 +118,14 @@ static bool scope_symbol_vec_alloc(userp_scope scope, size_t n) {
 	: (node1).hash > (node2).hash? 1 \
 	: strcmp( (symtable)->symbols[(node1).sym].name, (symtable)->symbols[(node2).sym].name ) \
 )
+
+#define HASHTREE_PAIRNODE_GET_MATCH(symtable, keyhash, key, node) ( \
+	0 == HASHTREE_KEY_CMP(symtable, keyhash, key, node) \
+		? (symtable)->id_offset + (node).sym \
+		: ((node).left == (keyhash) && 0 == strcmp((key), (symtable)->symbols[(node).right].name )) \
+		? (symtable)->id_offset + (node).right \
+		: 0 )
+
 
 static bool userp_symtable_rb_insert31(struct userp_symtable *st, uint32_t *root, uint32_t node);
 static bool userp_symtable_rb_insert15(struct userp_symtable *st, uint32_t *root, uint32_t node);
@@ -139,14 +137,14 @@ static inline uint32_t userp_symtable_calc_hash(struct userp_symtable *st, const
 		hash ^= *name++;
 		hash *= 0x01000193;
 	}
-	hash ^= st->ht_salt;
+	hash ^= st->hash_salt;
 	hash *= 0x01000193;
 	return hash? hash : 1;
 }
 
 userp_symbol userp_symtable_hashtree_get(struct userp_symtable *st, uint32_t hash32, const char *name) {
-	struct hashtree_node15 *tree15;
-	struct hashtree_node31 *tree31;
+	struct hashtree_node15 *nodes15;
+	struct hashtree_node31 *nodes31;
 	uint16_t hash16;
 	size_t node, sym_idx;
 	int cmp;
@@ -155,41 +153,31 @@ userp_symbol userp_symtable_hashtree_get(struct userp_symtable *st, uint32_t has
 	int bucket_val= HASHTREE_GET_BUCKET(st, hash32);
 	// If low bit is 1, there was a collision, and this is the root of a tree
 	if (bucket_val & 1) {
-		if (HASHTREE_IS_TREE31(st)) {
-			tree31= HASHTREE_TREE31(st);
-			node= bucket_val >> 1;
+		node= bucket_val >> 1;
+		if (HASHTREE_IS_NODE31(st)) {
+			nodes31= HASHTREE_NODES31(st);
 			// Oh but wait, I added one more optimization where it could be a non-tree
 			// holding a pair of nodes.
-			if (tree31[node].is_pair) {
-				return (0 == HASHTREE_KEY_CMP(st, hash32, name, tree31[node]))
-					? st->id_offset + tree31[node].sym
-					: (tree31[node].left == hash32 && 0 == strcmp(name, st->symbols[tree31[node].right].name))
-					? st->id_offset + tree31[node].right
-					: 0;
-			}
+			if (nodes31[node].is_pair)
+				return HASHTREE_PAIRNODE_GET_MATCH(st, hash32, name, nodes31[node]);
+			// back to your regularly scheduled R/B programming
 			while (node) {
-				cmp= HASHTREE_KEY_CMP(st, hash32, name, tree31[node]);
-				if (cmp == 0) return st->id_offset + tree31[node].sym;
-				else if (cmp > 0) node= tree31[node].right;
-				else node= tree31[node].left;
+				cmp= HASHTREE_KEY_CMP(st, hash32, name, nodes31[node]);
+				if (cmp == 0) return st->id_offset + nodes31[node].sym;
+				else if (cmp > 0) node= nodes31[node].right;
+				else node= nodes31[node].left;
 			}
 		}
 		else {
-			tree15= HASHTREE_TREE15(st);
+			nodes15= HASHTREE_NODES15(st);
 			hash16= (uint16_t) hash32;
-			node= bucket_val >> 1;
-			if (tree15[node].is_pair) {
-				return (0 == HASHTREE_KEY_CMP(st, hash16, name, tree15[node]))
-					? st->id_offset + tree15[node].sym
-					: (tree15[node].left == hash16 && 0 == strcmp(name, st->symbols[tree15[node].right].name))
-					? st->id_offset + tree15[node].right
-					: 0;
-			}
+			if (nodes15[node].is_pair)
+				return HASHTREE_PAIRNODE_GET_MATCH(st, hash16, name, nodes15[node]);
 			while (node) {
-				cmp= HASHTREE_KEY_CMP(st, hash16, name, tree15[node]);
-				if (cmp == 0) return st->id_offset + tree15[node].sym;
-				else if (cmp > 0) node= tree15[node].right;
-				else node= tree15[node].left;
+				cmp= HASHTREE_KEY_CMP(st, hash16, name, nodes15[node]);
+				if (cmp == 0) return st->id_offset + nodes15[node].sym;
+				else if (cmp > 0) node= nodes15[node].right;
+				else node= nodes15[node].left;
 			}
 		}
 	}
@@ -203,10 +191,9 @@ userp_symbol userp_symtable_hashtree_get(struct userp_symtable *st, uint32_t has
 }
 
 bool userp_symtable_hashtree_insert(struct userp_symtable *st, int sym_ofs) {
-	struct hashtree_node15 *tree15;
-	struct hashtree_node31 *tree31;
+	struct hashtree_node15 *nodes15;
+	struct hashtree_node31 *nodes31;
 	uint32_t sym2, node, node2, hash= st->symbols[sym_ofs].hash;
-	size_t alloc;
 	bool is_pair, success;
 	
 	// calculate the official hash on the symbol entry if it wasn't done yet
@@ -221,112 +208,109 @@ bool userp_symtable_hashtree_insert(struct userp_symtable *st, int sym_ofs) {
 		//printf("found a free bucket for %s\n", st->symbols[sym_ofs].name);
 		// If zero, we're lucky, and can just write to it
 		HASHTREE_SET_BUCKET(st, hash, sym_ofs<<1);
-		st->ht_bucketused++;
+		st->bucket_used++;
 		return true;
 	}
-	tree31= HASHTREE_TREE31(st);
-	tree15= HASHTREE_TREE15(st);
+	nodes31= HASHTREE_NODES31(st);
+	nodes15= HASHTREE_NODES15(st);
 	if (!(bucket_val & 1)) {
 		// The number is a symbol ID, not a node ID.
 		sym2= bucket_val >> 1;
 		// We need to allocate one node, and create a pair.
 		// Check if there is room for 1-3 more tree elements.
-		alloc= HASHTREE_ALLOC_SIZE(st, st->ht_buckets, st->ht_nodes + 1);
-		if (alloc > st->ht_alloc) {
+		if (st->node_used >= st->node_alloc) {
 			//printf("need more node storage (%lld > %lld, nodes=%d)\n", (long long)alloc, (long long)st->ht_alloc, (int)st->ht_nodes);
 			return false;  // parent needs to reallocate
 		}
-		node= st->ht_nodes++;
-		if (HASHTREE_IS_TREE31(st)) {
-			tree31[node].sym= sym_ofs;
-			tree31[node].hash= hash;
-			tree31[node].is_pair= 1;
-			tree31[node].right= sym2;
-			tree31[node].left= st->symbols[sym2].hash;
-			tree31[node].color= 0;
+		node= st->node_used++;
+		if (HASHTREE_IS_NODE31(st)) {
+			nodes31[node].sym= sym_ofs;
+			nodes31[node].hash= hash;
+			nodes31[node].is_pair= 1;
+			nodes31[node].right= sym2;
+			nodes31[node].left= st->symbols[sym2].hash;
+			nodes31[node].color= 0;
 		} else {
-			tree15[node].sym= sym_ofs;
-			tree15[node].hash= hash;
-			tree15[node].is_pair= 1;
-			tree15[node].right= sym2;
-			tree15[node].left= st->symbols[sym2].hash;
-			tree15[node].color= 0;
+			nodes15[node].sym= sym_ofs;
+			nodes15[node].hash= hash;
+			nodes15[node].is_pair= 1;
+			nodes15[node].right= sym2;
+			nodes15[node].left= st->symbols[sym2].hash;
+			nodes15[node].color= 0;
 		}
 		HASHTREE_SET_BUCKET(st, hash, (node<<1)|1);
 	}
 	else {
 		// The number in the bucket is a node ID.
 		node= bucket_val >> 1;
-		is_pair= (HASHTREE_IS_TREE31(st)? tree31[node].is_pair : tree15[node].is_pair);
+		is_pair= (HASHTREE_IS_NODE31(st)? nodes31[node].is_pair : nodes15[node].is_pair);
 		// The number in the bucket is a node ID, but is 'is_pair', then it isn't a tree and is
 		// just two symbol refs stuffed into the same node.  This means we have to add 2 nodes.
 		// Check if there are enough spare nodes
-		alloc= HASHTREE_ALLOC_SIZE(st, st->ht_buckets, st->ht_nodes + (is_pair? 2 : 1));
-		if (alloc > st->ht_alloc) {
-			//printf("need more node storage (%lld > %lld, nodes=%d)\n", (long long)alloc, (long long)st->ht_alloc, (int)st->ht_nodes);
+		if (st->node_used + (is_pair? 2 : 1) > st->node_alloc)
 			return false;  // parent needs to reallocate
-		}
+
 		if (is_pair) {
 			// need to allocate a node for the second symbol that was wedged into this pair.
 			// then add it as a proper child node to the existing node.
-			node2= st->ht_nodes++;
-			if (HASHTREE_IS_TREE31(st)) {
-				tree31[node2].sym= tree31[node].right;
-				tree31[node2].hash= tree31[node].left;
-				tree31[node2].color= 1;
-				tree31[node2].is_pair= 0;
-				tree31[node2].left= 0;
-				tree31[node2].right= 0;
-				if (HASHTREE_NODE_CMP(st, tree31[node2], tree31[node]) < 0) {
-					tree31[node].left= node2;
-					tree31[node].right= 0;
+			node2= st->node_used++;
+			if (HASHTREE_IS_NODE31(st)) {
+				nodes31[node2].sym= nodes31[node].right;
+				nodes31[node2].hash= nodes31[node].left;
+				nodes31[node2].color= 1;
+				nodes31[node2].is_pair= 0;
+				nodes31[node2].left= 0;
+				nodes31[node2].right= 0;
+				if (HASHTREE_NODE_CMP(st, nodes31[node2], nodes31[node]) < 0) {
+					nodes31[node].left= node2;
+					nodes31[node].right= 0;
 				} else {
-					tree31[node].right= node2;
-					tree31[node].left= 0;
+					nodes31[node].right= node2;
+					nodes31[node].left= 0;
 				}
-				tree31[node].color= 0;
-				tree31[node].is_pair= 0;
+				nodes31[node].color= 0;
+				nodes31[node].is_pair= 0;
 			}
 			else {
-				tree15[node2].sym= tree15[node].right;
-				tree15[node2].hash= tree15[node].left;
-				tree15[node2].color= 1;
-				tree15[node2].is_pair= 0;
-				tree15[node2].left= 0;
-				tree15[node2].right= 0;
-				if (HASHTREE_NODE_CMP(st, tree15[node2], tree15[node]) < 0) {
-					tree15[node].left= node2;
-					tree15[node].right= 0;
+				nodes15[node2].sym= nodes15[node].right;
+				nodes15[node2].hash= nodes15[node].left;
+				nodes15[node2].color= 1;
+				nodes15[node2].is_pair= 0;
+				nodes15[node2].left= 0;
+				nodes15[node2].right= 0;
+				if (HASHTREE_NODE_CMP(st, nodes15[node2], nodes15[node]) < 0) {
+					nodes15[node].left= node2;
+					nodes15[node].right= 0;
 				} else {
-					tree15[node].right= node2;
-					tree15[node].left= 0;
+					nodes15[node].right= node2;
+					nodes15[node].left= 0;
 				}
-				tree15[node].color= 0;
-				tree15[node].is_pair= 0;
+				nodes15[node].color= 0;
+				nodes15[node].is_pair= 0;
 			}
 		}
 		// Now the node is definitely a real tree.  Allocate yet another node for the
 		// current symbol, then insert it with the normal R/B algorithm.
-		node2= st->ht_nodes++;
-		if (HASHTREE_IS_TREE31(st)) {
-			tree31[node2].sym= sym_ofs;
-			tree31[node2].hash= hash;
-			tree31[node2].left= 0;
-			tree31[node2].right= 0;
-			tree31[node2].is_pair= 0;
-			tree31[node2].color= 0;
+		node2= st->node_used++;
+		if (HASHTREE_IS_NODE31(st)) {
+			nodes31[node2].sym= sym_ofs;
+			nodes31[node2].hash= hash;
+			nodes31[node2].left= 0;
+			nodes31[node2].right= 0;
+			nodes31[node2].is_pair= 0;
+			nodes31[node2].color= 0;
 			success= userp_symtable_rb_insert31(st, &node, node2);
 		} else {
-			tree15[node2].sym= sym_ofs;
-			tree15[node2].hash= hash;
-			tree15[node2].left= 0;
-			tree15[node2].right= 0;
-			tree15[node2].is_pair= 0;
-			tree15[node2].color= 0;
+			nodes15[node2].sym= sym_ofs;
+			nodes15[node2].hash= hash;
+			nodes15[node2].left= 0;
+			nodes15[node2].right= 0;
+			nodes15[node2].is_pair= 0;
+			nodes15[node2].color= 0;
 			success= userp_symtable_rb_insert15(st, &node, node2);
 		}
 		if (!success) {
-			st->ht_nodes--;
+			st->node_used--;
 			return false;
 		}
 		if (node != (bucket_val >> 1))
@@ -336,20 +320,20 @@ bool userp_symtable_hashtree_insert(struct userp_symtable *st, int sym_ofs) {
 }
 
 bool userp_scope_symtable_hashtree_populate(struct userp_symtable *st, userp_env env) {
-	size_t alloc, new_buckets, new_nodes, batch;
+	size_t alloc, new_buckets, batch;
 
 	// Need to rebuild the hashtable if:
 	//   * the bits requirements have changed
 	//   * it has fewer buckets than symtable.used
 	if (HASHTREE_BUCKET_SIZE(st->processed) < HASHTREE_BUCKET_SIZE(st->used)
-		|| st->ht_buckets < st->used + (st->used>>1)
+		|| st->bucket_alloc < st->used + (st->used>>1)
 	) {
 		if (env->log_trace && st->processed > 1) {
 			userp_diag_setf(&env->msg, USERP_MSG_SYMTABLE_HASHTREE_REBUILD,
 				"userp_scope: rebuild hashtree "
 					"(" USERP_DIAG_COUNT "/" USERP_DIAG_SIZE "+" USERP_DIAG_COUNT2 ")"
 					" at " USERP_DIAG_POS " symbols",
-				st->ht_bucketused, st->ht_buckets, st->ht_nodes-1, st->used
+				st->bucket_used, st->bucket_alloc, st->node_used, st->used
 			);
 			USERP_DISPATCH_MSG(env);
 		}
@@ -357,61 +341,57 @@ bool userp_scope_symtable_hashtree_populate(struct userp_symtable *st, userp_env
 		// indicate it is growing dynamically.  (used and processed counts include the NULL
 		// symbol which isn't really a symbol)
 		if (st->used > 2 && st->processed < 2) {
-			// This is probably the final size.  Allocate a hash table of 2x buckets and enough
-			// nodes for 1/4 of them to collide.
-			alloc= HASHTREE_ALLOC_SIZE(st, st->used << 1, st->used >> 2);
-			// but don't allocate anything smaller than 512 bytes (256 buckets and 32 collision nodes)
-			if (alloc < 512) {
-				alloc= 512;
+			// This is probably the final size.  Allocate a hash table of 2x buckets
+			new_buckets= st->used << 1;
+			// but don't allocate anything smaller than 256
+			if (new_buckets < 256)
 				new_buckets= 256;
-			} else {
-				new_buckets= (st->used << 1);
-			}
 		}
 		else {
 			// For a growing symbol table, re-allocations are expensive at larger sizes,
 			// so allocate more aggressively.
-			alloc= HASHTREE_ALLOC_SIZE(st, st->used << 2, st->used >> 1);
-			// don't allocate anything smaller than 1264, below which it would try to
-			// resize right before resizing again when it hits 128 symbols.
-			if (st->used < 127) {
-				alloc= 2048;
+			new_buckets= st->used << 2;
+			if (new_buckets < 1024)
 				new_buckets= 1024;
-			}
 			else {
 				// round up to a power of 2 allocation
-				alloc= roundup_pow2(alloc);
-				new_buckets= alloc * 3 / (4 * HASHTREE_BUCKET_SIZE(st->used));
+				new_buckets= roundup_pow2(new_buckets);
 			}
 		}
-		new_nodes= (alloc - HASHTREE_ALLOC_SIZE(st, new_buckets, 0)) / HASHTREE_NODE_SIZE(st->used);
-		if (alloc > st->ht_alloc) {
+		alloc= HASHTREE_BUCKET_SIZE(st->used) * new_buckets;
+		if (alloc > HASHTREE_BUCKET_SIZE(st->processed) * st->bucket_alloc) {
 			if (env->log_trace) {
 				userp_diag_setf(&env->msg, USERP_MSG_SYMTABLE_HASHTREE_ALLOC,
 					"userp_scope: alloc symtable hashtree size=" USERP_DIAG_SIZE
-						" buckets=" USERP_DIAG_COUNT " nodes=" USERP_DIAG_COUNT2
+						" buckets=" USERP_DIAG_COUNT
 						" for " USERP_DIAG_POS " symbols",
-					alloc, new_buckets, new_nodes, st->used
+					alloc, new_buckets, st->used
 				);
 				USERP_DISPATCH_MSG(env);
 			}
 			// don't use "realloc" because there is no reason to copy the old content of the buffer
-			userp_alloc(env, &st->hashtree, 0, 0);
-			if (!userp_alloc(env, &st->hashtree, alloc, 0)) {
-				st->ht_alloc= 0;
-				st->ht_buckets= 0;
-				st->ht_bucketused= 0;
-				st->ht_nodes= 0;
+			userp_alloc(env, &st->buckets, 0, 0);
+			if (!userp_alloc(env, &st->buckets, alloc, 0)) {
+				st->bucket_alloc= 0;
+				st->bucket_used= 0;
+				st->node_used= 0;
 				return false;
 			}
-			st->ht_alloc= alloc;
 		}
+		// if tree nodes are allocated, and the bit size just crossed from 15->31, change the
+		// recorded number of allocated nodes.
+		if (st->node_alloc && (HASHTREE_NODE_SIZE(st->processed) != HASHTREE_NODE_SIZE(st->used))) {
+			st->node_alloc= st->node_alloc * HASHTREE_NODE_SIZE(st->processed)
+				/ HASHTREE_NODE_SIZE(st->used);
+			// re-clear the sentinel node
+			bzero(st->nodes, HASHTREE_NODE_SIZE(st->used));
+		}
+		// clear the entire hash table
+		bzero(st->buckets, alloc);
 		st->processed= 1;
-		st->ht_nodes= 1;
-		st->ht_buckets= new_buckets;
-		st->ht_bucketused= 0;
-		// clear the entire hash table, and first tree node (which acts as a leaf-sentinel)
-		bzero(st->hashtree, HASHTREE_ALLOC_SIZE(st, st->ht_buckets, 1));
+		st->node_used= 1;
+		st->bucket_alloc= new_buckets;
+		st->bucket_used= 0;
 	}		
 	
 	batch= st->used - st->processed;
@@ -419,23 +399,27 @@ bool userp_scope_symtable_hashtree_populate(struct userp_symtable *st, userp_env
 		// Now try adding the symbol entry
 		if (userp_symtable_hashtree_insert(st, st->processed))
 			++st->processed;
-		// Did it fail because it was out of memory?
-		else if (HASHTREE_ALLOC_SIZE(st, st->ht_buckets, st->ht_nodes + 2) >= st->ht_alloc) {
-			// The number of buckes should be appropriate already, so just add more tree nodes
-			alloc= (( HASHTREE_ALLOC_SIZE(st, st->ht_buckets, st->ht_nodes * 2) + 4095 ) & ~(size_t)4095);
+		// Did it fail because it was out of tree nodes?
+		else if (st->node_used+3 >= st->node_alloc) {
+			// Allocate in powers of 2, min 16 nodes
+			alloc= roundup_pow2(st->node_used + 16);
 			if (env->log_debug) {
-				new_nodes= (alloc - HASHTREE_ALLOC_SIZE(st, st->ht_buckets, 0)) / HASHTREE_NODE_SIZE(st->used);
 				userp_diag_setf(&env->msg, USERP_MSG_SYMTABLE_HASHTREE_EXTEND,
 					"userp_scope: symtable hashtree "
 					"(" USERP_DIAG_COUNT "/" USERP_DIAG_SIZE "+" USERP_DIAG_COUNT2 ")"
 					" collisions require more nodes, realloc " USERP_DIAG_SIZE2 " more",
-					st->ht_bucketused, st->ht_buckets, st->ht_nodes, (size_t)(new_nodes - st->ht_nodes)
+					st->bucket_used, st->bucket_alloc, st->node_used, alloc - st->node_used
 				);
 				USERP_DISPATCH_MSG(env);
 			}
-			if (!userp_alloc(env, &st->hashtree, alloc, 0))
+			if (!userp_alloc(env, &st->nodes, alloc * HASHTREE_NODE_SIZE(st->used), USERP_HINT_DYNAMIC))
 				return false;
-			st->ht_alloc= alloc;
+			if (!st->node_alloc) {
+				// first node is a sentinel set to zeroes
+				bzero(st->nodes, HASHTREE_NODE_SIZE(st->used));
+				st->node_used= 1;
+			}
+			st->node_alloc= alloc;
 		}
 		// The only other way it can fail is a corrupt tree
 		else {
@@ -450,7 +434,7 @@ bool userp_scope_symtable_hashtree_populate(struct userp_symtable *st, userp_env
 			"userp_scope: added symbols " USERP_DIAG_POS ".." USERP_DIAG_POS2 " to hashtree "
 			"(" USERP_DIAG_COUNT "/" USERP_DIAG_SIZE "+" USERP_DIAG_COUNT2 ")",
 			st->processed-batch, st->used,
-			st->ht_bucketused, st->ht_buckets, st->ht_nodes
+			st->bucket_used, st->bucket_alloc, st->node_used
 		);
 		USERP_DISPATCH_MSG(env);
 	}
@@ -960,7 +944,7 @@ static bool scope_init_symtable(userp_scope scope) {
 	// When allocated, the userp_scope left room in symtable_stack for one extra
 	scope->symtable_stack[scope->symtable_count++]= &scope->symtable;
 	scope->symtable.chardata.env= scope->env;
-	scope->symtable.ht_salt= scope->env->salt;
+	scope->symtable.hash_salt= scope->env->salt;
 	scope->symtable.used= 1; // elem 0 is always reserved
 	scope->has_symbols= true;
 	return scope_symbol_vec_alloc(scope, 1);
@@ -971,8 +955,10 @@ static void userp_free_scope(userp_scope scope) {
 	userp_env env= scope->env;
 	userp_scope parent= scope->parent;
 	userp_bstr_destroy(&scope->symtable.chardata);
-	if (scope->symtable.hashtree)
-		USERP_FREE(env, &scope->symtable.hashtree);
+	if (scope->symtable.buckets)
+		USERP_FREE(env, &scope->symtable.buckets);
+	if (scope->symtable.nodes)
+		USERP_FREE(env, &scope->symtable.nodes);
 	if (scope->symtable.symbols)
 		USERP_FREE(env, &scope->symtable.symbols);
 	USERP_FREE(env, &scope);
@@ -1049,7 +1035,7 @@ void free_type(userp_env env, userp_type t) {
 
 static bool userp_symtable_rb_insert31(struct userp_symtable *st, uint32_t *root, uint32_t node) {
 	// element 0 is the "sentinel" leaf, and 'node' is the element being added
-	struct hashtree_node31 *tree= HASHTREE_TREE31(st);
+	struct hashtree_node31 *tree= HASHTREE_NODES31(st);
 	int cmp;
 	uint32_t stack[64], pos, parent, new_head, i;
 
@@ -1171,7 +1157,7 @@ static bool userp_symtable_rb_insert31(struct userp_symtable *st, uint32_t *root
 
 static bool userp_symtable_rb_insert15(struct userp_symtable *st, uint32_t *root, uint32_t node) {
 	// element 0 is the "sentinel" leaf, and 'node' is the element being added
-	struct hashtree_node15 *tree= HASHTREE_TREE15(st);
+	struct hashtree_node15 *tree= HASHTREE_NODES15(st);
 	int cmp;
 	uint16_t stack[32], pos, parent, new_head, i;
 
@@ -1484,16 +1470,16 @@ void dump_scope(userp_scope scope) {
 	);
 	printf("   local table: %d/%d%s\n",
 		(int)scope->symtable.used, (int)scope->symtable.alloc,
-		!scope->symtable.hashtree? " (no hash/tree)"
+		!scope->symtable.buckets? " (no hash/tree)"
 			: scope->symtable.processed == scope->symtable.used? " +hash/tree"
 			: " (stale hash/tree)"
 	);
-	if (scope->symtable.hashtree) {
+	if (scope->symtable.buckets) {
 		printf("    hash/tree: %d/%d buckets (%d bytes), %d tree nodes (%d bytes)\n",
-			(int)scope->symtable.ht_buckets,
-			(int)scope->symtable.ht_buckets,
+			(int)scope->symtable.bucket_used,
+			(int)scope->symtable.bucket_alloc,
 			(int)HASHTREE_BUCKET_SIZE(scope->symtable.used),
-			(int)scope->symtable.ht_nodes,
+			(int)scope->symtable.node_used,
 			(int)HASHTREE_NODE_SIZE(scope->symtable.used)
 		);
 	}
@@ -1596,11 +1582,11 @@ UNIT_TEST(scope_symbol_treesort) {
 	buf[0]= 'b'; buf[1]= '\0';
 	if (!userp_scope_get_symbol(scope, buf, USERP_CREATE))
 		printf("Failed to add %s\n", buf);
-	printf("tree is %s\n", scope->symtable.hashtree? "allocated" : "null");
+	printf("tree is %s\n", scope->symtable.buckets? "allocated" : "null");
 	buf[0]= 'a';
 	if (!userp_scope_get_symbol(scope, buf, USERP_CREATE))
 		printf("Failed to add %s\n", buf);
-	printf("tree is %s\n", scope->symtable.hashtree? "allocated" : "null");
+	printf("tree is %s\n", scope->symtable.buckets? "allocated" : "null");
 	// Now start over
 	printf("# reset\n");
 	userp_drop_scope(scope);
@@ -1613,14 +1599,14 @@ UNIT_TEST(scope_symbol_treesort) {
 			printf("Failed to add %s\n", buf);
 	}
 	// The tree should not be created yet
-	printf("tree is %s\n", scope->symtable.hashtree? "allocated" : "null");
+	printf("tree is %s\n", scope->symtable.buckets? "allocated" : "null");
 	printf("# 1 node out of order\n");
 	// Now insert one node out of order, causing it to tree up everything
 	snprintf(buf, sizeof(buf), "%05d", 9999);
 	if (!userp_scope_get_symbol(scope, buf, USERP_CREATE))
 		printf("Failed to add %s\n", buf);
-	printf("tree is %s\n", scope->symtable.hashtree? "allocated" : "null");
-	if (!scope->symtable.hashtree)
+	printf("tree is %s\n", scope->symtable.buckets? "allocated" : "null");
+	if (!scope->symtable.buckets)
 		return;
 	//verify_symbol_tree(scope);
 	
