@@ -97,7 +97,7 @@ userp_dec userp_new_dec(
 	userp_dec dec;
 	USERP_CLEAR_ERROR(env);
 	dec= userp_new_dec_silent(env, scope, root_type, buffer_ref, bytes, n_bytes);
-	USERP_DISPATCH_ERROR(env);
+	USERP_DISPATCH_ERR(env);
 	return dec;
 }
 
@@ -177,7 +177,7 @@ bool userp_grab_dec(userp_env env, userp_dec dec) {
 	if (env) USERP_CLEAR_ERROR(env);
 	if (userp_grab_dec_silent(env, dec))
 		return true;
-	if (env) USERP_DISPATCH_ERROR(env);
+	if (env) USERP_DISPATCH_ERR(env);
 	return false;
 }
 
@@ -198,7 +198,7 @@ bool userp_grab_dec_silent(userp_env env, userp_dec dec) {
 void userp_drop_dec(userp_env env, userp_dec dec) {
 	if (env) USERP_CLEAR_ERROR(env);
 	userp_drop_dec_silent(env, dec);
-	if (env) USERP_DISPATCH_ERROR(env);
+	if (env) USERP_DISPATCH_ERR(env);
 }
 
 void userp_drop_dec_silent(userp_env env, userp_dec dec) {

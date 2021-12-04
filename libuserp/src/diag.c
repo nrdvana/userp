@@ -238,12 +238,20 @@ int userp_process_diag_tpl(userp_diag diag, char *buf, size_t buf_len, FILE *fh)
 			// Generic integer fields
 			case USERP_DIAG_POS_ID:
 				val= diag->pos; if (0)
+			case USERP_DIAG_POS2_ID:
+				val= diag->pos2; if (0)
 			case USERP_DIAG_LEN_ID:
 				val= diag->len; if (0)
+			case USERP_DIAG_LEN2_ID:
+				val= diag->len2; if (0)
 			case USERP_DIAG_SIZE_ID:
 				val= diag->size; if (0)
+			case USERP_DIAG_SIZE2_ID:
+				val= diag->size2; if (0)
 			case USERP_DIAG_COUNT_ID:
-				val= diag->count;
+				val= diag->count; if (0)
+			case USERP_DIAG_COUNT2_ID:
+				val= diag->count2;
 				n= snprintf(tmp_buf, sizeof(tmp_buf), "%lld", val);
 				break;
 			default:
@@ -325,14 +333,26 @@ void userp_diag_setf(userp_diag diag, int code, const char *tpl, ...) {
 			case USERP_DIAG_POS_ID:
 				diag->pos= va_arg(ap, size_t);
 				break;
+			case USERP_DIAG_POS2_ID:
+				diag->pos2= va_arg(ap, size_t);
+				break;
 			case USERP_DIAG_LEN_ID:
 				diag->len= va_arg(ap, size_t);
+				break;
+			case USERP_DIAG_LEN2_ID:
+				diag->len2= va_arg(ap, size_t);
 				break;
 			case USERP_DIAG_SIZE_ID:
 				diag->size= va_arg(ap, size_t);
 				break;
+			case USERP_DIAG_SIZE2_ID:
+				diag->size2= va_arg(ap, size_t);
+				break;
 			case USERP_DIAG_COUNT_ID:
 				diag->count= va_arg(ap, size_t);
+				break;
+			case USERP_DIAG_COUNT2_ID:
+				diag->count2= va_arg(ap, size_t);
 				break;
 			case USERP_DIAG_CSTR1_ID:
 				diag->cstr1= va_arg(ap, const char *);

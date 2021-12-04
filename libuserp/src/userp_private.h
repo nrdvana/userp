@@ -10,30 +10,41 @@ struct userp_diag {
 	void *ptr;
 	char buffer[64];
 	int align, index;
-	size_t pos, len, size, count;
+	size_t pos, pos2,
+		len, len2,
+		size, size2,
+		count, count2;
 };
 #define USERP_DIAG_ALIGN_ID         0x01
 #define USERP_DIAG_ALIGN       "\x01\x01"
 #define USERP_DIAG_POS_ID           0x02
 #define USERP_DIAG_POS         "\x01\x02"
-#define USERP_DIAG_LEN_ID           0x03
-#define USERP_DIAG_LEN         "\x01\x03"
-#define USERP_DIAG_SIZE_ID          0x04
-#define USERP_DIAG_SIZE        "\x01\x04"
-#define USERP_DIAG_INDEX_ID         0x05
-#define USERP_DIAG_INDEX       "\x01\x05"
-#define USERP_DIAG_COUNT_ID         0x06
-#define USERP_DIAG_COUNT       "\x01\x06"
-#define USERP_DIAG_CSTR1_ID         0x07
-#define USERP_DIAG_CSTR1       "\x01\x07"
-#define USERP_DIAG_CSTR2_ID         0x08
-#define USERP_DIAG_CSTR2       "\x01\x08"
-#define USERP_DIAG_BUFSTR_ID        0x09
-#define USERP_DIAG_BUFSTR      "\x01\x09"
-#define USERP_DIAG_BUFHEX_ID        0x0A
-#define USERP_DIAG_BUFHEX      "\x01\x0A"
-#define USERP_DIAG_PTR_ID           0x0B
-#define USERP_DIAG_PTR         "\x01\x0B"
+#define USERP_DIAG_POS2_ID          0x03
+#define USERP_DIAG_POS2        "\x01\x03"
+#define USERP_DIAG_LEN_ID           0x04
+#define USERP_DIAG_LEN         "\x01\x04"
+#define USERP_DIAG_LEN2_ID          0x05
+#define USERP_DIAG_LEN2        "\x01\x05"
+#define USERP_DIAG_SIZE_ID          0x06
+#define USERP_DIAG_SIZE        "\x01\x06"
+#define USERP_DIAG_SIZE2_ID         0x07
+#define USERP_DIAG_SIZE2       "\x01\x07"
+#define USERP_DIAG_INDEX_ID         0x08
+#define USERP_DIAG_INDEX       "\x01\x08"
+#define USERP_DIAG_COUNT_ID         0x09
+#define USERP_DIAG_COUNT       "\x01\x09"
+#define USERP_DIAG_COUNT2_ID        0x0A
+#define USERP_DIAG_COUNT2      "\x01\x0A"
+#define USERP_DIAG_CSTR1_ID         0x0B
+#define USERP_DIAG_CSTR1       "\x01\x0B"
+#define USERP_DIAG_CSTR2_ID         0x0C
+#define USERP_DIAG_CSTR2       "\x01\x0C"
+#define USERP_DIAG_BUFSTR_ID        0x0D
+#define USERP_DIAG_BUFSTR      "\x01\x0D"
+#define USERP_DIAG_BUFHEX_ID        0x0E
+#define USERP_DIAG_BUFHEX      "\x01\x0E"
+#define USERP_DIAG_PTR_ID           0x0F
+#define USERP_DIAG_PTR         "\x01\x0F"
 
 void userp_diag_set(userp_diag diag, int code, const char *tpl);
 void userp_diag_setf(userp_diag diag, int code, const char *tpl, ...);
@@ -59,14 +70,14 @@ struct userp_env {
 	int run_with_scissors: 1,
 		measure_twice: 1,
 		log_warn: 1,
+		log_info: 1,
 		log_debug: 1,
-		log_trace: 1,
-		log_suppress: 1;
+		log_trace: 1;
 	
 	/* Storage for error conditions */
-	struct userp_diag err, // Most recent error
-		warn,              // Most recent warning
-		msg;               // Current message of less severity than error
+	struct userp_diag
+		err, // Most recent error
+		msg; // Most recent non-error message
 	
 	// Defaults values
 	int scope_stack_max;
@@ -75,8 +86,8 @@ struct userp_env {
 	int salt;
 };
 
-#define USERP_CLEAR_ERROR(env) ((env)->err.code= 0)
-#define USERP_DISPATCH_ERROR(env) do { if ((env)->err.code) env->diag(env->diag_cb_data, &env->err, env->err.code); } while (0)
+#define USERP_DISPATCH_ERR(env) ((env)->diag((env)->diag_cb_data, &((env)->err),  (env)->err.code))
+#define USERP_DISPATCH_MSG(env) ((env)->diag((env)->diag_cb_data, &((env)->msg),  (env)->msg.code))
 
 #define SIZET_MUL_CAN_OVERFLOW(a, b) ( \
 	( \

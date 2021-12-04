@@ -127,7 +127,7 @@ bool userp_grab_env(userp_env env) {
 		return true;
 	--env->refcnt; // it hit zero.  Roll it back to INT_MAX
 	userp_diag_set(&env->err, USERP_EALLOC, "Reference count exceeds size_t");
-	USERP_DISPATCH_ERROR(env);
+	USERP_DISPATCH_ERR(env);
 	return false;
 }
 
@@ -355,7 +355,7 @@ void userp_env_set_attr(userp_env env, int attr_id, size_t value) {
 	CATCH(unknown_val) {
 		if (!env->run_with_scissors) {
 			userp_diag_setf(&env->err, USERP_EUNKNOWN, "Unknown " USERP_DIAG_CSTR1 ": " USERP_DIAG_INDEX, attr_name, (int) value);
-			USERP_DISPATCH_ERROR(env);
+			USERP_DISPATCH_ERR(env);
 		}
 	}
 }
@@ -367,7 +367,7 @@ bool userp_alloc(userp_env env, void **pointer, size_t new_size, userp_alloc_fla
 		return true;
 	userp_diag_set(&env->err, new_size? USERP_ELIMIT : USERP_EFATAL, "alloc(" USERP_DIAG_SIZE ") failed");
 	env->err.size= new_size;
-	USERP_DISPATCH_ERROR(env);
+	USERP_DISPATCH_ERR(env);
 	return false;
 }
 
@@ -390,7 +390,7 @@ bool userp_alloc(userp_env env, void **pointer, size_t new_size, userp_alloc_fla
 //	env->err.cstr1= elem_name;
 //	env->err.size= n;
 //	// de-allocation errors need reported immediately, because they can be fatal
-//	if (!count) USERP_DISPATCH_ERROR(env);
+//	if (!count) USERP_DISPATCH_ERR(env);
 //	return false;
 //}
 

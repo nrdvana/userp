@@ -70,7 +70,7 @@ static bool scope_symbol_vec_alloc(userp_scope scope, size_t n) {
 			"Can't resize symbol table larger than " USERP_DIAG_SIZE " entries",
 			(size_t) MAX_SYMTABLE_ENTRIES
 		);
-		USERP_DISPATCH_ERROR(env);
+		USERP_DISPATCH_ERR(env);
 		return false;
 	}
 
@@ -348,7 +348,7 @@ userp_symbol userp_scope_get_symbol(userp_scope scope, const char *name, int fla
 	// if scope is finalized, emit an error
 	if (scope->is_final) {
 		userp_diag_set(&env->err, USERP_ESCOPEFINAL, "Can't add symbol to a finalized scope");
-		USERP_DISPATCH_ERROR(env);
+		USERP_DISPATCH_ERR(env);
 		return 0;
 	}
 	// In case it's the first symbol
@@ -523,7 +523,7 @@ bool userp_scope_parse_symbols(userp_scope scope, struct userp_bstr_part *parts,
 	// If scope is finalized, emit an error
 	if (scope->is_final) {
 		userp_diag_set(&env->err, USERP_ESCOPEFINAL, "Can't add symbol to a finalized scope");
-		USERP_DISPATCH_ERROR(env);
+		USERP_DISPATCH_ERR(env);
 		return false;
 	}
 	// If no input, return
@@ -532,7 +532,7 @@ bool userp_scope_parse_symbols(userp_scope scope, struct userp_bstr_part *parts,
 			return true;
 		userp_diag_setf(&env->err, USERP_EOVERRUN, "Can't parse " USERP_DIAG_COUNT " symbols from empty buffer",
 			(size_t) sym_count);
-		USERP_DISPATCH_ERROR(env);
+		USERP_DISPATCH_ERR(env);
 		return false;
 	}
 	// Initialize chardata (if not already) and ensure space for input.part_count*2 - 1 new parts.
@@ -666,7 +666,7 @@ bool userp_scope_parse_symbols(userp_scope scope, struct userp_bstr_part *parts,
 			(size_t) (scope->symtable.used - orig_sym_used),
 			(size_t) sym_count
 		);
-		USERP_DISPATCH_ERROR(env);
+		USERP_DISPATCH_ERR(env);
 		goto failure;
 	}		
 	// The stream protocol allows buffers to have extra characters at the end
@@ -677,7 +677,7 @@ bool userp_scope_parse_symbols(userp_scope scope, struct userp_bstr_part *parts,
 	CATCH(failure) {
 		CATCH(parse_failure) {
 			memcpy(&env->err, &parse.diag, sizeof(parse.diag));
-			USERP_DISPATCH_ERROR(env);
+			USERP_DISPATCH_ERR(env);
 		}
 		// Remove new additions to the symbol table
 		for (i= orig_sym_partcnt; i < scope->symtable.chardata.part_count; i++)
@@ -756,20 +756,20 @@ userp_scope userp_new_scope(userp_env env, userp_scope parent) {
 		// Parent must belong to the same environment
 		if (parent->env != env) {
 			userp_diag_set(&env->err, USERP_EFOREIGNSCOPE, "Parent scope does not belong to this userp_env");
-			USERP_DISPATCH_ERROR(env);
+			USERP_DISPATCH_ERR(env);
 			return NULL;
 		}
 		// Parent must be final
 		if (!parent->is_final) {
 			userp_diag_set(&env->err, USERP_EDOINGITWRONG, "Cannot create a nested scope until the parent is finalized");
-			USERP_DISPATCH_ERROR(env);
+			USERP_DISPATCH_ERR(env);
 			return NULL;
 		}
 		if (parent->level >= env->scope_stack_max) {
 			userp_diag_setf(&env->err, USERP_ELIMIT,
 				"Scope nesting level exceeds limit of " USERP_DIAG_SIZE,
 				(size_t) env->scope_stack_max);
-			USERP_DISPATCH_ERROR(env);
+			USERP_DISPATCH_ERR(env);
 			return NULL;
 		}
 		if (!userp_grab_scope(parent))
@@ -808,7 +808,7 @@ static bool scope_init_symtable(userp_scope scope) {
 		return true;
 	if (scope->is_final) {
 		userp_diag_set(&scope->env->err, USERP_ESCOPEFINAL, "Can't add symbols to a finalized scope");
-		USERP_DISPATCH_ERROR(scope->env);
+		USERP_DISPATCH_ERR(scope->env);
 		return false;
 	}
 
@@ -848,7 +848,7 @@ bool userp_grab_scope(userp_scope scope) {
 	if (!++scope->refcnt) { // check for rollover
 		--scope->refcnt; // back up to UINT_MAX
 		userp_diag_set(&scope->env->err, USERP_EALLOC, "Refcount limit reached for userp_scope");
-		USERP_DISPATCH_ERROR(scope->env);
+		USERP_DISPATCH_ERR(scope->env);
 		return false;
 	}
 	return true;

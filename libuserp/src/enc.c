@@ -5,12 +5,12 @@ userp_enc userp_new_enc(userp_env env, userp_scope scope, userp_type root_type) 
 	userp_enc enc= NULL;
 	if (!scope || scope->env != env) {
 		userp_diag_set(&env->err, USERP_EFOREIGNSCOPE, "userp_scope does not belong to this userp_env");
-		USERP_DISPATCH_ERROR(env);
+		USERP_DISPATCH_ERR(env);
 		return NULL;
 	}
 	if (!root_type /* TODO: or type does not belong to scope */) {
 		userp_diag_set(&env->err, USERP_ETYPESCOPE, "userp_type does not belong to the current userp_scope");
-		USERP_DISPATCH_ERROR(env);
+		USERP_DISPATCH_ERR(env);
 		return NULL;
 	}
 
