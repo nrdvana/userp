@@ -33,6 +33,23 @@ lookup from a binary tree to a binary search on an array.
 
 */
 
+struct hashtree_node15 {
+	uint16_t
+		sym,
+		hash,
+		left,
+		right: 15,
+		color: 1;
+};
+struct hashtree_node31 {
+	uint32_t
+		sym,
+		hash,
+		left,
+		right: 31,
+		color: 1;
+};
+
 static bool scope_init_symtable(userp_scope scope);
 static bool scope_symbol_vec_alloc(userp_scope scope, size_t n);
 
@@ -43,9 +60,7 @@ static bool scope_symbol_vec_alloc(userp_scope scope, size_t n);
 
 static bool scope_symbol_vec_alloc(userp_scope scope, size_t n) {
 	userp_env env= scope->env;
-	struct symbol_tree_node15 *tree15;
-	struct symbol_tree_node31 *tree31;
-	size_t size, i;
+	// Symbol tables never lose symbols until destroyed, so don't bother with shrinking
 	n= USERP_SCOPE_TABLE_ALLOC_ROUND(n);
 	if (n <= scope->symtable.alloc)
 		return true; // nothing to do
@@ -66,184 +81,296 @@ static bool scope_symbol_vec_alloc(userp_scope scope, size_t n) {
 	return true;
 }
 
+#define HASHTREE_BUCKET_SIZE(count) \
+	( ((count) >> 15)? 4 : ((count) >> 7)? 2 : 1 )
 
-#define HASHTREE_GET_BUCKET(hashtree, symcount, bucketcount, hash) \
-	( ((symcount) >> 15)? (size_t) ((uint32_t *) (hashtree))[ (hash) % (bucketcount) ] \
-	: ((symcount) >>  7)? (size_t) ((uint16_t *) (hashtree))[ (hash) % (bucketcount) ] \
-	:                     (size_t) ((uint8_t  *) (hashtree))[ (hash) % (bucketcount) ] \
+#define HASHTREE_NODE_SIZE(count) \
+	( ((count) >> 15)? sizeof(struct hashtree_node31) : sizeof(struct hashtree_node15) )
+
+#define HASHTREE_ALLOC_SIZE(buckets, nodes) \
+	((HASHTREE_BUCKET_SIZE(buckets) + 3) & ~(size_t) 3) + HASHTREE_NODE_SIZE(nodes)
+
+#define HASHTREE_GET_BUCKET(symtable, hash) \
+	( ((symtable)->used >> 15)? (size_t) ((uint32_t *) (symtable)->hashtree)[ (hash) % (symtable)->ht_buckets ] \
+	: ((symtable)->used >>  7)? (size_t) ((uint16_t *) (symtable)->hashtree)[ (hash) % (symtable)->ht_buckets ] \
+	:                           (size_t) ((uint8_t  *) (symtable)->hashtree)[ (hash) % (symtable)->ht_buckets ] \
     )
 
-#define HASHTREE_SET_BUCKET(hashtree, symcount, bucketcount, hash, value) \
-	( ((symcount) >> 15)? (size_t) (((uint32_t *) (hashtree))[ (hash) % (bucketcount) ]= (uint32_t) (value)) \
-	: ((symcount) >>  7)? (size_t) (((uint16_t *) (hashtree))[ (hash) % (bucketcount) ]= (uint16_t) (value)) \
-	:                     (size_t) (((uint8_t  *) (hashtree))[ (hash) % (bucketcount) ]= (uint8_t ) (value)) \
+#define HASHTREE_SET_BUCKET(symtable, hash, value) \
+	( ((symtable)->used >> 15)? (size_t) (((uint32_t *) (symtable)->hashtree)[ (hash) % (symtable)->ht_buckets ]= (uint32_t) (value)) \
+	: ((symtable)->used >>  7)? (size_t) (((uint16_t *) (symtable)->hashtree)[ (hash) % (symtable)->ht_buckets ]= (uint16_t) (value)) \
+	:                           (size_t) (((uint8_t  *) (symtable)->hashtree)[ (hash) % (symtable)->ht_buckets ]= (uint8_t ) (value)) \
     )
 
-#define HASHTREE_HASHAREA_SIZE(symcount, bucketcount) \
-	((bucketcount) * (((symcount) >> 15)? 4 : ((symcount) >> 7)? 2 : 1))
-
-struct rbtree_node15 {
-	uint16_t
-		sym,
-		hash,
-		left,
-		right: 15,
-		color: 1;
-};
-struct rbtree_node31 {
-	uint32_t
-		sym,
-		hash,
-		left,
-		right: 31,
-		color: 1;
-};
-
-#define HASHTREE_IS_TREE31(symcount) ( (symcount) >> 15 )
-
-#define HASHTREE_TREE15(hashtree, symcount, bucketcount) ( \
-	(struct rbtree_node15*) ( \
-		(((char*)(hashtree)) \
-		+ HASHTREE_HASHAREA_SIZE(symcount,bucketcount) \
-		+ 3) \
-	& ~(size_t) 3 ) \
+#define HASHTREE_IS_TREE31(symtable) ( (symtable)->used >> 15 )
+#define HASHTREE_TREE_OFFSET(symtable) ( \
+	( (symtable)->ht_buckets * HASHTREE_BUCKET_SIZE((symtable)->used) + 3 ) \
+    & ~(size_t) 3 \
 )
 
-#define HASHTREE_TREE31(hashtree, symcount, bucketcount) ( \
-	(struct rbtree_node31*) ( \
-		(((char*)(hashtree)) \
-		+ HASHTREE_HASHAREA_SIZE(symcount,bucketcount) \
-		+ 3) \
-	& ~(size_t) 3 ) \
+#define HASHTREE_TREE15(symtable) \
+	(((struct hashtree_node15*) (symtable)->hashtree) + HASHTREE_TREE_OFFSET(symtable))
+
+#define HASHTREE_TREE31(symtable) \
+	(((struct hashtree_node31*) (symtable)->hashtree) + HASHTREE_TREE_OFFSET(symtable))
+
+#define HASHTREE_KEY_CMP(symtable, keyhash, key, node) ( \
+	(keyhash) < (node).hash? -1 \
+	: (keyhash) > (node).hash? 1 \
+	: strcmp( key, (symtable)->symbols[(node).sym].name ) \
 )
 
-#define HASHTREE_NODE_CMP(node1, node2, symbols) ( \
-	(node1)->hash < (node2)->hash? -1 \
-	: (node1)->hash > (node2)->hash? 1 \
-	: strcmp( (symbols)[(node1)->sym].name, (symbols)[(node2)->sym].name ) \
+#define HASHTREE_NODE_CMP(symtable, node1, node2) ( \
+	(node1).hash < (node2).hash? -1 \
+	: (node1).hash > (node2).hash? 1 \
+	: strcmp( (symtable)->symbols[(node1).sym].name, (symtable)->symbols[(node2).sym].name ) \
 )
 
-bool userp_symtable_hashtree_get(struct userp_symtable *st, const char *name) {
+static bool userp_symtable_rb_insert31(struct userp_symtable *st, uint32_t *root, uint32_t node);
+static bool userp_symtable_rb_insert15(struct userp_symtable *st, uint32_t *root, uint32_t node);
+
+static inline uint32_t userp_symtable_calc_hash(struct userp_symtable *st, const char *name) {
 	// Calculate a hash for 'name' using FNV-1a
 	uint64_t hash= 0xcbf29ce484222325LL;
-	for (p= name; *p;) {
-		hash ^= *p++;
+	while (*name) {
+		hash ^= *name++;
 		hash *= 0x100000001b3;
 	}
 	hash ^= st->ht_salt;
 	hash *= 0x100000001b3;
+	return (uint32_t) hash? hash : 1;
+}
+
+userp_symbol userp_symtable_hashtree_get(struct userp_symtable *st, uint32_t hash32, const char *name) {
+	struct hashtree_node15 *tree15;
+	struct hashtree_node31 *tree31;
+	uint16_t hash16;
+	size_t node;
+	int cmp;
+
 	// read the bucket for the hash
-	int bucket_val= HASHTREE_GET_BUCKET(st->hashtree, st->processed, st->ht_buckets, hash);
+	int bucket_val= HASHTREE_GET_BUCKET(st, hash32);
 	// If low bit is 1, there was a collision, and this is the root of a tree
 	if (bucket_val & 1) {
-		if (!HASHTREE_IS_TREE31(st->processed)) {
-			tree15= HASHTREE_TREE15(st->hashtree, st->processed, st->ht_buckets);
-			
-		}
-}
-
-bool hashtree_insert
-
-bool userp_symtable_update(struct userp_symtable *st) {
-}
-
-struct symbol_entry *userp_symtable_find(struct userp_symtable *st, const char *name) {
-	if (st->used > st->processed)
-		if (!userp_symtable_update(st))
-			return NULL;
-	// hash the input string
-}
-
-
-userp_symbol userp_scope_get_symbol(userp_scope scope, const char *name, int flags) {
-	int i, pos, start, limit, cmp, len;
-	bool need_tree= false;
-	struct symbol_table *st;
-	userp_env env= scope->env;
-
-	// search self and parent scopes for symbol (but flags can request local-only)
-	for (i= scope->symtable_count - 1; i >= 0; --i) {
-		st= scope->symtable_stack[i];
-		// Does this symtable have a current hashtable?  If not, build it.
-		userp_symtable_
-		if (st->processed < st->used) {
-			userp_symtable_proces_symbols(st);
-		// Now use the hashtable
-		
-		if (st->tree) {
-			// tree search
-			if (USE_TREE31(st->alloc)) { // more than 15 bits of entries uses a tree of 31-bit integers.
-				tree31= st->tree31;
-				for (pos= st->tree_root; pos;) {
-					cmp= strcmp(name, st->symbols[pos].name);
-					if (cmp == 0) return st->id_offset + pos;
-					else if (cmp > 0) pos= tree31[pos].right;
-					else pos= tree31[pos].left;
-				}
-			}
-			else {
-				tree15= st->tree15;
-				for (pos= st->tree_root; pos;) {
-					cmp= strcmp(name, st->symbols[pos].name);
-					if (cmp == 0) return st->id_offset + pos;
-					else if (cmp > 0) pos= tree15[pos].right;
-					else pos= tree15[pos].left;
-				}
+		if (HASHTREE_IS_TREE31(st)) {
+			tree31= HASHTREE_TREE31(st);
+			for (node= bucket_val>>1; node;) {
+				cmp= HASHTREE_KEY_CMP(st, hash32, name, tree31[node]);
+				if (cmp == 0) return st->id_offset + tree31[node].sym;
+				else if (cmp > 0) node= tree31[node].right;
+				else node= tree31[node].left;
 			}
 		}
 		else {
-			// binary search
-			for (start= 1, limit= st->used; start < limit;) {
-				pos= (start+limit)>>1;
-				cmp= strcmp(name, st->symbols[pos].name);
-				if (cmp == 0) return st->id_offset + pos;
-				else if (cmp > 0) start= pos+1;
-				else limit= pos;
+			tree15= HASHTREE_TREE15(st);
+			hash16= (uint16_t) hash32;
+			for (node= bucket_val>>1; node;) {
+				cmp= HASHTREE_KEY_CMP(st, hash16, name, tree15[node]);
+				if (cmp == 0) return st->id_offset + tree15[node].sym;
+				else if (cmp > 0) node= tree15[node].right;
+				else node= tree15[node].left;
 			}
-			// capture whether it was greater than all others in local symtable or not
-			if (st == &scope->symtable && !scope->symtable.tree)
-				need_tree= (limit < st->used);
 		}
-		// User can request only searching immediate scope
-		if (flags & USERP_GET_LOCAL)
-			break;
+	}
+	// else this bucket refers to exactly one symbol, but still need to verify the string
+	else {
+		bucket_val >>= 1;
+		if (bucket_val && strcmp(name, st->symbols[bucket_val].name) == 0)
+			return st->id_offset + bucket_val;
+	}
+	return 0;
+}
+
+bool userp_symtable_hashtree_insert(struct userp_symtable *st, int sym_ofs) {
+	struct hashtree_node15 *tree15;
+	struct hashtree_node31 *tree31;
+	uint32_t sym2, node, node2, hash= st->symbols[sym_ofs].hash;
+	size_t alloc;
+	
+	// calculate the official hash on the symbol entry if it wasn't done yet
+	if (!hash) {
+		hash= userp_symtable_calc_hash(st, st->symbols[sym_ofs].name);
+		st->symbols[sym_ofs].hash= hash;
+	}
+
+	// check the bucket for the hash.
+	int bucket_val= HASHTREE_GET_BUCKET(st, hash);
+	if (!bucket_val) {
+		printf("found a free bucket for %s\n", st->symbols[sym_ofs].name);
+		// If zero, we're lucky, and can just write to it
+		(void)HASHTREE_SET_BUCKET(st, hash, sym_ofs<<1);
+	}
+	else {
+		// Check if there is room for 1-2 more tree elements.
+		alloc= HASHTREE_ALLOC_SIZE(st->ht_buckets, st->ht_nodes + (bucket_val & 1)? 1 : 2);
+		if (alloc > st->ht_alloc) {
+			printf("need more node storage (%lld > %lld, nodes=%d)\n", (long long)alloc, (long long)st->ht_alloc, (int)st->ht_nodes);
+			return false;  // parent needs to reallocate
+		}
+		// Fill the next available node with our info
+		node= st->ht_nodes++;
+		if (HASHTREE_IS_TREE31(st)) {
+			tree31= HASHTREE_TREE31(st);
+			tree31[node].sym= sym_ofs;
+			tree31[node].hash= hash;
+			tree31[node].left= tree31[node].right= tree31[node].color= 0;
+		} else {
+			tree15= HASHTREE_TREE15(st);
+			tree15[node].sym= sym_ofs;
+			tree15[node].hash= hash;
+			tree15[node].left= tree15[node].right= tree15[node].color= 0;
+		}
+		
+		// If low bit set, there is a pre-existing collision and we can add to that tree
+		if (bucket_val & 1) {
+			printf("collided with tree: %s\n", st->symbols[sym_ofs].name);
+			
+			node2= bucket_val >> 1;
+			if (!(HASHTREE_IS_TREE31(st)
+				? userp_symtable_rb_insert31(st, &node2, node)
+				: userp_symtable_rb_insert15(st, &node2, node)
+			)) {
+				st->ht_nodes--;
+				return false;
+			}
+			if (node2 != (bucket_val >> 1))
+				HASHTREE_SET_BUCKET(st, hash, (node2<<1)|1);
+		}
+		// else need to create a new tree out of the element in this slot
+		else {
+			printf("collided with node, add both to tree: %s\n", st->symbols[sym_ofs].name);
+			sym2= bucket_val >> 1;
+			// Now add the previous resident of this bucket as a child of the new tree.
+			node2= st->ht_nodes++;
+			if (HASHTREE_IS_TREE31(st)) {
+				tree31= HASHTREE_TREE31(st);
+				tree31[node2].sym= sym2;
+				tree31[node2].hash= st->symbols[sym2].hash;
+				tree31[node2].left= tree31[node2].right= tree31[node2].color= 0;
+				if (!userp_symtable_rb_insert31(st, &node, node2)) {
+					st->ht_nodes-= 2;
+					return false;
+				}
+			} else {
+				tree15= HASHTREE_TREE15(st);
+				tree15[node2].sym= sym2;
+				tree15[node2].hash= st->symbols[sym2].hash;
+				tree15[node2].left= tree15[node2].right= tree15[node2].color= 0;
+				if (!userp_symtable_rb_insert15(st, &node, node2)) {
+					st->ht_nodes-= 2;
+					return false;
+				}
+			}
+			HASHTREE_SET_BUCKET(st, hash, (node<<1) | 1);
+		}
+	}
+	return true;
+}
+
+bool userp_scope_symtable_hashtree_populate(struct userp_symtable *st, userp_env env) {
+	size_t alloc;
+
+	// Need to rebuild the hashtable if:
+	//   * the bits requirements have changed
+	//   * it has fewer buckets than symtable.used
+	if (HASHTREE_BUCKET_SIZE(st->processed) < HASHTREE_BUCKET_SIZE(st->used)
+		|| st->ht_buckets < st->used
+	) {
+		st->processed= 1;
+		st->ht_nodes= 1;
+		// allocate a hash area 3x the number of current elements, and enough tree nodes
+		// for 1/4 of them to collide.  But allocate at least the full 8-bt hashtable
+		// and at least one page of ram.
+		st->ht_buckets= (st->used*3 < 127? 127 : st->used * 3);
+		alloc= ( HASHTREE_ALLOC_SIZE(st->ht_buckets, st->used / 4) + 4095 ) & ~(size_t)4095;
+		// don't use "realloc" because there is no reason to copy the old content of the buffer
+		if (alloc > st->ht_alloc) {
+			userp_alloc(env, &st->hashtree, 0, 0);
+			if (!userp_alloc(env, &st->hashtree, alloc, 0))
+				return false;
+			st->ht_alloc= alloc;
+		}
+		// clear the entire hash table, and first tree node (which acts as a leaf-sentinel)
+		bzero(st->hashtree, HASHTREE_ALLOC_SIZE(st->ht_buckets, 1));
+	}		
+	
+	while (st->processed < st->used) {
+		// Now try adding the symbol entry
+		if (userp_symtable_hashtree_insert(st, st->processed))
+			++st->processed;
+		// Did it fail because it was out of memory?
+		else if (HASHTREE_ALLOC_SIZE(st->ht_buckets, st->ht_nodes + 2) >= st->ht_alloc) {
+			// The number of buckes should be appropriate already, so just add more tree nodes
+			alloc= (( HASHTREE_ALLOC_SIZE(st->ht_buckets, st->ht_nodes * 2) + 4095 ) & ~(size_t)4095);
+			printf("alloc %lld for %d %d\n", (long long) alloc, (int) st->ht_buckets, (int) st->ht_nodes);
+			if (!userp_alloc(env, &st->hashtree, alloc, 0))
+				return false;
+			st->ht_alloc= alloc;
+		}
+		// The only other way it can fail is a corrupt tree
+		else {
+			userp_diag_set(&env->err, USERP_EBADSTATE, "Scope symbol table hashtree is corrupt");
+			USERP_DISPATCH_ERROR(env);
+			return false;
+		}
+	}
+	return true;
+}
+
+userp_symbol userp_scope_get_symbol(userp_scope scope, const char *name, int flags) {
+	int i, pos, len;
+	struct userp_symtable *st;
+	userp_symbol ret;
+	struct symbol_entry *sym;
+	userp_env env= scope->env;
+	uint32_t hash= userp_symtable_calc_hash(&scope->symtable, name);
+
+	// search self and parent scopes for symbol (but flags can request local-only)
+	if (!(flags & USERP_GET_LOCAL) || scope->has_symbols) {
+		for (i= scope->symtable_count - 1; i >= 0; --i) {
+			st= scope->symtable_stack[i];
+			// Does this symtable have a current hashtable?  If not, build it.
+			if (st->processed < st->used)
+				if (!userp_scope_symtable_hashtree_populate(st, scope->env))
+					return false;
+			// Now use the hashtable
+			ret= userp_symtable_hashtree_get(st, hash, name);
+			if (ret)
+				return ret;
+			// User can request only searching immediate scope
+			if (flags & USERP_GET_LOCAL)
+				break;
+		}
 	}
 	// Not found.  Does it need added?
 	if (!(flags & USERP_CREATE))
 		return 0;
-	
-	// In case it's the first symbol
-	if (!scope->has_symbols)
-		if (!scope_init_symtable(scope))
-			return 0;
 	// if scope is finalized, emit an error
 	if (scope->is_final) {
 		userp_diag_set(&env->err, USERP_ESCOPEFINAL, "Can't add symbol to a finalized scope");
 		USERP_DISPATCH_ERROR(env);
 		return 0;
 	}
+	// In case it's the first symbol
+	if (!scope->has_symbols)
+		if (!scope_init_symtable(scope))
+			return 0;
 	pos= scope->symtable.used;
 	// Grow the symbols array if needed
 	if (pos >= scope->symtable.alloc)
 		if (!scope_symbol_vec_alloc(scope, pos+1))
 			return 0;
-	// if tree is not built, and symbol does not compare greater than previous, need the tree.
-	if (need_tree)
-		if (!scope_symbol_tree_init(scope))
-			return 0;
-	len= strlen(name);
 	// Copy the name into scope storage
+	len= strlen(name);
 	if (!(name= (char*) userp_bstr_append_bytes(&scope->symtable.chardata, (const uint8_t*) name, len+1, USERP_CONTIGUOUS)))
 		return 0;
 	// add symbol to the vector
-	scope->symtable.symbols[pos].name= name; // name was replaced with the local pointer, above
-	scope->symtable.symbols[pos].type_ref= 0;
+	sym= scope->symtable.symbols + pos;
+	sym->name= name; // name was replaced with the local pointer, above
+	sym->hash= hash;
+	sym->type_ref= 0;
+	sym->canonical= 0;
 	scope->symtable.used= pos+1;
-	if (scope->symtable.tree) {
-		// add symbol to the tree
-		if (!symbol_tree_insert(&scope->symtable, pos, pos+1))
-			return 0;
-	}
 	return pos + scope->symtable.id_offset;
 }
 
@@ -255,9 +382,9 @@ struct symbol_parse_state {
 		*prev;            // previous symbol, used for testing 'sorted' status
 	struct symbol_entry
 		*dest_pos,        // current position for recording the next symbol
-		*dest_lim,        // one-beyond-end of the symbol buffer
-	    *dest_last_sorted;// last element which compared greater than the previous
-	bool sorted;          // whether elements found so far are in correct order
+		*dest_lim;        // one-beyond-end of the symbol buffer
+	//    *dest_last_sorted;// last element which compared greater than the previous
+	//bool sorted;          // whether elements found so far are in correct order
 	struct userp_diag diag;
 };
 static bool parse_symbols(struct symbol_parse_state *parse) {
@@ -348,13 +475,13 @@ static bool parse_symbols(struct symbol_parse_state *parse) {
 			codepoint= 0;
 			goto invalid_char;
 		}
-		if (parse->sorted) {
-			if (parse->prev && strcmp((char*)parse->prev, (char*)parse->start) >= 0) {
-				parse->dest_last_sorted= parse->dest_pos - 1;
-				parse->sorted= false;
-			}
-			parse->prev= parse->start;
-		}
+		//if (parse->sorted) {
+		//	if (parse->prev && strcmp((char*)parse->prev, (char*)parse->start) >= 0) {
+		//		parse->dest_last_sorted= parse->dest_pos - 1;
+		//		parse->sorted= false;
+		//	}
+		//	parse->prev= parse->start;
+		//}
 		parse->dest_pos->name= (char*)parse->start;
 		++parse->dest_pos;
 		++pos; // resume parsing at char beyond '\0'
@@ -388,9 +515,9 @@ bool userp_scope_parse_symbols(userp_scope scope, struct userp_bstr_part *parts,
 	userp_buffer buf;
 	bool success;
 	struct symbol_parse_state parse;
-	size_t n, n_sorted, i, segment,
+	size_t n, i, segment,
 		orig_sym_used, orig_sym_partcnt, syms_added,
-		pos_ofs, lastsort_ofs;
+		pos_ofs;//, lastsort_ofs;
 	uint8_t *p1, *p2;
 
 	// If scope is finalized, emit an error
@@ -432,8 +559,8 @@ bool userp_scope_parse_symbols(userp_scope scope, struct userp_bstr_part *parts,
 	parse.dest_pos= scope->symtable.symbols + scope->symtable.used;
 	parse.dest_lim= scope->symtable.symbols
 		+ (sym_count? scope->symtable.used+sym_count : scope->symtable.alloc);
-	parse.sorted= !scope->symtable.tree;
-	parse.dest_last_sorted= parse.sorted? parse.dest_pos : NULL;
+	//parse.sorted= !scope->symtable.tree;
+	//parse.dest_last_sorted= parse.sorted? parse.dest_pos : NULL;
 	parse.prev= scope->symtable.used <= 1? NULL
 		: (uint8_t*) scope->symtable.symbols[scope->symtable.used-1].name;
 	parse.pos= parts[0].data;
@@ -449,7 +576,7 @@ bool userp_scope_parse_symbols(userp_scope scope, struct userp_bstr_part *parts,
 		) {
 			// If the vector gets reallocated to a new address, need to update the pointers in parse
 			pos_ofs= parse.dest_pos - scope->symtable.symbols;
-			lastsort_ofs= parse.dest_last_sorted - scope->symtable.symbols;
+			//lastsort_ofs= parse.dest_last_sorted - scope->symtable.symbols;
 			// Perform re-alloc
 			if (!scope_symbol_vec_alloc(scope, scope->symtable.alloc * 2)) {
 				success= false;
@@ -458,8 +585,8 @@ bool userp_scope_parse_symbols(userp_scope scope, struct userp_bstr_part *parts,
 			// Repair parse pointers
 			parse.dest_pos= scope->symtable.symbols + pos_ofs;
 			parse.dest_lim= scope->symtable.symbols + scope->symtable.alloc;
-			if (parse.dest_last_sorted)
-				parse.dest_last_sorted= scope->symtable.symbols + lastsort_ofs;
+			//if (parse.dest_last_sorted)
+			//	parse.dest_last_sorted= scope->symtable.symbols + lastsort_ofs;
 		}
 		// Add all consumed bytes to the chardata string
 		syms_added= parse.dest_pos - scope->symtable.symbols - scope->symtable.used;
@@ -542,26 +669,9 @@ bool userp_scope_parse_symbols(userp_scope scope, struct userp_bstr_part *parts,
 		USERP_DISPATCH_ERROR(env);
 		goto failure;
 	}		
-	// If the input had extra characters, no problem.  Maybe add a flag to error on that?
-	// If the tree is already being used, or if the elements were not in sorted order,
-	// need to add every new element to the tree.
-	if (!parse.sorted) {
-		n_sorted= !parse.dest_last_sorted? orig_sym_used
-			: parse.dest_last_sorted - scope->symtable.symbols;
-		if (!scope->symtable.tree) {
-			// temporarily replace 'used' with the number of elements known to be in sorted order
-			// so that the tree builds those more efficiently
-			n= scope->symtable.used;
-			scope->symtable.used= n_sorted;
-			success= scope_symbol_tree_init(scope);
-			// restore the correct 'used' value
-			scope->symtable.used= n;
-			if (!success)
-				goto failure;
-		}
-		// remainder are un-sorted, and each needs a tree insert
-		return symbol_tree_insert(&scope->symtable, n_sorted, scope->symtable.used);
-	}
+	// The stream protocol allows buffers to have extra characters at the end
+	// of the symbol table.  Maybe there should be a flag to detect that when
+	// it isn't wanted?
 	return true;
 
 	CATCH(failure) {
@@ -683,7 +793,7 @@ userp_scope userp_new_scope(userp_env env, userp_scope parent) {
 	scope->level= parent? parent->level + 1 : 0;
 	scope->refcnt= 1;
 	scope->symtable_count= num_sym_tables-1; // final element is left off until first use
-	scope->symtable_stack= (struct symbol_table**) (scope->typetable_stack + num_type_tables);
+	scope->symtable_stack= (struct userp_symtable**) (scope->typetable_stack + num_type_tables);
 	scope->typetable_count= num_type_tables-1; // final element is left off until first use
 	if (parent) {
 		memcpy(scope->symtable_stack, parent->symtable_stack, parent->symtable_count);
@@ -710,6 +820,7 @@ static bool scope_init_symtable(userp_scope scope) {
 	// When allocated, the userp_scope left room in symtable_stack for one extra
 	scope->symtable_stack[scope->symtable_count++]= &scope->symtable;
 	scope->symtable.chardata.env= scope->env;
+	scope->symtable.ht_salt= scope->env->salt;
 	scope->symtable.used= 1; // elem 0 is always reserved
 	scope->has_symbols= true;
 	return scope_symbol_vec_alloc(scope, 1);
@@ -720,8 +831,8 @@ static void userp_free_scope(userp_scope scope) {
 	userp_env env= scope->env;
 	userp_scope parent= scope->parent;
 	userp_bstr_destroy(&scope->symtable.chardata);
-	if (scope->symtable.tree)
-		USERP_FREE(env, &scope->symtable.tree);
+	if (scope->symtable.hashtree)
+		USERP_FREE(env, &scope->symtable.hashtree);
 	if (scope->symtable.symbols)
 		USERP_FREE(env, &scope->symtable.symbols);
 	USERP_FREE(env, &scope);
@@ -796,268 +907,253 @@ void free_type(userp_env env, userp_type t) {
 
 */
 
-static bool symbol_tree_insert31(struct symbol_table *st, uint32_t newest, uint32_t limit) {
-	// element 0 is the "sentinel" leaf, and 'last' is the element being added
-	struct symbol_tree_node31 *tree= st->tree31;
-	struct symbol_entry *symbols= st->symbols;
+static bool userp_symtable_rb_insert31(struct userp_symtable *st, uint32_t *root, uint32_t node) {
+	// element 0 is the "sentinel" leaf, and 'node' is the element being added
+	struct hashtree_node31 *tree= HASHTREE_TREE31(st);
 	int cmp;
 	uint32_t stack[64], pos, parent, new_head, i;
+
+	assert(tree != NULL);
+	assert(tree[0].left == 0);
+	assert(tree[0].right == 0);
+	assert(tree[0].color == 0);
+
+	assert(root != NULL && *root != 0);
+	assert(tree[*root].color == 0);
+
+	tree[node].left= 0;
+	tree[node].right= 0;
+	tree[node].color= 1;
 	
-	while (newest < limit) {
-		assert(tree != NULL);
-		assert(tree[0].left == 0);
-		assert(tree[0].right == 0);
-		assert(tree[0].color == 0);
-
-		tree[newest].left= 0;
-		tree[newest].right= 0;
-		
-		// If there is no root, the new node is the root.
-		if (!st->tree_root) {
-			st->tree_root= newest;
-			tree[newest++].color= 0;
-			continue;
-		}
-		tree[newest].color= 1;
-		
-		// leaf-sentinel will double as the head-sentinel
-		stack[i= 0]= 0;
-		pos= (uint16_t) st->tree_root;
-		while (pos && i < 64) {
-			stack[++i]= pos;
-			cmp= strcmp(symbols[newest].name, symbols[pos].name);
-			pos= cmp < 0? tree[pos].left : tree[pos].right;
-		}
-		if (i >= 64) {
-			assert(i < 64);
-			return false;
-		}
-		pos= stack[i--];
-		//printf("insert at %s of %d (%s depth %d)\n", (cmp < 0? "left":"right"), (int)pos, tree[pos].color? "red":"black", (int)i);
-		if (cmp < 0)
-			tree[pos].left= newest;
-		else
-			tree[pos].right= newest;
-		// balance the tree.  Pos points at the parent node of the new node.
-		// if current is a black node, no rotations needed
-		while (i > 0 && tree[pos].color) {
-			// current is red, the imbalanced child is red, and parent is black.
-			parent= stack[i];
-			assert(tree[parent].color == 0);
-			// if the current is on the right of the parent, the parent is to the left
-			if (tree[parent].right == pos) {
-				// if the sibling is also red, we can pull down the color black from the parent
-				if (tree[tree[parent].left].color) {
-					tree[tree[parent].left].color= 0;
-					tree[pos].color= 0;
-					tree[parent].color= 1;
-					// jump twice up the tree
-					pos= stack[--i];
-					i--;
-					continue;
-				}
-				// if the imbalance (red node) is on the left, and the parent is on the left,
-				//  rotate the inner tree to the right
-				if (tree[tree[pos].left].color) {
-					// rotate right
-					new_head= tree[pos].left;
-					if (tree[parent].right == pos) tree[parent].right= new_head;
-					else tree[parent].left= new_head;
-					tree[pos].left= tree[new_head].right;
-					tree[new_head].right= pos;
-					pos= new_head;
-				}
-
-				// Now we can do the left rotation to balance the tree.
-				new_head= tree[parent].right;
-				pos= parent;
-				parent= stack[--i];
-				if (!parent) st->tree_root= new_head;
-				else if (tree[parent].right == pos) tree[parent].right= new_head;
-				else tree[parent].left= new_head;
-				tree[pos].right= tree[new_head].left;
-				tree[new_head].left= pos;
-				tree[pos].color= 1;
-				tree[new_head].color= 0;
-				break; // balanced
+	// leaf-sentinel will double as the head-sentinel
+	stack[i= 0]= 0;
+	pos= *root;
+	while (pos && i < 64) {
+		stack[++i]= pos;
+		cmp= HASHTREE_NODE_CMP(st, tree[node], tree[pos]);
+		pos= cmp < 0? tree[pos].left : tree[pos].right;
+	}
+	if (i >= 64) {
+		assert(i < 64);
+		return false;
+	}
+	pos= stack[i--];
+	//printf("insert at %s of %d (%s depth %d)\n", (cmp < 0? "left":"right"), (int)pos, tree[pos].color? "red":"black", (int)i);
+	if (cmp < 0)
+		tree[pos].left= node;
+	else
+		tree[pos].right= node;
+	// balance the tree.  Pos points at the parent node of the new node.
+	// if current is a black node, no rotations needed
+	while (i > 0 && tree[pos].color) {
+		// current is red, the imbalanced child is red, and parent is black.
+		parent= stack[i];
+		assert(tree[parent].color == 0);
+		// if the current is on the right of the parent, the parent is to the left
+		if (tree[parent].right == pos) {
+			// if the sibling is also red, we can pull down the color black from the parent
+			if (tree[tree[parent].left].color) {
+				tree[tree[parent].left].color= 0;
+				tree[pos].color= 0;
+				tree[parent].color= 1;
+				// jump twice up the tree
+				pos= stack[--i];
+				i--;
+				break;
 			}
-			// else the parent is to the right
-			else {
-				// if the sibling is also red, we can pull down the color black from the parent
-				if (tree[tree[parent].right].color) {
-					tree[tree[parent].right].color= 0;
-					tree[pos].color= 0;
-					tree[parent].color= 1;
-					// jump twice up the tree
-					pos= stack[--i];
-					i--;
-					continue;
-				}
-				// if the imbalance (red node) is on the right, and the parent is on the right,
-				//  rotate the inner tree to the left
-				if (tree[tree[pos].right].color) {
-					// rotate left
-					new_head= tree[pos].right;
-					if (tree[parent].right == pos) tree[parent].right= new_head;
-					else tree[parent].left= new_head;
-					tree[pos].right= tree[new_head].left;
-					tree[new_head].left= pos;
-					pos= new_head;
-				}
-
-				// Now we can do the right rotation to balance the tree.
-				new_head= tree[parent].left;
-				pos= parent;
-				parent= stack[--i];
-				if (!parent) st->tree_root= new_head;
-				else if (tree[parent].right == pos) tree[parent].right= new_head;
+			// if the imbalance (red node) is on the left, and the parent is on the left,
+			//  rotate the inner tree to the right
+			if (tree[tree[pos].left].color) {
+				// rotate right
+				new_head= tree[pos].left;
+				if (tree[parent].right == pos) tree[parent].right= new_head;
 				else tree[parent].left= new_head;
 				tree[pos].left= tree[new_head].right;
 				tree[new_head].right= pos;
-				tree[pos].color= 1;
-				tree[new_head].color= 0;
-				break; // balanced
+				pos= new_head;
 			}
-		}
-		// ensure the root node is black
-		tree[st->tree_root].color= 0;
-		newest++;
-	}
-	return true;
-}
 
-static bool symbol_tree_insert15(struct symbol_table *st, uint16_t newest, uint16_t limit) {
-	// element 0 is the "sentinel" leaf, and 'last' is the element being added
-	struct symbol_tree_node15 *tree= st->tree15;
-	struct symbol_entry *symbols= st->symbols;
-	int cmp, i;
-	uint16_t stack[64], pos, parent, new_head;
-
-	while (newest < limit) {
-		assert(tree != NULL);
-		assert(tree[0].left == 0);
-		assert(tree[0].right == 0);
-		assert(tree[0].color == 0);
-
-		tree[newest].left= 0;
-		tree[newest].right= 0;
-		
-		// If there is no root, the new node is the root.
-		if (!st->tree_root) {
-			st->tree_root= newest;
-			tree[newest++].color= 0;
-			continue;
+			// Now we can do the left rotation to balance the tree.
+			new_head= tree[parent].right;
+			pos= parent;
+			parent= stack[--i];
+			if (!parent) *root= new_head;
+			else if (tree[parent].right == pos) tree[parent].right= new_head;
+			else tree[parent].left= new_head;
+			tree[pos].right= tree[new_head].left;
+			tree[new_head].left= pos;
+			tree[pos].color= 1;
+			tree[new_head].color= 0;
+			break; // balanced
 		}
-		tree[newest].color= 1;
-		
-		// leaf-sentinel will double as the head-sentinel
-		stack[i= 0]= 0;
-		pos= (uint16_t) st->tree_root;
-		while (pos && i < 32) {
-			stack[++i]= pos;
-			cmp= strcmp(symbols[newest].name, symbols[pos].name);
-			pos= cmp < 0? tree[pos].left : tree[pos].right;
-		}
-		if (i >= 32) {
-			assert(i < 32);
-			return false;
-		}
-		pos= stack[i--];
-		//printf("insert at %s of %d (%s depth %d)\n", (cmp < 0? "left":"right"), (int)pos, tree[pos].color? "red":"black", (int)i);
-		if (cmp < 0)
-			tree[pos].left= newest;
-		else
-			tree[pos].right= newest;
-		// balance the tree.  Pos points at the parent node of the new node.
-		// if current is a black node, no rotations needed
-		while (i > 0 && tree[pos].color) {
-			// current is red, the imbalanced child is red, and parent is black.
-			parent= stack[i];
-			assert(tree[parent].color == 0);
-			// if the current is on the right of the parent, the parent is to the left
-			if (tree[parent].right == pos) {
-				// if the sibling is also red, we can pull down the color black from the parent
-				if (tree[tree[parent].left].color) {
-					tree[tree[parent].left].color= 0;
-					tree[pos].color= 0;
-					tree[parent].color= 1;
-					// jump twice up the tree
-					pos= stack[--i];
-					i--;
-					continue;
-				}
-				// if the imbalance (red node) is on the left, and the parent is on the left,
-				//  rotate the inner tree to the right
-				if (tree[tree[pos].left].color) {
-					// rotate right
-					new_head= tree[pos].left;
-					if (tree[parent].right == pos) tree[parent].right= new_head;
-					else tree[parent].left= new_head;
-					tree[pos].left= tree[new_head].right;
-					tree[new_head].right= pos;
-					pos= new_head;
-				}
-
-				// Now we can do the left rotation to balance the tree.
-				new_head= tree[parent].right;
-				pos= parent;
-				parent= stack[--i];
-				if (!parent) st->tree_root= new_head;
-				else if (tree[parent].right == pos) tree[parent].right= new_head;
+		// else the parent is to the right
+		else {
+			// if the sibling is also red, we can pull down the color black from the parent
+			if (tree[tree[parent].right].color) {
+				tree[tree[parent].right].color= 0;
+				tree[pos].color= 0;
+				tree[parent].color= 1;
+				// jump twice up the tree
+				pos= stack[--i];
+				i--;
+				break;
+			}
+			// if the imbalance (red node) is on the right, and the parent is on the right,
+			//  rotate the inner tree to the left
+			if (tree[tree[pos].right].color) {
+				// rotate left
+				new_head= tree[pos].right;
+				if (tree[parent].right == pos) tree[parent].right= new_head;
 				else tree[parent].left= new_head;
 				tree[pos].right= tree[new_head].left;
 				tree[new_head].left= pos;
-				tree[pos].color= 1;
-				tree[new_head].color= 0;
-				break; // balanced
+				pos= new_head;
 			}
-			// else the parent is to the right
-			else {
-				// if the sibling is also red, we can pull down the color black from the parent
-				if (tree[tree[parent].right].color) {
-					tree[tree[parent].right].color= 0;
-					tree[pos].color= 0;
-					tree[parent].color= 1;
-					// jump twice up the tree
-					pos= stack[--i];
-					i--;
-					continue;
-				}
-				// if the imbalance (red node) is on the right, and the parent is on the right,
-				//  rotate the inner tree to the left
-				if (tree[tree[pos].right].color) {
-					// rotate left
-					new_head= tree[pos].right;
-					if (tree[parent].right == pos) tree[parent].right= new_head;
-					else tree[parent].left= new_head;
-					tree[pos].right= tree[new_head].left;
-					tree[new_head].left= pos;
-					pos= new_head;
-				}
 
-				// Now we can do the right rotation to balance the tree.
-				new_head= tree[parent].left;
-				pos= parent;
-				parent= stack[--i];
-				if (!parent) st->tree_root= new_head;
-				else if (tree[parent].right == pos) tree[parent].right= new_head;
-				else tree[parent].left= new_head;
-				tree[pos].left= tree[new_head].right;
-				tree[new_head].right= pos;
-				tree[pos].color= 1;
-				tree[new_head].color= 0;
-				break; // balanced
-			}
+			// Now we can do the right rotation to balance the tree.
+			new_head= tree[parent].left;
+			pos= parent;
+			parent= stack[--i];
+			if (!parent) *root= new_head;
+			else if (tree[parent].right == pos) tree[parent].right= new_head;
+			else tree[parent].left= new_head;
+			tree[pos].left= tree[new_head].right;
+			tree[new_head].right= pos;
+			tree[pos].color= 1;
+			tree[new_head].color= 0;
+			break; // balanced
 		}
-		// ensure the root node is black
-		tree[st->tree_root].color= 0;
-		newest++;
 	}
+	// ensure the root node is black
+	tree[*root].color= 0;
 	return true;
 }
 
+static bool userp_symtable_rb_insert15(struct userp_symtable *st, uint32_t *root, uint32_t node) {
+	// element 0 is the "sentinel" leaf, and 'node' is the element being added
+	struct hashtree_node15 *tree= HASHTREE_TREE15(st);
+	int cmp;
+	uint16_t stack[32], pos, parent, new_head, i;
+
+	assert(tree != NULL);
+	assert(tree[0].left == 0);
+	assert(tree[0].right == 0);
+	assert(tree[0].color == 0);
+
+	assert(root != NULL && *root != 0);
+	assert(tree[*root].color == 0);
+
+	tree[node].left= 0;
+	tree[node].right= 0;
+	tree[node].color= 1;
+	
+	// leaf-sentinel will double as the head-sentinel
+	stack[i= 0]= 0;
+	pos= *root;
+	while (pos && i < 32) {
+		stack[++i]= pos;
+		cmp= HASHTREE_NODE_CMP(st, tree[node], tree[pos]);
+		pos= cmp < 0? tree[pos].left : tree[pos].right;
+	}
+	if (i >= 32) {
+		assert(i < 32);
+		return false;
+	}
+	pos= stack[i--];
+	//printf("insert at %s of %d (%s depth %d)\n", (cmp < 0? "left":"right"), (int)pos, tree[pos].color? "red":"black", (int)i);
+	if (cmp < 0)
+		tree[pos].left= node;
+	else
+		tree[pos].right= node;
+	// balance the tree.  Pos points at the parent node of the new node.
+	// if current is a black node, no rotations needed
+	while (i > 0 && tree[pos].color) {
+		// current is red, the imbalanced child is red, and parent is black.
+		parent= stack[i];
+		assert(tree[parent].color == 0);
+		// if the current is on the right of the parent, the parent is to the left
+		if (tree[parent].right == pos) {
+			// if the sibling is also red, we can pull down the color black from the parent
+			if (tree[tree[parent].left].color) {
+				tree[tree[parent].left].color= 0;
+				tree[pos].color= 0;
+				tree[parent].color= 1;
+				// jump twice up the tree
+				pos= stack[--i];
+				i--;
+				break;
+			}
+			// if the imbalance (red node) is on the left, and the parent is on the left,
+			//  rotate the inner tree to the right
+			if (tree[tree[pos].left].color) {
+				// rotate right
+				new_head= tree[pos].left;
+				if (tree[parent].right == pos) tree[parent].right= new_head;
+				else tree[parent].left= new_head;
+				tree[pos].left= tree[new_head].right;
+				tree[new_head].right= pos;
+				pos= new_head;
+			}
+
+			// Now we can do the left rotation to balance the tree.
+			new_head= tree[parent].right;
+			pos= parent;
+			parent= stack[--i];
+			if (!parent) *root= new_head;
+			else if (tree[parent].right == pos) tree[parent].right= new_head;
+			else tree[parent].left= new_head;
+			tree[pos].right= tree[new_head].left;
+			tree[new_head].left= pos;
+			tree[pos].color= 1;
+			tree[new_head].color= 0;
+			break; // balanced
+		}
+		// else the parent is to the right
+		else {
+			// if the sibling is also red, we can pull down the color black from the parent
+			if (tree[tree[parent].right].color) {
+				tree[tree[parent].right].color= 0;
+				tree[pos].color= 0;
+				tree[parent].color= 1;
+				// jump twice up the tree
+				pos= stack[--i];
+				i--;
+				break;
+			}
+			// if the imbalance (red node) is on the right, and the parent is on the right,
+			//  rotate the inner tree to the left
+			if (tree[tree[pos].right].color) {
+				// rotate left
+				new_head= tree[pos].right;
+				if (tree[parent].right == pos) tree[parent].right= new_head;
+				else tree[parent].left= new_head;
+				tree[pos].right= tree[new_head].left;
+				tree[new_head].left= pos;
+				pos= new_head;
+			}
+
+			// Now we can do the right rotation to balance the tree.
+			new_head= tree[parent].left;
+			pos= parent;
+			parent= stack[--i];
+			if (!parent) *root= new_head;
+			else if (tree[parent].right == pos) tree[parent].right= new_head;
+			else tree[parent].left= new_head;
+			tree[pos].left= tree[new_head].right;
+			tree[new_head].right= pos;
+			tree[pos].color= 1;
+			tree[new_head].color= 0;
+			break; // balanced
+		}
+	}
+	// ensure the root node is black
+	tree[*root].color= 0;
+	return true;
+}
+
+/*
 static bool symbol_tree_walk31(struct symbol_table *st, const char *key, bool (*walk_cb)(void *context, int sym_ofs), void *context) {
-	struct symbol_tree_node31 *tree;
+	struct hashtree_node31 *tree;
 	uint32_t node, parent[64];
 	int parent_pos, cmp;
 
@@ -1112,7 +1208,7 @@ static bool symbol_tree_walk31(struct symbol_table *st, const char *key, bool (*
 }
 
 static bool symbol_tree_walk15(struct symbol_table *st, const char *key, bool (*walk_cb)(void *context, int sym_ofs), void *context) {
-	struct symbol_tree_node15 *tree;
+	struct hashtree_node15 *tree;
 	uint16_t node, parent[32];
 	int parent_pos, cmp;
 
@@ -1166,9 +1262,11 @@ static bool symbol_tree_walk15(struct symbol_table *st, const char *key, bool (*
 	}
 	return true;
 }
+*/
 
 #ifdef UNIT_TEST
 
+/*
 struct verify_symbol_tree {
 	userp_scope scope;
 	int prev;
@@ -1226,6 +1324,7 @@ void verify_symbol_tree(userp_scope scope) {
 	if (!symbol_tree_walk(&scope->symtable, NULL, (bool(*)(void*,int)) verify_symbol_tree__checknode, &v))
 		printf("Tree corrupt!\b");
 }
+*/
 
 void dump_scope(userp_scope scope) {
 	struct userp_bstr_part *p;
@@ -1243,12 +1342,21 @@ void dump_scope(userp_scope scope) {
 			: scope->symtable_stack[scope->symtable_count-1]->id_offset
 			+ scope->symtable_stack[scope->symtable_count-1]->used - 1 )
 	);
-	printf("   local table: %d/%d %s\n",
+	printf("   local table: %d/%d%s\n",
 		(int)scope->symtable.used, (int)scope->symtable.alloc,
-		!scope->symtable.tree? "binary-search"
-			: USE_TREE31(scope->symtable.alloc)? "31-bit-tree"
-			: "15-bit-tree"
+		!scope->symtable.hashtree? " (no hash/tree)"
+			: scope->symtable.processed == scope->symtable.used? " +hash/tree"
+			: " (stale hash/tree)"
 	);
+	if (scope->symtable.hashtree) {
+		printf("    hash/tree: %d/%d buckets (%d bytes), %d tree nodes (%d bytes)\n",
+			(int)scope->symtable.ht_buckets,
+			(int)scope->symtable.ht_buckets,
+			(int)HASHTREE_BUCKET_SIZE(scope->symtable.used),
+			(int)scope->symtable.ht_nodes,
+			(int)HASHTREE_NODE_SIZE(scope->symtable.used)
+		);
+	}
 	printf("       buffers:");
 	if (scope->symtable.chardata.part_count) {
 		for (i= 0; i < scope->symtable.chardata.part_count; i++) {
@@ -1263,8 +1371,8 @@ void dump_scope(userp_scope scope) {
 		printf("  (none)\n");
 	}
 	// If the tree is used, verify it's structure
-	if (scope->symtable.tree)
-		verify_symbol_tree(scope);
+	//if (scope->symtable.tree)
+	//	verify_symbol_tree(scope);
 	printf("  Type Table: stack of %d tables, %d types\n",
 		(int)scope->typetable_count,
 		(int)(!scope->typetable_count? 0
@@ -1347,11 +1455,11 @@ UNIT_TEST(scope_symbol_treesort) {
 	buf[0]= 'b'; buf[1]= '\0';
 	if (!userp_scope_get_symbol(scope, buf, USERP_CREATE))
 		printf("Failed to add %s\n", buf);
-	printf("tree is %s\n", scope->symtable.tree? "allocated" : "null");
+	printf("tree is %s\n", scope->symtable.hashtree? "allocated" : "null");
 	buf[0]= 'a';
 	if (!userp_scope_get_symbol(scope, buf, USERP_CREATE))
 		printf("Failed to add %s\n", buf);
-	printf("tree is %s\n", scope->symtable.tree? "allocated" : "null");
+	printf("tree is %s\n", scope->symtable.hashtree? "allocated" : "null");
 	// Now start over
 	printf("# reset\n");
 	userp_drop_scope(scope);
@@ -1364,16 +1472,16 @@ UNIT_TEST(scope_symbol_treesort) {
 			printf("Failed to add %s\n", buf);
 	}
 	// The tree should not be created yet
-	printf("tree is %s\n", scope->symtable.tree? "allocated" : "null");
+	printf("tree is %s\n", scope->symtable.hashtree? "allocated" : "null");
 	printf("# 1 node out of order\n");
 	// Now insert one node out of order, causing it to tree up everything
 	snprintf(buf, sizeof(buf), "%05d", 9999);
 	if (!userp_scope_get_symbol(scope, buf, USERP_CREATE))
 		printf("Failed to add %s\n", buf);
-	printf("tree is %s\n", scope->symtable.tree? "allocated" : "null");
-	if (!scope->symtable.tree)
+	printf("tree is %s\n", scope->symtable.hashtree? "allocated" : "null");
+	if (!scope->symtable.hashtree)
 		return;
-	verify_symbol_tree(scope);
+	//verify_symbol_tree(scope);
 	
 	// Let it allocate right up to the limit of the 15-bit tree implementation.
 	scope_symbol_vec_alloc(scope, 1<<15);

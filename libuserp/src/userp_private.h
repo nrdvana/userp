@@ -72,6 +72,7 @@ struct userp_env {
 	int scope_stack_max;
 	int enc_output_parts;
 	int enc_output_bufsize;
+	int salt;
 };
 
 #define USERP_CLEAR_ERROR(env) ((env)->err.code= 0)
@@ -197,6 +198,7 @@ struct symbol_entry {
 	const char *name;
 	userp_type type_ref;
 	userp_symbol canonical;
+	uint32_t hash;
 };
 
 struct userp_symtable {

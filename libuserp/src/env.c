@@ -95,7 +95,6 @@ userp_env userp_new_env(userp_alloc_fn alloc_fn, userp_diag_fn diag_fn, void *cb
 	env->scope_stack_max=    USERP_DEFAULT_SCOPE_STACK_MAX;
 	env->enc_output_parts=   USERP_DEFAULT_ENC_OUTPUT_PARTS;
 	env->enc_output_bufsize= USERP_DEFAULT_ENC_OUTPUT_BUFSIZE;
-	
 	return env;
 }
 
