@@ -222,8 +222,9 @@ struct userp_symtable {
 	void *hashtree;               // hash table + RB trees
 	size_t ht_alloc,              // number of bytes allocated to the hashtree
 		ht_buckets,               // number of hash buckets
-		ht_nodes,                 // number of tree nodes (aka number of hash collisions)
-		ht_salt;                  // salt value to ransomize hash layout
+		ht_bucketused,            // number of hash buckets occupied
+		ht_nodes,                 // number of tree nodes holding collisions
+		ht_salt;                  // salt value to randomize hash layout
 };
 
 struct symbol_entry *userp_symtable_find(struct userp_symtable *st, const char *name);
@@ -291,6 +292,17 @@ extern userp_dec userp_new_dec_silent(
 extern bool userp_grab_dec_silent(userp_env env, userp_dec dec);
 extern void userp_drop_dec_silent(userp_env env, userp_dec dec);
 
+static inline size_t roundup_pow2(size_t s) {
+	s |= s >> 1;
+	s |= s >> 2;
+	s |= s >> 4;
+	s |= s >> 8;
+	s |= s >> 16;
+	#if SIZE_MAX > 0xFFFFFFFF
+	s |= s >> 32;
+	#endif
+	return s+1;
+}
 
 #define FRAME_TYPE_RECORD  1
 #define FRAME_TYPE_ARRAY   2

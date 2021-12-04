@@ -45,6 +45,11 @@ struct userp_bstr;
 // Warnings
 #define USERP_WARN          0x2000 // generic warning
 #define USERP_WLARGEMETA    0x2001 // encoded or decoded metadata is suspiciously large
+// Diagnostics
+#define USERP_MSG_SYMTABLE_HASHTREE_ALLOC   0x0001
+#define USERP_MSG_SYMTABLE_HASHTREE_EXTEND  0x0002
+#define USERP_MSG_SYMTABLE_HASHTREE_UPDATE  0x0002
+#define USERP_MSG_SYMTABLE_HASHTREE_REBUILD 0x0003
 
 extern int    userp_diag_get_code(userp_diag diag);
 extern bool   userp_diag_get_buffer(userp_diag diag, userp_buffer *buf_p, size_t *pos_p, size_t *len_p);
