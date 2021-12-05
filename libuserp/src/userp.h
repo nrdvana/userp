@@ -210,6 +210,7 @@ static inline void userp_bstr_destroy(struct userp_bstr *str) { userp_bstr_parta
 extern userp_scope userp_new_scope(userp_env env, userp_scope parent);
 extern bool userp_grab_scope(userp_scope scope);
 extern bool userp_drop_scope(userp_scope scope);
+extern bool userp_scope_reserve(userp_scope scope, size_t min_symbols, size_t min_types);
 
 extern userp_symbol userp_scope_get_symbol(userp_scope scope, const char * name, int flags);
 

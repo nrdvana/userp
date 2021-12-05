@@ -2,6 +2,25 @@
 #include "userp.h"
 #include "userp_private.h"
 
+static bool scope_symtable_alloc(userp_scope scope, size_t n);
+static bool scope_typetable_alloc(userp_scope scope, size_t n);
+
+bool userp_scope_reserve(userp_scope scope, size_t min_symbols, size_t min_types) {
+	// if scope is finalized, emit an error
+	if (scope->is_final) {
+		userp_diag_set(&scope->env->err, USERP_ESCOPEFINAL, "Can't alter a finalized scope");
+		USERP_DISPATCH_ERR(scope->env);
+		return false;
+	}
+	if (scope->symtable.alloc < min_symbols)
+		if (!scope_symtable_alloc(scope, min_symbols))
+			return false;
+	if (scope->typetable.alloc < min_types)
+		if (!scope_typetable_alloc(scope, min_types))
+			return false;
+	return true;
+}
+
 /*----------------------------------------------------------------------------
 
 ## Symbol Tables
@@ -52,20 +71,38 @@ struct hashtree_node31 {
 		color: 1;
 };
 
-static bool scope_init_symtable(userp_scope scope);
-static bool scope_symbol_vec_alloc(userp_scope scope, size_t n);
-
 // This handles both the case of limiting symbols to the 2**31 limit imposed by the hash table,
 // and also guards against overflow of size_t for allocations on 32-bit systems.
-#define MAX_SYMTABLE_STRUCT_ALLOC  (SIZE_MAX/sizeof(struct symbol_entry))
-#define MAX_SYMTABLE_ENTRIES (MAX_SYMTABLE_STRUCT_ALLOC < (size_t)(1<<31)? MAX_SYMTABLE_STRUCT_ALLOC : (size_t)(1<<31))
+#define MAX_SYMTABLE_ENTRIES (MIN(SIZE_MAX/sizeof(struct symbol_entry), (size_t)(1<<31)-1))
 
-static bool scope_symbol_vec_alloc(userp_scope scope, size_t n) {
+static bool scope_symtable_alloc(userp_scope scope, size_t n) {
 	userp_env env= scope->env;
+	size_t i;
+
+	assert(!scope->is_final);
+	assert(n > 0);
 	// On the first allocation, allocate the exact number requested.
 	// After that, allocate in powers of two.
 	if (scope->symtable.alloc)
 		n= roundup_pow2(n);
+	else {
+		if (n == 1) n= 64; // n=1 indicates defining symbols in a loop
+		if (!scope->has_symbols) {
+			// On the first allocation, also need to add this symtable to the set used by the scope.
+			// When allocated, the userp_scope left room in symtable_stack for one extra
+			i= scope->symtable_count++;
+			scope->symtable_stack[i]= &scope->symtable;
+			scope->symtable.id_offset= !i? 0
+				: scope->symtable_stack[i-1]->id_offset
+				+ scope->symtable_stack[i-1]->used
+				- 1; // because slot 0 of each symbol table is used as a NUL element.
+			scope->symtable.chardata.env= scope->env;
+			scope->symtable.hash_salt= scope->env->salt;
+			scope->symtable.used= 1; // elem 0 is always reserved
+			scope->has_symbols= true;
+			// All other fields were blanked during the userp_scope constructor
+		}
+	}
 	// Symbol tables never lose symbols until destroyed, so don't bother with shrinking
 	if (n <= scope->symtable.alloc)
 		return true; // nothing to do
@@ -87,6 +124,7 @@ static bool scope_symbol_vec_alloc(userp_scope scope, size_t n) {
 	return true;
 }
 
+#define MAX_HASHTREE_BUCKET_SIZE 4
 #define HASHTREE_BUCKET_SIZE(count) \
 	( ((count) >> 15)? 4 : ((count) >> 7)? 2 : 1 )
 
@@ -323,6 +361,10 @@ bool userp_symtable_hashtree_insert(struct userp_symtable *st, int sym_ofs) {
 	return true;
 }
 
+// This handles both the case of limiting tables to 2x the max number of symbols,
+// and also guards against overflow of size_t for allocations on 32-bit systems.
+#define MAX_HASH_BUCKETS (MIN((SIZE_MAX/MAX_HASHTREE_BUCKET_SIZE), MAX_SYMTABLE_ENTRIES*2))
+
 bool userp_scope_symtable_hashtree_populate(struct userp_symtable *st, userp_env env) {
 	size_t alloc, new_buckets, batch;
 
@@ -341,27 +383,19 @@ bool userp_scope_symtable_hashtree_populate(struct userp_symtable *st, userp_env
 			);
 			USERP_DISPATCH_MSG(env);
 		}
-		// Is the table likely at it's final size?  a small st_used or existing st_processed
-		// indicate it is growing dynamically.  (used and processed counts include the NULL
-		// symbol which isn't really a symbol)
-		if (st->used > 2 && st->processed < 2) {
-			// This is probably the final size.  Allocate a hash table of 2x buckets
-			new_buckets= st->used << 1;
-			// but don't allocate anything smaller than 256
-			if (new_buckets < 256)
-				new_buckets= 256;
-		}
-		else {
-			// For a growing symbol table, re-allocations are expensive at larger sizes,
-			// so allocate more aggressively.
-			new_buckets= st->used << 2;
-			if (new_buckets < 1024)
-				new_buckets= 1024;
-			else {
-				// round up to a power of 2 allocation
-				new_buckets= roundup_pow2(new_buckets);
-			}
-		}
+		// The allocated size of the symbol vector is a good hint about the ideal size for
+		// the hashtable, since the user might have requested something specific.
+		// But don't go smaller than 256;
+		assert(st->alloc <= MAX_SYMTABLE_ENTRIES);
+		// For first allocation, only reserve 2x.  For later allocations, jump by 4x.
+		// Guaranteed to be within size_t because of MAX_SYMTABLE_ENTRIES
+		new_buckets= st->alloc << (st->bucket_alloc? 2 : 1);
+		// don't allocate tiny hash tables, just adds collisions for insignificant savings
+		if (new_buckets < 0x200)
+			new_buckets= 0x200;
+		else if (new_buckets > MAX_HASH_BUCKETS)
+			new_buckets= MAX_HASH_BUCKETS;
+		// check how many bytes that it, and how many we have already
 		alloc= HASHTREE_BUCKET_SIZE(st->used) * new_buckets;
 		if (alloc > HASHTREE_BUCKET_SIZE(st->processed) * st->bucket_alloc) {
 			if (env->log_trace) {
@@ -479,15 +513,11 @@ userp_symbol userp_scope_get_symbol(userp_scope scope, const char *name, int fla
 		USERP_DISPATCH_ERR(env);
 		return 0;
 	}
-	// In case it's the first symbol
-	if (!scope->has_symbols)
-		if (!scope_init_symtable(scope))
-			return 0;
-	pos= scope->symtable.used;
 	// Grow the symbols array if needed
-	if (pos >= scope->symtable.alloc)
-		if (!scope_symbol_vec_alloc(scope, pos+1))
+	if (scope->symtable.used >= scope->symtable.alloc)
+		if (!scope_symtable_alloc(scope, scope->symtable.alloc+1))
 			return 0;
+	pos= scope->symtable.used++;
 	// Copy the name into scope storage
 	len= strlen(name);
 	if (!(name= (char*) userp_bstr_append_bytes(&scope->symtable.chardata, (const uint8_t*) name, len+1, USERP_CONTIGUOUS)))
@@ -663,21 +693,17 @@ bool userp_scope_parse_symbols(userp_scope scope, struct userp_bstr_part *parts,
 		USERP_DISPATCH_ERR(env);
 		return false;
 	}
+	// ensure symbol vector has sym_count slots available (if sym_count provided)
+	// scope_symtable_alloc needs to be called regardless, if symtable not initialized yet.
+	n= scope->symtable.used + (sym_count? sym_count : 1);
+	if (n > scope->symtable.alloc)
+		if (!scope_symtable_alloc(scope, n))
+			return false;
 	// Initialize chardata (if not already) and ensure space for input.part_count*2 - 1 new parts.
 	// There can be at most one part added for each input part and one for each boundary between input parts.
-	if (!scope->has_symbols)
-		if (!scope_init_symtable(scope))
-			return false;
 	n= scope->symtable.chardata.part_count + part_count*2 - 1;
 	if (n > scope->symtable.chardata.part_alloc)
 		if (!userp_bstr_partalloc(&scope->symtable.chardata, n))
-			return false;
-	
-	// ensure symbol vector has sym_count slots allocated (if sym_count provided)
-	// if sym_coun not given, start with 32. TODO: make it configurable.
-	n= scope->symtable.used + (sym_count > 0? sym_count : 32);
-	if (n > scope->symtable.alloc)
-		if (!scope_symbol_vec_alloc(scope, n))
 			return false;
 	// Record the original status of the symbol table, to be able to revert changes
 	orig_sym_used= scope->symtable.used;
@@ -706,7 +732,7 @@ bool userp_scope_parse_symbols(userp_scope scope, struct userp_bstr_part *parts,
 			pos_ofs= parse.dest_pos - scope->symtable.symbols;
 			//lastsort_ofs= parse.dest_last_sorted - scope->symtable.symbols;
 			// Perform re-alloc
-			if (!scope_symbol_vec_alloc(scope, scope->symtable.alloc * 2)) {
+			if (!scope_symtable_alloc(scope, scope->symtable.alloc+1 /* gets rounded up */)) {
 				success= false;
 				break;
 			}
@@ -842,6 +868,57 @@ to save them the trouble of the buffers.
 
 */
 
+#define MAX_TYPETABLE_STRUCT_ALLOC (SIZE_MAX / sizeof(struct type_entry))
+#define MAX_TYPETABLE_ENTRIES (MAX_TYPETABLE_STRUCT_ALLOC < (size_t)(1<<31)? MAX_TYPETABLE_STRUCT_ALLOC : (size_t)(1<<31))
+
+static bool scope_typetable_alloc(userp_scope scope, size_t n) {
+	userp_env env= scope->env;
+	size_t i;
+
+	assert(!scope->is_final);
+	assert(n > 0);
+	// On the first allocation, allocate the exact number requested (unless '1')
+	// After that, allocate in powers of two.
+	if (scope->typetable.alloc)
+		n= roundup_pow2(n);
+	else {
+		// n=1 indicates added one at a time, so block-alloc
+		if (n == 1) n= 64;
+		if (!scope->has_types) {
+			// On the first allocation, also need to add this typetable to the set used by the scope.
+			// When allocated, the userp_scope left room in typetable_stack for one extra
+			i= scope->typetable_count++;
+			scope->typetable_stack[i]= &scope->typetable;
+			scope->typetable.id_offset= !i? 1
+				: scope->typetable_stack[i-1]->id_offset
+				+ scope->typetable_stack[i-1]->used;
+			scope->typetable.typeobjects.env= env;
+			scope->typetable.typedata.env= env;
+			scope->has_types= true;
+			// All other fields were blanked during the userp_scope constructor
+		}
+	}
+	// Type tables never shrink
+	if (n <= scope->typetable.alloc)
+		return true; // nothing to do
+	// Library implementation is capped at 31-bit references, but on a 32-bit host it's less than that
+	// to prevent size_t overflow.
+	if (n >= MAX_TYPETABLE_ENTRIES) {
+		userp_diag_setf(&env->err, USERP_EDOINGITWRONG,
+			"Can't resize type table larger than " USERP_DIAG_SIZE " entries",
+			(size_t) MAX_TYPETABLE_ENTRIES
+		);
+		USERP_DISPATCH_ERR(env);
+		return false;
+	}
+
+	if (!USERP_ALLOC_ARRAY(env, &scope->typetable.types, n))
+		return false;
+
+	scope->typetable.alloc= n;
+	return true;
+}
+
 userp_type userp_scope_get_type(userp_scope scope, userp_symbol name, int flags) {
 	// look up the symbol (binary search on symbol table), return the type if it exists,
 	// If not found, go to parent scope and look up symbol of same name
@@ -928,31 +1005,6 @@ userp_scope userp_new_scope(userp_env env, userp_scope parent) {
 		memcpy(scope->typetable_stack, parent->typetable_stack, parent->typetable_count);
 	}
 	return scope;
-}
-
-static bool scope_init_symtable(userp_scope scope) {
-	// sanity check
-	if (scope->has_symbols)
-		return true;
-	if (scope->is_final) {
-		userp_diag_set(&scope->env->err, USERP_ESCOPEFINAL, "Can't add symbols to a finalized scope");
-		USERP_DISPATCH_ERR(scope->env);
-		return false;
-	}
-
-	scope->symtable.id_offset= !scope->symtable_count? 0
-		: scope->symtable_stack[scope->symtable_count-1]->id_offset
-		  + scope->symtable_stack[scope->symtable_count-1]->used
-		  - 1; // because slot 0 of each symbol table is used as a NUL element.
-
-	// When allocated, the userp_scope left room in symtable_stack for one extra
-	scope->symtable_stack[scope->symtable_count++]= &scope->symtable;
-	scope->symtable.chardata.env= scope->env;
-	scope->symtable.hash_salt= scope->env->salt;
-	scope->symtable.used= 1; // elem 0 is always reserved
-	scope->has_symbols= true;
-	return scope_symbol_vec_alloc(scope, 1);
-	// All other fields were blanked during the userp_scope constructor
 }
 
 static void userp_free_scope(userp_scope scope) {
@@ -1615,7 +1667,7 @@ UNIT_TEST(scope_symbol_treesort) {
 	//verify_symbol_tree(scope);
 	
 	// Let it allocate right up to the limit of the 15-bit tree implementation.
-	scope_symbol_vec_alloc(scope, 1<<15);
+	scope_symtable_alloc(scope, 1<<15);
 
 	printf("# 10K nodes decreasing\n");
 	for (i= 9999; i >= 0; i--) {

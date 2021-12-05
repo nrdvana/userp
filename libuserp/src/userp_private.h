@@ -309,6 +309,14 @@ static inline size_t roundup_pow2(size_t s) {
 #define USERP_DEC_FRAME_ALLOC_ROUND(x) (((x) + 31) & ~15)
 #endif
 
+
+#ifndef MIN
+#define MIN(a,b) (((a)<(b))?(a):(b))
+#endif
+#ifndef MAX
+#define MAX(a,b) (((a)>(b))?(a):(b))
+#endif
+
 #define CATCH(label) if (0) label: 
 
 void userp_unimplemented(const char* msg);
