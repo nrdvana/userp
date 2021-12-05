@@ -122,89 +122,6 @@ struct userp_env {
 
 // -------------------------- userp_scope.c --------------------------
 
-#define SYMBOL_SCOPE_BITS  (sizeof(userp_symbol)*8/3)
-#define SYMBOL_OFS_BITS    (sizeof(userp_symbol)*8 - SYMBOL_SCOPE_BITS)
-#define SYMBOL_SCOPE_LIMIT (1 << SYMBOL_SCOPE_BITS)
-#define SYMBOL_OFS_LIMIT   (1 << SYMBOL_OFS_BITS)
-
-#ifndef USERP_SCOPE_TABLE_ALLOC_ROUND
-#define USERP_SCOPE_TABLE_ALLOC_ROUND(x) (((x) + 255) & ~(size_t)255)
-#endif
-
-#define TYPE_CLASS_ANY      1
-#define TYPE_CLASS_INT      2
-#define TYPE_CLASS_SYM      3
-#define TYPE_CLASS_TYPE     4
-#define TYPE_CLASS_CHOICE   5
-#define TYPE_CLASS_ARRAY    6
-#define TYPE_CLASS_RECORD   7
-
-struct named_int {
-	userp_symbol name;
-	intmax_t value;
-};
-
-struct choice_option {
-	userp_type type;
-	bool is_value: 1;
-	intmax_t merge_ofs, merge_count;
-	struct userp_bstr value;
-};
-
-struct record_field {
-	userp_symbol name;
-	userp_type type;
-	int placement;
-};
-
-#define USERP_TYPE_COMMON_FIELDS \
-	userp_scope scope;           \
-	userp_symbol name;           \
-	int type_class;              \
-	int align;                   \
-	int pad;                     
-
-struct userp_type {
-	USERP_TYPE_COMMON_FIELDS
-};
-
-struct userp_type_int {
-	USERP_TYPE_COMMON_FIELDS
-	bool has_min:1, has_max:1, has_bits:1, has_bswap:1;
-	intmax_t min, max;
-	int bits, bswap;
-	int name_count;
-	struct named_int names[];
-};
-
-struct userp_type_choice {
-	USERP_TYPE_COMMON_FIELDS
-	size_t option_count;
-	struct choice_option options[];
-};
-
-struct userp_type_array {
-	USERP_TYPE_COMMON_FIELDS
-	userp_type elem_type;
-	userp_type dim_type;
-	size_t dimension_count;
-	size_t dimensions[];
-};
-
-struct userp_type_record {
-	USERP_TYPE_COMMON_FIELDS
-	size_t static_bits;
-	userp_type other_field_type;
-	size_t field_count;
-	struct record_field fields[];
-};
-
-struct type_table {
-	userp_type *types;
-	userp_type id_offset;
-	int used, alloc;
-};
-
 struct symbol_entry {
 	const char *name;
 	userp_type type_ref;
@@ -229,7 +146,77 @@ struct userp_symtable {
 		node_used;                // number of tree nodes holding collisions
 };
 
-struct symbol_entry *userp_symtable_find(struct userp_symtable *st, const char *name);
+struct type_entry {
+	userp_symbol name;
+	int32_t typeclass;
+	void *typeobj;
+};
+
+struct userp_typetable {
+	struct type_entry *types;     // an array of type entries
+	struct userp_bstr typeobjects;// type definition structs allocated back-to-back in buffers
+	struct userp_bstr typedata;   // encoded type definitions packed in buffers
+	size_t used, alloc;           // number of types in .types[], and number of slots allocated.
+	userp_type id_offset;         // ID of types[0]
+};
+
+#define TYPE_CLASS_ANY      1
+#define TYPE_CLASS_INT      2
+#define TYPE_CLASS_SYM      3
+#define TYPE_CLASS_TYPE     4
+#define TYPE_CLASS_CHOICE   5
+#define TYPE_CLASS_ARRAY    6
+#define TYPE_CLASS_RECORD   7
+
+struct named_int {
+	userp_symbol name;
+	intmax_t value;
+};
+struct userp_type_int {
+	int align;
+	int pad;
+	bool has_min:1, has_max:1, has_bits:1, has_bswap:1;
+	intmax_t min, max;
+	int bits, bswap;
+	int name_count;
+	struct named_int names[];
+};
+
+struct choice_option {
+	userp_type type;
+	bool is_value: 1;
+	intmax_t merge_ofs, merge_count;
+	struct userp_bstr value;
+};
+struct userp_type_choice {
+	int align;
+	int pad;
+	size_t option_count;
+	struct choice_option options[];
+};
+
+struct userp_type_array {
+	int align;
+	int pad;
+	userp_type elem_type;
+	userp_type dim_type;
+	size_t dimension_count;
+	size_t dimensions[];
+};
+
+struct record_field {
+	userp_symbol name;
+	userp_type type;
+	int placement;
+};
+struct userp_type_record {
+	int align;
+	int pad;
+	size_t static_bits;
+	userp_type other_field_type;
+	size_t field_count;
+	struct record_field fields[];
+};
 
 struct userp_scope {
 	userp_env env;
@@ -244,7 +231,7 @@ struct userp_scope {
 	size_t typetable_count;
 	struct userp_symtable symtable, 
 		**symtable_stack;
-	struct type_table typetable,
+	struct userp_typetable typetable,
 		*typetable_stack[];
 };
 

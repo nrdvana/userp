@@ -62,11 +62,15 @@ static bool scope_symbol_vec_alloc(userp_scope scope, size_t n);
 
 static bool scope_symbol_vec_alloc(userp_scope scope, size_t n) {
 	userp_env env= scope->env;
+	// On the first allocation, allocate the exact number requested.
+	// After that, allocate in powers of two.
+	if (scope->symtable.alloc)
+		n= roundup_pow2(n);
 	// Symbol tables never lose symbols until destroyed, so don't bother with shrinking
-	n= USERP_SCOPE_TABLE_ALLOC_ROUND(n);
 	if (n <= scope->symtable.alloc)
 		return true; // nothing to do
-	// well that would be a lot of symbols
+	// Library implementation is capped at 31-bit references, but on a 32-bit host it's less than that
+	// to prevent size_t overflow.
 	if (n >= MAX_SYMTABLE_ENTRIES) {
 		userp_diag_setf(&env->err, USERP_EDOINGITWRONG,
 			"Can't resize symbol table larger than " USERP_DIAG_SIZE " entries",
