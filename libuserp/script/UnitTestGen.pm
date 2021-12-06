@@ -121,16 +121,28 @@ sub run {
 sub scan_source_files {
 	my $self= shift;
 	my @tests;
-	for my $fname (@{ $self->source_files }) {
+	my %included_from;
+	my @sources= @{ $self->source_files };
+	for my $fname (@sources) {
 		open my $fh, '<', $fname or die "Can't open $_\n";
 		while (<$fh>) {
-			push @tests, { name => $1, file => $fname } if /^UNIT_TEST\((\w+)\)/;
+			if (/^UNIT_TEST\((\w+)\)/) {
+				push @tests, { name => $1, file => ($included_from{$fname}||$fname) };
+			}
 			if (m,^/[*]OUTPUT$, && @tests) {
 				$tests[-1]{output}= '';
 				while (<$fh>) {
 					last if m,[*]/,;
 					$tests[-1]{output} .= $_;
 				}
+			}
+			if (m,^#include "([^"]+)",) {
+				my $incname= $1;
+				if ($fname =~ m,(.*/),) {
+					$incname= $1 . $incname;
+				}
+				push @sources, $incname;
+				$included_from{$incname}= $fname;
 			}
 		}
 	}
