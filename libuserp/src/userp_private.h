@@ -319,7 +319,9 @@ static inline size_t roundup_pow2(size_t s) {
 
 #define CATCH(label) if (0) label: 
 
-void userp_unimplemented(const char* msg);
-#define unimplemented(x) userp_unimplemented(x)
+static inline void unimplemented(const char* msg) {
+	printf("unimplemented: %s", msg);
+	abort();
+}
 
 #endif /* USERP_PROTECTED_H */
