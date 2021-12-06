@@ -414,8 +414,8 @@ UNIT_TEST(env_new_free) {
 	userp_free_env(env);
 }
 /*OUTPUT
-/alloc 0x0+ to \d+ = 0x\w+/
-/alloc 0x\w+ to 0 = 0x0+/
+alloc 0x0+ to \d+ = 0x\w+
+alloc 0x\w+ to 0 = 0x0+
 */
 
 UNIT_TEST(env_grab_drop) {
@@ -425,8 +425,8 @@ UNIT_TEST(env_grab_drop) {
 	userp_drop_env(env);
 }
 /*OUTPUT
-/alloc 0x0+ to \d+ = 0x\w+/
-/alloc 0x\w+ to 0 = 0x0+/
+alloc 0x0+ to \d+ = 0x\w+
+alloc 0x\w+ to 0 = 0x0+
 */
 
 #endif

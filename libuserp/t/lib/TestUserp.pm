@@ -11,9 +11,9 @@ sub run_unittest {
 	my $test_name= shift;
 	unless (defined $unittest_exe) {
 		$unittest_exe= $ENV{UNITTEST_ENTRYPOINT}
-			|| -f 'build/unittest'? 'build/unittest'
-			 : -f './unittest'? './unittest'
-			 : '../unittest';
+			|| (-f 'build/unittest' && 'build/unittest')
+			|| (-f './unittest' && './unittest')
+			|| '../unittest';
 		$unittest_exe= "./$unittest_exe" unless $unittest_exe =~ m,/,;
 		-e $unittest_exe or croak "unittest binary '$unittest_exe' not found";
 		-x $unittest_exe or croak "unittest binary '$unittest_exe' is not executable";
@@ -39,7 +39,10 @@ sub check_unittest_output {
 		$expected =~ /\G([^\r\n]*)\r?(\n|$)/gc or die substr($expected, pos $expected);
 		my $line= $1;
 		# If it's a regex notation, /.../, use as-is, else convert the literal into a regex.
-		my $re_text= ($line =~ m,^/(.*)/$,)? $1 : quotemeta($line);
+		my $re_text= $line;
+#		($line =~ m,^/(.*)/$,)? $1
+#			: ($line =~ m,^[~](.*)$,)? $1
+#			: quotemeta($line);
 		$re_text =~ s/\\\n/\\n/g; # use \n escape notations instead of a backslash followed by literal newline char
 		$re_text= '\G'.$re_text unless $resync;
 		# Match against the next portion of $actual
@@ -49,6 +52,7 @@ sub check_unittest_output {
 			main::pass("Found output: $line");
 			$resync= 0;
 		} else {
+#			{ use re "debug"; $actual =~ /$re_text/gc; }
 			# mismatch.  Report the error, then stop anchoring until the next successful match.
 			main::fail("Found output: $line");
 			$success= 0;
@@ -88,8 +92,8 @@ sub output_text_to_perl {
 	sub esc {
 		defined $escapes{$_}? $escapes{$_} : sprintf("\\x%02X", ord)
 	}
-	return ' ""' unless length $string;
-	return ' "'.join "\n.", map { s/[\$\@\"\\\x00-\x1F\x7F-\xFF]/esc/eg; qq{"$_\\n"} }
+	return '""' unless length $string;
+	return join "\n.", map { s/[\$\@\"\\\x00-\x1F\x7F-\xFF]/esc/eg; qq{"$_\\n"} }
 		split /\n/, $string;
 }
 

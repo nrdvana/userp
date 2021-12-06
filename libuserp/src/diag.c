@@ -489,7 +489,7 @@ UNIT_TEST(diag_ref_bufstr) {
 	printf("\nwrote=%d\n", wrote);
 }
 /*OUTPUT
-String: "test\x00\x01\x02"
+String: "test\\x00\\x01\\x02"
 wrote=26
 */
 

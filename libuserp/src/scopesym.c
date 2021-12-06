@@ -151,7 +151,7 @@ static bool scope_symtable_alloc(userp_scope scope, size_t n) {
 static inline uint32_t userp_symtable_calc_hash(struct userp_symtable *st, const char *name) {
 	// This is mostly MurmurHash32 by Austin Appleby, but I fudged the
 	// implementation a bit since I don't have the key length in advance.
-	uint32_t hash= 0, accum= *name;
+	uint32_t hash= 0, accum= 0;
 	const char *pos= name;
 	if (*pos) while (1) {
 		accum= (accum << 7) ^ *pos++;
@@ -813,7 +813,7 @@ void dump_scope(userp_scope scope) {
 	// If the tree is used, verify it's structure
 	//if (scope->symtable.tree)
 	//	verify_symbol_tree(scope);
-	printf("  Type Table: stack of %d tables, %d types\n",
+	printf("    Type Table: stack of %d tables, %d types\n",
 		(int)scope->typetable_count,
 		(int)(!scope->typetable_count? 0
 			: scope->typetable_stack[scope->typetable_count-1]->id_offset
@@ -836,25 +836,25 @@ UNIT_TEST(scope_alloc_free) {
 	printf("drop inner = %d\n", userp_drop_scope(inner));
 }
 /*OUTPUT
-/alloc 0x0+ to \d+ = 0x\w+/
+alloc 0x0+ to \d+ = 0x\w+
 # alloc outer
-/alloc 0x0+ to \d+ = 0x\w+/
+alloc 0x0+ to \d+ = 0x\w+
 # alloc inner
-/alloc 0x0+ to \d+ = 0x\w+/
+alloc 0x0+ to \d+ = 0x\w+
 # env->refcnt=3  outer->refcnt=2  inner->refcnt=1
 drop env = 0
 drop outer = 0
 # free all via refcnt
-/alloc 0x\w+ to 0 = 0x0+/
-/alloc 0x\w+ to 0 = 0x0+/
-/alloc 0x\w+ to 0 = 0x0+/
+alloc 0x\w+ to 0 = 0x0+
+alloc 0x\w+ to 0 = 0x0+
+alloc 0x\w+ to 0 = 0x0+
 drop inner = 1
 */
 
 UNIT_TEST(scope_symbol_sorted) {
 	char buf[32];
 	int i;
-	userp_env env= userp_new_env(logging_alloc, userp_file_logger, stdout, 0);
+	userp_env env= userp_new_env(NULL, userp_file_logger, stdout, 0);
 	userp_scope scope= userp_new_scope(env, NULL);
 	for (i= 0; i < 1000; i++) {
 		snprintf(buf, sizeof(buf), "%8d", i);
@@ -866,23 +866,12 @@ UNIT_TEST(scope_symbol_sorted) {
 	userp_drop_env(env);
 }
 /*OUTPUT
-/alloc 0x0+ to \d+ = 0x\w+/
-/alloc 0x0+ to \d+ = 0x\w+/
-/alloc 0x0+ to \d+ = 0x\w+/
-/alloc 0x0+ to \d+ = 0x\w+/
-/alloc 0x0+ to \d+ = 0x\w+/
-/alloc 0x0+ to \d+ = 0x\w+ POINTER_IS_BUFFER_DATA/
 Scope level=0  refcnt=1 has_symbols
-  Symbol Table: stack of 1 tables, 5 symbols
-   local table: 6/256 binary-search
-       buffers:  [0-20]/4096
-  Type Table: stack of 0 tables, 0 types
-/alloc 0x\w+ to 0 = 0x0+ POINTER_IS_BUFFER_DATA/
-/alloc 0x\w+ to 0 = 0x0+/
-/alloc 0x\w+ to 0 = 0x0+/
-/alloc 0x\w+ to 0 = 0x0+/
-/alloc 0x\w+ to 0 = 0x0+/
-/alloc 0x\w+ to 0 = 0x0+/
+ *Symbol Table: stack of 1 tables, 1000 symbols
+ *local table: 1000/1024 partially indexed \(\d+ vector bytes\)
+ *hashtree: \d+/\d+\+\d+ \(\d+ table bytes, \d+ node bytes\)
+ *buffers:  \[0-4095\]/4096  \[0-4905\]/8192
+ *Type Table: stack of 0 tables, 0 types
 */
 
 UNIT_TEST(scope_symbol_treesort) {
@@ -967,7 +956,41 @@ UNIT_TEST(scope_symbol_treesort) {
 	userp_drop_env(env);
 }
 /*OUTPUT
-/.* ?/
+# two out-of-order nodes
+Scope level=0  refcnt=1 has_symbols
+  Symbol Table: stack of 1 tables, 1 symbols
+   local table: 1/\d+ not indexed \(\d+ vector bytes\)
+       buffers:  \[0-2\]/4096
+    Type Table: stack of 0 tables, 0 types
+debug: userp_scope: alloc symtable hashtree size=\d+ buckets=\d+ for 2 symbols
+Scope level=0  refcnt=1 has_symbols
+  Symbol Table: stack of 1 tables, 2 symbols
+ *local table: 2/\d+ partially indexed \(\d+ vector bytes\)
+ *hashtree: 1/\d+\+0 \(\d+ table bytes, \d+ node bytes\)
+ *buffers:  \[0-4\]/4096
+ *Type Table: stack of 0 tables, 0 types
+# reset
+# 12K nodes increasing
+(debug:.*\n)*
+# 10K nodes decreasing
+# 10K nodes into the middle of the tree
+(debug:.*\n)*
+Scope level=0  refcnt=1 has_symbols
+  Symbol Table: stack of 1 tables, 32767 symbols
+ *local table: 32767/\d+ indexed \(\d+ vector bytes\)
+ *hashtree:.*
+ *buffers:.*
+ *Type Table: stack of 0 tables, 0 types
+# insert one more node forcing it to upgrade to 31-bit tree
+debug: userp_scope: rebuild hashtree .*? at 32769 symbols
+debug: userp_scope: alloc symtable hashtree .*
+debug: userp_scope: added symbols 1..32769 to hashtree .*
+Scope level=0  refcnt=1 has_symbols
+  Symbol Table: stack of 1 tables, 32768 symbols
+ *local table: 32768/\d+ indexed \(\d+ vector bytes\)
+ *hashtree:.*
+ *buffers:.*
+ *Type Table: stack of 0 tables, 0 types
 */
 
 static const char symbol_data_sorted[]=
@@ -986,6 +1009,7 @@ static struct userp_buffer symbol_data_sorted2_buf= {
 
 UNIT_TEST(scope_parse_symtable_sorted) {
 	userp_env env= userp_new_env(logging_alloc, userp_file_logger, stdout, 0);
+	env->log_warn= env->log_debug= env->log_trace= 1;
 	userp_scope scope= userp_new_scope(env, NULL);
 	struct userp_bstr_part str[]= {
 		{ .buf= userp_new_buffer(env, (void*) symbol_data_sorted, sizeof(symbol_data_sorted), 0),
@@ -1007,25 +1031,15 @@ UNIT_TEST(scope_parse_symtable_sorted) {
 	userp_drop_env(env);
 }
 /*OUTPUT
-/alloc 0x0+ to \d+ = 0x\w+/
-/alloc 0x0+ to \d+ = 0x\w+/
-/alloc 0x0+ to \d+ = 0x\w+/
-/alloc 0x0+ to \d+ = 0x\w+/
-/alloc 0x0+ to \d+ = 0x\w+/
 return: 1
 Scope level=0  refcnt=1 has_symbols
   Symbol Table: stack of 1 tables, 5 symbols
    local table: 6/256 binary-search
-       buffers:  [0-20]/20
+       buffers:  \[0-20\]/20
   Type Table: stack of 0 tables, 0 types
 # drop buffer
 # drop scope
-/alloc 0x\w+ to 0 = 0x0+/
-/alloc 0x\w+ to 0 = 0x0+/
-/alloc 0x\w+ to 0 = 0x0+/
-/alloc 0x\w+ to 0 = 0x0+/
 # drop env
-/alloc 0x\w+ to 0 = 0x0+/
 */
 
 
@@ -1058,22 +1072,22 @@ UNIT_TEST(scope_parse_split_symtable) {
 	userp_drop_env(env);
 }
 /*OUTPUT
-/alloc 0x0+ to \d+ = 0x\w+/
-/alloc 0x0+ to \d+ = 0x\w+/
-/alloc 0x0+ to \d+ = 0x\w+/
-/alloc 0x0+ to \d+ = 0x\w+/
+alloc 0x0+ to \d+ = 0x\w+
+alloc 0x0+ to \d+ = 0x\w+
+alloc 0x0+ to \d+ = 0x\w+
+alloc 0x0+ to \d+ = 0x\w+
 return: 1
 Scope level=0  refcnt=1 has_symbols
   Symbol Table: stack of 1 tables, 10 symbols
    local table: 11/256 binary-search
-       buffers:  [0-20]/20  [0-20]/20
+       buffers:  \[0-20\]/20  \[0-20\]/20
   Type Table: stack of 0 tables, 0 types
 # drop scope
-/alloc 0x\w+ to 0 = 0x0+/
-/alloc 0x\w+ to 0 = 0x0+/
-/alloc 0x\w+ to 0 = 0x0+/
+alloc 0x\w+ to 0 = 0x0+
+alloc 0x\w+ to 0 = 0x0+
+alloc 0x\w+ to 0 = 0x0+
 # drop env
-/alloc 0x\w+ to 0 = 0x0+/
+alloc 0x\w+ to 0 = 0x0+
 */
 
 static const char symbol_fragment[]= "fragment1\0fragment2";
@@ -1107,26 +1121,26 @@ UNIT_TEST(scope_parse_split_symbol) {
 	userp_drop_env(env);
 }
 /*OUTPUT
-/alloc 0x0 to \d+ = 0x\w+/
-/alloc 0x0 to \d+ = 0x\w+/
-/alloc 0x0 to \d+ = 0x\w+/
-/alloc 0x0 to \d+ = 0x\w+/
-/alloc 0x0 to \d+ = 0x\w+/
-/alloc 0x0 to 13 = 0x\w+ POINTER_IS_BUFFER_DATA/
+alloc 0x0 to \d+ = 0x\w+
+alloc 0x0 to \d+ = 0x\w+
+alloc 0x0 to \d+ = 0x\w+
+alloc 0x0 to \d+ = 0x\w+
+alloc 0x0 to \d+ = 0x\w+
+alloc 0x0 to 13 = 0x\w+ POINTER_IS_BUFFER_DATA
 return: 1
 Scope level=0  refcnt=1 has_symbols
   Symbol Table: stack of 1 tables, 6 symbols
    local table: 7/256 binary-search
-       buffers:  [0-10]/19  [0-13]/13  [4-16]/20
+       buffers:  \[0-10\]/19  \[0-13\]/13  \[4-16\]/20
   Type Table: stack of 0 tables, 0 types
 # drop scope
-/alloc 0x\w+ to 0 = 0x0 POINTER_IS_BUFFER_DATA/
-/alloc 0x\w+ to 0 = 0x0/
-/alloc 0x\w+ to 0 = 0x0/
-/alloc 0x\w+ to 0 = 0x0/
-/alloc 0x\w+ to 0 = 0x0/
+alloc 0x\w+ to 0 = 0x0 POINTER_IS_BUFFER_DATA
+alloc 0x\w+ to 0 = 0x0
+alloc 0x\w+ to 0 = 0x0
+alloc 0x\w+ to 0 = 0x0
+alloc 0x\w+ to 0 = 0x0
 # drop env
-/alloc 0x\w+ to 0 = 0x0/
+alloc 0x\w+ to 0 = 0x0
 */
 
 #endif

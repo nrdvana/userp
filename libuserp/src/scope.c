@@ -74,13 +74,15 @@ userp_scope userp_new_scope(userp_env env, userp_scope parent) {
 static void userp_free_scope(userp_scope scope) {
 	userp_env env= scope->env;
 	userp_scope parent= scope->parent;
-	userp_bstr_destroy(&scope->symtable.chardata);
-	if (scope->symtable.buckets)
-		USERP_FREE(env, &scope->symtable.buckets);
-	if (scope->symtable.nodes)
-		USERP_FREE(env, &scope->symtable.nodes);
-	if (scope->symtable.symbols)
-		USERP_FREE(env, &scope->symtable.symbols);
+	if (scope->has_symbols) {
+		if (scope->symtable.nodes)
+			USERP_FREE(env, &scope->symtable.nodes);
+		if (scope->symtable.buckets)
+			USERP_FREE(env, &scope->symtable.buckets);
+		if (scope->symtable.symbols)
+			USERP_FREE(env, &scope->symtable.symbols);
+		userp_bstr_destroy(&scope->symtable.chardata);
+	}
 	USERP_FREE(env, &scope);
 	if (parent) userp_drop_scope(parent);
 	userp_drop_env(env);

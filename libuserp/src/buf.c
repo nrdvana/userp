@@ -245,12 +245,12 @@ UNIT_TEST(buf_new_dynamic) {
 	userp_drop_env(env);
 }
 /*OUTPUT
-/alloc 0x0+ to \d+ = 0x\w+/
-/alloc 0x0+ to \d{2} = 0x\w+/
-/alloc 0x0+ to \d{4} = 0x\w+ POINTER_IS_BUFFER_DATA/
-/alloc 0x\w+ to 0 = 0x0+ POINTER_IS_BUFFER_DATA/
-/alloc 0x\w+ to 0 = 0x0+/
-/alloc 0x\w+ to 0 = 0x0+/
+alloc 0x0+ to \d+ = 0x\w+
+alloc 0x0+ to \d{2} = 0x\w+
+alloc 0x0+ to \d{4} = 0x\w+ POINTER_IS_BUFFER_DATA
+alloc 0x\w+ to 0 = 0x0+ POINTER_IS_BUFFER_DATA
+alloc 0x\w+ to 0 = 0x0+
+alloc 0x\w+ to 0 = 0x0+
 */
 
 char static_buffer[1024];
@@ -261,10 +261,10 @@ UNIT_TEST(buf_new_static) {
 	userp_drop_env(env);
 }
 /*OUTPUT
-/alloc 0x0+ to \d+ = 0x\w+/
-/alloc 0x0+ to \d{2} = 0x\w+/
-/alloc 0x\w+ to 0 = 0x0+/
-/alloc 0x\w+ to 0 = 0x0+/
+alloc 0x0+ to \d+ = 0x\w+
+alloc 0x0+ to \d{2} = 0x\w+
+alloc 0x\w+ to 0 = 0x0+
+alloc 0x\w+ to 0 = 0x0+
 */
 
 UNIT_TEST(buf_on_stack) {
@@ -275,8 +275,8 @@ UNIT_TEST(buf_on_stack) {
 	userp_drop_env(env);
 }
 /*OUTPUT
-/alloc 0x0+ to \d+ = 0x\w+/
-/alloc 0x\w+ to 0 = 0x0+/
+alloc 0x0+ to \d+ = 0x\w+
+alloc 0x\w+ to 0 = 0x0+
 */
 
 #endif
