@@ -40,10 +40,10 @@ directly to the encoder's output userp_bstr.
 ### HashTree Lookup Table
 
 The lookup table is implemented using an innovative (well, I'm sure someone
-somewhere has done this before, but if so, they didn't publish it very widely)
-data structure I call a "hashtree".  It is simply an optimized hashtable that
-refers either to elements of the vector, or head-nodes of a Red/Black tree.
-It is built on 3 allocated arrays:
+somewhere has done these optimizations before somewhee) data structure I call
+a "hashtree".  It is simply an optimized hashtable that refers either to
+elements of the vector, or head-nodes of a Red/Black tree. It is built on 3
+allocated arrays:
 
     symbols[]      [ 0:NULL, 1:"A", 2:"B", 3:"C", 4:"D", 5:"E", 6:"F"...]
     
@@ -82,12 +82,11 @@ worst-case N(log N) of the R/B tree.  The thing with "pair" nodes is just an
 optimization to avoid having to allocate so many nodes when most collisions
 happen between only 2 nodes.
 
-For the first 127 elements, the hashtable has 8-bit buckets (with 7-bit
-references because I steal a bit to differentiate symbol from node refs).
-For the first 0x7FFF elements, the hashtable and tree have 15-bit references.
-Above that they hold 31-bit references.  The implementation caps at 31-bits
-since I don't see any conceivable reason someone would need 4 billion symbol
-entries.  (these are logical names of things, not data)
+The hash buckets and tree nodes both use small integers to refer to the array
+of symbols or nodes.  So, for the first 0x7F symbols, a hash bucket is 1 byte
+and a tree node is 4 bytes.  It then doubles at 0x80 symbols, and again at
+0x8000.  (I didn't bother adding 63-bit handling becuase these are *symbols*,
+as in the names of things, not raw data)
 
 The buckets are re-allocated every time the hashtable "appears too small"
 or any time the references need to upgrade to more bits.  When the hashtable
@@ -150,14 +149,29 @@ static bool scope_symtable_alloc(userp_scope scope, size_t n) {
 }
 
 static inline uint32_t userp_symtable_calc_hash(struct userp_symtable *st, const char *name) {
-	// Calculate a hash for 'name' using FNV-1a
-	uint32_t hash= 0x811c9dc5;
-	while (*name) {
-		hash ^= *name++;
-		hash *= 0x01000193;
+	// This is mostly MurmurHash32 by Austin Appleby, but I fudged the
+	// implementation a bit since I don't have the key length in advance.
+	uint32_t hash= 0, accum= *name;
+	const char *pos= name;
+	if (*pos) while (1) {
+		accum= (accum << 7) ^ *pos++;
+		if (*pos) accum= (accum << 7) ^ *pos++;
+		if (*pos) accum= (accum << 7) ^ *pos++;
+		if (*pos) accum= (accum << 7) ^ *pos++;
+		accum *= 0xcc9e2d51;
+		accum = (accum << 15) | (accum >> 17);
+		accum *= 0x1b873593;
+		hash ^= accum;
+		if (!*pos) break;
+		hash= (hash << 13) | (hash >> 19);
+		hash= hash * 5 + 0xe6546b64;
 	}
-	hash ^= st->hash_salt;
-	hash *= 0x01000193;
+	hash ^= pos - name;
+	hash ^= hash >> 16;
+	hash *= 0x85ebca6b;
+	hash ^= hash >> 13;
+	hash *= 0xc2b2ae35;
+	hash ^= hash >> 16;
 	return hash? hash : 1;
 }
 
@@ -175,23 +189,23 @@ static inline uint32_t userp_symtable_calc_hash(struct userp_symtable *st, const
 
 #define MAX_HASHTREE_BUCKET_SIZE 4
 #define HASHTREE_BUCKET_SIZE(count) \
-	( ((count) >> 15)? 4 : ((count) >> 7)? 2 : 1 )
+	( (((count)-1) >> 15)? 4 : (((count)-1) >> 7)? 2 : 1 )
 
 #define HASHTREE_NODE_SIZE(count) \
-	( ((count) >> 15)? sizeof(struct hashtree_node31) \
-    : ((count) >> 7)?  sizeof(struct hashtree_node15) \
-    :                  sizeof(struct hashtree_node7))
+	( (((count)-1) >> 15)? sizeof(struct hashtree_node31) \
+    : (((count)-1) >> 7)?  sizeof(struct hashtree_node15) \
+    :                      sizeof(struct hashtree_node7))
 
 userp_symbol userp_symtable_hashtree_get(struct userp_symtable *st, uint32_t hash, const char *name) {
-	return (st->used >> 15)? userp_symtable_hashtree_get31(st, hash, name)
-	     : (st->used >>  7)? userp_symtable_hashtree_get15(st, hash, name)
-	     :                   userp_symtable_hashtree_get7 (st, hash, name);
+	return ((st->used-1) >> 15)? userp_symtable_hashtree_get31(st, hash, name)
+	     : ((st->used-1) >>  7)? userp_symtable_hashtree_get15(st, hash, name)
+	     :                       userp_symtable_hashtree_get7 (st, hash, name);
 }
 
 bool userp_symtable_hashtree_insert(struct userp_symtable *st, size_t sym_ofs) {
-	return (st->used >> 15)? userp_symtable_hashtree_insert31(st, sym_ofs)
-	     : (st->used >>  7)? userp_symtable_hashtree_insert15(st, sym_ofs)
-	     :                   userp_symtable_hashtree_insert7 (st, sym_ofs);
+	return ((st->used-1) >> 15)? userp_symtable_hashtree_insert31(st, sym_ofs)
+	     : ((st->used-1) >>  7)? userp_symtable_hashtree_insert15(st, sym_ofs)
+	     :                       userp_symtable_hashtree_insert7 (st, sym_ofs);
 }
 
 // This handles both the case of limiting tables to 2x the max number of symbols,
@@ -228,6 +242,8 @@ bool userp_scope_symtable_hashtree_populate(struct userp_symtable *st, userp_env
 			new_buckets= 0x200;
 		else if (new_buckets > MAX_HASH_BUCKETS)
 			new_buckets= MAX_HASH_BUCKETS;
+		// The current hash algorithm gets a lot better if the bucket count is odd
+		if (!(new_buckets & 1)) --new_buckets;
 		// check how many bytes that it, and how many we have already
 		alloc= HASHTREE_BUCKET_SIZE(st->used) * new_buckets;
 		if (alloc > HASHTREE_BUCKET_SIZE(st->processed) * st->bucket_alloc) {
@@ -272,8 +288,8 @@ bool userp_scope_symtable_hashtree_populate(struct userp_symtable *st, userp_env
 			++st->processed;
 		// Did it fail because it was out of tree nodes?
 		else if (st->node_used+3 >= st->node_alloc) {
-			// Allocate in powers of 2, min 16 nodes
-			alloc= roundup_pow2(st->node_used + 16);
+			// Allocate in powers of 2, min 32 nodes
+			alloc= roundup_pow2(st->node_used + 17);
 			if (env->log_debug) {
 				userp_diag_setf(&env->msg, USERP_MSG_SYMTABLE_HASHTREE_EXTEND,
 					"userp_scope: symtable hashtree "
@@ -762,33 +778,37 @@ void dump_scope(userp_scope scope) {
 			: scope->symtable_stack[scope->symtable_count-1]->id_offset
 			+ scope->symtable_stack[scope->symtable_count-1]->used - 1 )
 	);
-	printf("   local table: %d/%d%s\n",
-		(int)scope->symtable.used, (int)scope->symtable.alloc,
-		!scope->symtable.buckets? " (no hash/tree)"
-			: scope->symtable.processed == scope->symtable.used? " +hash/tree"
-			: " (stale hash/tree)"
-	);
-	if (scope->symtable.buckets) {
-		printf("    hash/tree: %d/%d buckets (%d bytes), %d tree nodes (%d bytes)\n",
-			(int)scope->symtable.bucket_used,
-			(int)scope->symtable.bucket_alloc,
-			(int)HASHTREE_BUCKET_SIZE(scope->symtable.used),
-			(int)scope->symtable.node_used,
-			(int)HASHTREE_NODE_SIZE(scope->symtable.used)
+	if (scope->has_symbols) {
+		printf("   local table: %d/%d %s (%lld vector bytes)\n",
+			(int)scope->symtable.used-1,
+			(int)scope->symtable.alloc,
+			!scope->symtable.bucket_alloc? "not indexed"
+				: scope->symtable.processed == scope->symtable.used? "indexed"
+				: "partially indexed",
+			(long long)(scope->symtable.alloc * sizeof(scope->symtable.symbols[0]))
 		);
-	}
-	printf("       buffers:");
-	if (scope->symtable.chardata.part_count) {
-		for (i= 0; i < scope->symtable.chardata.part_count; i++) {
-			p= &scope->symtable.chardata.parts[i];
-			printf("  [%ld-%ld]/%ld",
-				(long)( p->data - p->buf->data ),
-				(long) p->len, (long) p->buf->alloc_len
+		if (scope->symtable.buckets) {
+			printf("      hashtree: %d/%d+%d (%lld table bytes, %lld node bytes)\n",
+				(int)scope->symtable.bucket_used,
+				(int)scope->symtable.bucket_alloc,
+				(int)scope->symtable.node_used-1,
+				(long long)( scope->symtable.bucket_alloc * HASHTREE_BUCKET_SIZE(scope->symtable.processed) ),
+				(long long)( scope->symtable.node_alloc * HASHTREE_NODE_SIZE(scope->symtable.processed) )
 			);
 		}
-		printf("\n");
-	} else {
-		printf("  (none)\n");
+		printf("       buffers:");
+		if (scope->symtable.chardata.part_count) {
+			for (i= 0; i < scope->symtable.chardata.part_count; i++) {
+				p= &scope->symtable.chardata.parts[i];
+				printf("  [%ld-%ld]/%ld",
+					(long)( p->data - p->buf->data ),
+					(long) p->len, (long) p->buf->alloc_len
+				);
+			}
+			printf("\n");
+		} else {
+			printf("  (none)\n");
+		}
 	}
 	// If the tree is used, verify it's structure
 	//if (scope->symtable.tree)
@@ -868,6 +888,8 @@ Scope level=0  refcnt=1 has_symbols
 UNIT_TEST(scope_symbol_treesort) {
 	char buf[32];
 	int i;
+	userp_symbol sym, sym2;
+
 	userp_env env= userp_new_env(NULL, userp_file_logger, stdout, 0);
 	env->log_warn= env->log_debug= env->log_trace= 1;
 	userp_scope scope= userp_new_scope(env, NULL);
@@ -876,33 +898,29 @@ UNIT_TEST(scope_symbol_treesort) {
 	buf[0]= 'b'; buf[1]= '\0';
 	if (!userp_scope_get_symbol(scope, buf, USERP_CREATE))
 		printf("Failed to add %s\n", buf);
-	printf("tree is %s\n", scope->symtable.buckets? "allocated" : "null");
+	dump_scope(scope);
 	buf[0]= 'a';
 	if (!userp_scope_get_symbol(scope, buf, USERP_CREATE))
 		printf("Failed to add %s\n", buf);
-	printf("tree is %s\n", scope->symtable.buckets? "allocated" : "null");
+	dump_scope(scope);
 	// Now start over
 	printf("# reset\n");
 	userp_drop_scope(scope);
 	scope= userp_new_scope(env, NULL);
-	printf("# 10K sorted nodes\n");
+	printf("# 12K nodes increasing\n");
 	// Insert some nodes in order
 	for (i= 20000; i < (1<<15)-1; i++) {
 		snprintf(buf, sizeof(buf), "%05d", i);
-		if (!userp_scope_get_symbol(scope, buf, USERP_CREATE))
+		sym= userp_scope_get_symbol(scope, buf, USERP_CREATE);
+		if (!sym) {
 			printf("Failed to add %s\n", buf);
+			abort();
+		}
+		if ((sym2= userp_scope_get_symbol(scope, buf, USERP_CREATE)) != sym) {
+			printf("didn't get back same symbol: get('%s') = %d, should be %d\n", buf, sym2, sym);
+			abort();
+		}
 	}
-	// The tree should not be created yet
-	printf("tree is %s\n", scope->symtable.buckets? "allocated" : "null");
-	printf("# 1 node out of order\n");
-	// Now insert one node out of order, causing it to tree up everything
-	snprintf(buf, sizeof(buf), "%05d", 9999);
-	if (!userp_scope_get_symbol(scope, buf, USERP_CREATE))
-		printf("Failed to add %s\n", buf);
-	printf("tree is %s\n", scope->symtable.buckets? "allocated" : "null");
-	if (!scope->symtable.buckets)
-		return;
-	//verify_symbol_tree(scope);
 	
 	// Let it allocate right up to the limit of the 15-bit tree implementation.
 	scope_symtable_alloc(scope, 1<<15);
@@ -920,15 +938,29 @@ UNIT_TEST(scope_symbol_treesort) {
 		if (!userp_scope_get_symbol(scope, buf, USERP_CREATE))
 			printf("Failed to add %s\n", buf);
 		snprintf(buf, sizeof(buf), "%05d", 19999 - i);
-		if (!userp_scope_get_symbol(scope, buf, USERP_CREATE))
+		if (!(sym= userp_scope_get_symbol(scope, buf, USERP_CREATE))) {
 			printf("Failed to add %s\n", buf);
+			abort();
+		}
+		if ((sym2= userp_scope_get_symbol(scope, buf, USERP_CREATE)) != sym) {
+			printf("didn't get back same symbol: get('%s') = %d, should be %d\n", buf, sym2, sym);
+			abort();
+		}
 	}
 	dump_scope(scope);
+	assert(scope->symtable.used == 32768);
 	
 	printf("# insert one more node forcing it to upgrade to 31-bit tree\n");
 	snprintf(buf, sizeof(buf), "%05d", 1<<15);
-	if (!userp_scope_get_symbol(scope, buf, USERP_CREATE))
+	sym= userp_scope_get_symbol(scope, buf, USERP_CREATE);
+	if (!sym) {
 		printf("Failed to add %s\n", buf);
+		abort();
+	}
+	if ((sym2= userp_scope_get_symbol(scope, buf, USERP_CREATE)) != sym) {
+		printf("didn't get back same symbol: get('%s') = %d, should be %d\n", buf, sym2, sym);
+		abort();
+	}
 	dump_scope(scope);
 
 	userp_drop_scope(scope);

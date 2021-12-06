@@ -60,7 +60,7 @@ NODE_TYPE {
 
 static userp_symbol BIT_SUFFIX_NAME(userp_symtable_hashtree_get, IDBITS) (
 	struct userp_symtable *st,
-	size_t hash,
+	uint32_t hash,
 	const char *name
 ) {
 	// read the bucket for the hash
@@ -126,7 +126,6 @@ static bool BIT_SUFFIX_NAME(userp_symtable_rb_insert, IDBITS) (
 		return false;
 	}
 	pos= stack[i--];
-	//printf("insert at %s of %d (%s depth %d)\n", (cmp < 0? "left":"right"), (int)pos, tree[pos].color? "red":"black", (int)i);
 	if (cmp < 0)
 		nodes[pos].left= node;
 	else
@@ -221,20 +220,15 @@ static bool BIT_SUFFIX_NAME(userp_symtable_hashtree_insert, IDBITS) (
 	struct userp_symtable *st,
 	int sym_ofs
 ) {
-	WORD_TYPE hash= (WORD_TYPE) st->symbols[sym_ofs].hash;
-//	assert(!nodes || nodes[0].left == 0);
-//	assert(!nodes || nodes[0].right == 0);
+	uint32_t hash= st->symbols[sym_ofs].hash;
 	
 	// calculate the official hash on the symbol entry if it wasn't done yet
 	if (!hash) {
-		hash= (WORD_TYPE) (
-			st->symbols[sym_ofs].hash=
-				userp_symtable_calc_hash(st, st->symbols[sym_ofs].name)
-		);
+		hash= userp_symtable_calc_hash(st, st->symbols[sym_ofs].name);
+		st->symbols[sym_ofs].hash= hash;
 	}
 
 	// check the bucket for the hash.
-	
 	WORD_TYPE *bucket= &((WORD_TYPE*) st->buckets)[hash % st->bucket_alloc ];
 	if (!*bucket) {
 		// If zero, we're lucky, and can just write to it
