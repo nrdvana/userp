@@ -29,47 +29,108 @@ sub run_unittest {
 sub check_unittest_output {
 	my ($name, $expected)= @_;
 	my $actual= run_unittest($name);
+	# convert expected to regexes, one per line
+	my @regexes= split /\n/, $expected;
+	# find the diff
+	my $diff= diff_regex_vs_text(\@regexes, $actual);
+	#use DDP;main::diag(&np($diff));
+	# did it match?
+	my $match;
+	for ($match= 0; $match < @$diff; $match++) {
+		last unless defined $diff->[$match][0] && defined $diff->[$match][1];
+	}
+	my $ok= $match == @$diff;
+	if (main::ok( $ok, "Found expected output" )) {
+		main::note(render_diff($diff));
+	} else {
+		main::diag(render_diff([ @{$diff}[ ($match?$match-1:$match) .. $#$diff ] ]));
+	}
+	return $ok;
+}
 
-	pos($expected)= 0;
-	pos($actual)= 0;
-	my $resync= 0;
-	my $success= 1;
-	while (pos $expected < length $expected) {
-		# read next line of $expected, excluding the newline chars
-		$expected =~ /\G([^\r\n]*)\r?(\n|$)/gc or die substr($expected, pos $expected);
-		my $line= $1;
-		# If it's a regex notation, /.../, use as-is, else convert the literal into a regex.
-		my $re_text= $line;
-#		($line =~ m,^/(.*)/$,)? $1
-#			: ($line =~ m,^[~](.*)$,)? $1
-#			: quotemeta($line);
-		$re_text =~ s/\\\n/\\n/g; # use \n escape notations instead of a backslash followed by literal newline char
-		$re_text= '\G'.$re_text unless $resync;
-		# Match against the next portion of $actual
-		if ($actual =~ /$re_text/gc) {
+sub diff_regex_vs_text {
+	my ($regexes, $text, $resync)= @_;
+	#use DDP; &p(\@_);
+	my @output;
+	pos($text)= 0;
+	for (my $re_i= 0; $re_i < @$regexes; $re_i++) {
+		#print "re_i=$re_i  test $regexes->[$re_i]  resync=".($resync||0)."\n";
+		my $t_pos= pos $text;
+		my $re= $regexes->[$re_i];
+		$re .= '$' if !length $re;
+		my $match= $resync? ($text =~ /^$re/gcm)
+			: ($text =~ /\G$re/gcm);
+		# If it matched, add both regex and matched text
+		if ($match) {
+			# If resyncing, add any skipped lines
+			if ($resync && $-[0] > $t_pos) {
+				push @output, [ undef, split /\n/, substr($text, $t_pos, $-[0] - $t_pos), -1 ];
+				$resync= 0;
+			}
+			my $matchtext= substr($text, $-[0], $+[0] - $-[0]);
+			#&p([ $matchtext, length $matchtext? split(/\n/, $matchtext, -1) : (""), substr($text, pos $text) ])
+			#	if !$regexes->[$re_i];
+			push @output, [ $regexes->[$re_i], length $matchtext? (split /\n/, $matchtext, -1) : ('') ];
 			# throw away line ending
-			$actual =~ /\G[\r\n]*/gc;
-			main::pass("Found output: $line");
-			$resync= 0;
-		} else {
-#			{ use re "debug"; $actual =~ /$re_text/gc; }
-			# mismatch.  Report the error, then stop anchoring until the next successful match.
-			main::fail("Found output: $line");
-			$success= 0;
-			# cut off the output at the following comment, if any.
-			$actual =~ /\G(.?[^#]*)/;
-			main::diag("Output does not match /$re_text/ : ".output_text_to_perl($1));
-			$resync= 1;
+			$text =~ /\G\r?\n?/gc;
+		}
+		else {
+			return if $resync; # failed resync match means go back and try next regex
+			# Terrible algorithm, but implementing the industry standard diff just for
+			#  unit tests seems like overkill.
+			# Recursively test every regex from here to the end in 'resync' mode
+			# and see which results in the fewest mismatches.
+			my ($best, $mismatches);
+			for (my $i= $re_i; $i < @$regexes; $i++) {
+				my $attempt= diff_regex_vs_text([@{$regexes}[ $i .. $#$regexes ]], substr($text, pos($text)), 1)
+					or next;
+				my $attempt_mismatches= $i - $re_i;
+				for (@$attempt) {
+					$attempt_mismatches++ if !defined $_->[0] || !defined $_->[1];
+				}
+				if (!$best || $attempt_mismatches < $mismatches) {
+					$best= [ (map [$_, undef], @{$regexes}[ $re_i .. $i-1 ]), @$attempt ];
+					$mismatches= $attempt_mismatches;
+				}
+			}
+			if ($best) {
+				push @output, @$best;
+			} else {
+				push @output, map [ $_, undef ], @{$regexes}[ $re_i .. $#$regexes ];
+				push @output, map [ undef, $_ ], split /\n/, substr($text, pos($text));
+			}
+			return \@output;
 		}
 	}
-	if (pos $actual == length $actual) {
-		main::pass("Found expected output end");
-	} else {
-		main::fail("Unexpected extra output");
-		main::diag("extra output:".output_text_to_perl(substr($actual, pos $actual)));
-		$success= 0;
+	# put leftovers in a non-match
+	if (pos $text < length $text) {
+		push @output, [ undef, split /\n/, substr($text, pos($text)), -1 ];
 	}
-	return $success;
+	return \@output;
+}
+
+sub render_diff {
+	my $diff= shift;
+	my $widest_left= 0;
+	for (@$diff) {
+		$widest_left= length $_->[0]
+			if $_->[0] && length $_->[0] > $widest_left;
+	}
+	my $out= sprintf("-%s Regex %s-+-%s Output %s\n",
+		'-'x(($widest_left-7)/2), '-'x($widest_left - int(($widest_left-7)/2) - 7),
+		'-'x(($widest_left-6)/2), '-'x($widest_left - int(($widest_left-6)/2) - 6),
+	);
+	for (@$diff) {
+		my ($re, @lines)= @$_;
+		defined $_ && chomp($_) for @lines;
+		for (@lines) {
+			$out .= sprintf("%s%*s | %s\n",
+				!defined $re? '+' : !defined $_? '-' : ' ',
+				-$widest_left, defined $re? $re : '',
+				defined $_? output_text_to_qstr($_) : '');
+		}
+	}
+	return $out;
 }
 
 # this is basically just a substitute for the Perl 5.26 feature that lets you do indented here-docs
@@ -87,7 +148,7 @@ our %escapes= (
 	'$' => '\\$',
 	'@' => '\\@',
 );
-sub output_text_to_perl {
+sub output_text_to_qstr {
 	my $string= shift;
 	sub esc {
 		defined $escapes{$_}? $escapes{$_} : sprintf("\\x%02X", ord)
