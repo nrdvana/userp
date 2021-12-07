@@ -206,6 +206,7 @@ static inline void userp_bstr_destroy(struct userp_bstr *str) { userp_bstr_parta
 
 #define USERP_GET_LOCAL      1
 #define USERP_CREATE         2
+#define USERP_LAZY           4
 
 extern userp_scope userp_new_scope(userp_env env, userp_scope parent);
 extern bool userp_grab_scope(userp_scope scope);
@@ -220,6 +221,8 @@ extern userp_type userp_scope_new_type(userp_scope scope, userp_symbol name, use
 extern bool userp_scope_contains_type(userp_scope scope, userp_type type);
 extern userp_enc userp_type_encode(userp_type type);
 extern userp_dec userp_type_decode(userp_type type);
+
+extern bool userp_scope_import(userp_scope scope, userp_scope source, int flags);
 
 extern bool userp_scope_finalize(userp_scope scope, int flags);
 

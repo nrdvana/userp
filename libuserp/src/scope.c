@@ -17,6 +17,9 @@ available.
 
 */
 
+static void scope_import_free(struct scope_import *imp);
+static struct scope_import* scope_import_new(userp_scope dst, userp_scope src);
+
 userp_scope userp_new_scope(userp_env env, userp_scope parent) {
 	size_t num_sym_tables, num_type_tables;
 	userp_scope scope= NULL;
@@ -74,6 +77,7 @@ userp_scope userp_new_scope(userp_env env, userp_scope parent) {
 static void userp_free_scope(userp_scope scope) {
 	userp_env env= scope->env;
 	userp_scope parent= scope->parent;
+	struct scope_import *imp, *next_imp;
 	if (scope->has_symbols) {
 		if (scope->symtable.nodes)
 			USERP_FREE(env, &scope->symtable.nodes);
@@ -82,6 +86,11 @@ static void userp_free_scope(userp_scope scope) {
 		if (scope->symtable.symbols)
 			USERP_FREE(env, &scope->symtable.symbols);
 		userp_bstr_destroy(&scope->symtable.chardata);
+	}
+	// Free elements of linked list while walking it
+	for (imp= scope->lazyimports; imp; imp= next_imp) {
+		next_imp= imp->next_import;
+		scope_import_free(next_imp);
 	}
 	USERP_FREE(env, &scope);
 	if (parent) userp_drop_scope(parent);
@@ -138,6 +147,78 @@ bool userp_scope_reserve(userp_scope scope, size_t min_symbols, size_t min_types
 	if (scope->typetable.alloc < min_types)
 		if (!scope_typetable_alloc(scope, min_types))
 			return false;
+	return true;
+}
+
+static struct scope_import* scope_import_new(userp_scope dst, userp_scope src) {
+	struct scope_import *imp= NULL;
+	if (!USERP_ALLOC_OBJ(dst->env, &imp))
+		return false;
+	bzero(imp, sizeof(*imp));
+	if (src->symtable_count) {
+		imp->sym_map_count= src->symtable_stack[src->symtable_count-1]->id_offset
+			+ src->symtable_stack[src->symtable_count-1]->used;
+		if (!USERP_ALLOC_ARRAY(dst->env, &imp->sym_map, imp->sym_map_count)) {
+			USERP_FREE(dst->env, &imp);
+			return false;
+		}
+	}
+	if (src->typetable_count) {
+		imp->type_map_count= src->typetable_stack[src->typetable_count-1]->id_offset
+			+ src->typetable_stack[src->typetable_count-1]->used;
+		if (!USERP_ALLOC_ARRAY(dst->env, &imp->type_map, imp->type_map_count)) {
+			USERP_FREE(dst->env, &imp->sym_map);
+			USERP_FREE(dst->env, &imp);
+			return false;
+		}
+	}
+	imp->src= src;
+	imp->dst= dst;
+	return imp;
+}
+
+static void scope_import_free(struct scope_import *imp) {
+	userp_env env= imp->dst->env;
+	USERP_FREE(env, &imp->type_map);
+	USERP_FREE(env, &imp->sym_map);
+	USERP_FREE(env, &imp);
+}
+
+bool userp_scope_import(userp_scope scope, userp_scope source, int flags) {
+	struct scope_import *imp, **prev;
+	userp_env env= scope->env;
+	
+	// current scope cannot be final
+	if (scope->is_final) {
+		userp_diag_set(&env->err, USERP_EDOINGITWRONG, "Can't import into a final scope");
+		USERP_DISPATCH_ERR(env);
+		return NULL;
+	}
+	// Source must be final
+	if (!source->is_final) {
+		userp_diag_set(&env->err, USERP_EDOINGITWRONG, "Can't import from a non-final scope");
+		USERP_DISPATCH_ERR(env);
+		return NULL;
+	}
+	// Allocate a mapping between scopes
+	if (!(imp= scope_import_new(scope, source)))
+		return false;
+	if (flags & USERP_LAZY) {
+		// Lazy imports hold a reference to the other scope
+		if (!userp_grab_scope(source)) {
+			scope_import_free(imp);
+			return false;
+		}
+		// Append to linked list of lazy imports
+		prev= &scope->lazyimports;
+		while (*prev)
+			prev= &((*prev)->next_import);
+		*prev= imp;
+	}
+	else {
+		unimplemented("copy symbols and types");
+		scope_import_free(imp);
+	}
 	return true;
 }
 

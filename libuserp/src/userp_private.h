@@ -218,14 +218,25 @@ struct userp_type_record {
 	struct record_field fields[];
 };
 
+struct scope_import {
+	struct scope_import *next_import; // linked list of imports
+	userp_scope src, dst;        // source scope, destination scope
+	userp_symbol *sym_map;       // array mapping source-symbol-to-dest-symbol
+	userp_type *type_map;        // array mapping source-type-to-dest-type
+	size_t sym_map_count;
+	size_t type_map_count;
+};
+
 struct userp_scope {
 	userp_env env;
 	userp_scope parent;
+	struct scope_import *lazyimports;
 	size_t level;
 	unsigned refcnt;
 	bool is_final:1,
 		has_symbols:1,
-		has_types:1;
+		has_types:1,
+		is_importing:1;
 
 	size_t symtable_count;
 	size_t typetable_count;
