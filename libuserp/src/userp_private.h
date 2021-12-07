@@ -324,4 +324,9 @@ static inline void unimplemented(const char* msg) {
 	abort();
 }
 
-#endif /* USERP_PROTECTED_H */
+#ifdef UNIT_TEST
+static bool logging_alloc(void *callback_data, void **pointer, size_t new_size, userp_alloc_flags flags);
+static void dump_scope(userp_scope scope);
+#endif
+
+#endif /* USERP_PRIVATE_H */

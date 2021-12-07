@@ -140,3 +140,96 @@ bool userp_scope_reserve(userp_scope scope, size_t min_symbols, size_t min_types
 			return false;
 	return true;
 }
+
+#ifdef UNIT_TEST
+
+static void dump_scope(userp_scope scope) {
+	struct userp_bstr_part *p;
+	int i;
+
+	printf("Scope level=%d  refcnt=%d%s%s%s\n",
+		(int)scope->level, (int)scope->refcnt,
+		scope->is_final?    " is_final":"",
+		scope->has_symbols? " has_symbols":"",
+		scope->has_types?   " has_types":""
+	);
+	printf("  Symbol Table: stack of %d tables, %d symbols\n",
+		(int) scope->symtable_count,
+		(int)(!scope->symtable_count? 0
+			: scope->symtable_stack[scope->symtable_count-1]->id_offset
+			+ scope->symtable_stack[scope->symtable_count-1]->used - 1 )
+	);
+	if (scope->has_symbols) {
+		printf("   local table: %d/%d %s (%lld vector bytes)\n",
+			(int)scope->symtable.used-1,
+			(int)scope->symtable.alloc,
+			!scope->symtable.bucket_alloc? "not indexed"
+				: scope->symtable.processed == scope->symtable.used? "indexed"
+				: "partially indexed",
+			(long long)(scope->symtable.alloc * sizeof(scope->symtable.symbols[0]))
+		);
+		if (scope->symtable.buckets) {
+			printf("      hashtree: %d/%d+%d (%lld table bytes, %lld node bytes)\n",
+				(int)scope->symtable.bucket_used,
+				(int)scope->symtable.bucket_alloc,
+				(int)scope->symtable.node_used-1,
+				(long long)( scope->symtable.bucket_alloc * HASHTREE_BUCKET_SIZE(scope->symtable.processed) ),
+				(long long)( scope->symtable.node_alloc * HASHTREE_NODE_SIZE(scope->symtable.processed) )
+			);
+		}
+		printf("       buffers:");
+		if (scope->symtable.chardata.part_count) {
+			for (i= 0; i < scope->symtable.chardata.part_count; i++) {
+				p= &scope->symtable.chardata.parts[i];
+				printf("  [%ld-%ld]/%ld",
+					(long)( p->data - p->buf->data ),
+					(long) p->len, (long) p->buf->alloc_len
+				);
+			}
+			printf("\n");
+		} else {
+			printf("  (none)\n");
+		}
+	}
+	// If the tree is used, verify it's structure
+	//if (scope->symtable.tree)
+	//	verify_symbol_tree(scope);
+	printf("    Type Table: stack of %d tables, %d types\n",
+		(int)scope->typetable_count,
+		(int)(!scope->typetable_count? 0
+			: scope->typetable_stack[scope->typetable_count-1]->id_offset
+			+ scope->typetable_stack[scope->typetable_count-1]->used - 1)
+	);
+}
+
+UNIT_TEST(scope_alloc_free) {
+	userp_env env= userp_new_env(logging_alloc, userp_file_logger, stdout, 0);
+	printf("# alloc outer\n");
+	userp_scope outer= userp_new_scope(env, NULL);
+	userp_scope_finalize(outer, 0);
+	printf("# alloc inner\n");
+	userp_scope inner= userp_new_scope(env, outer);
+	printf("# env->refcnt=%d  outer->refcnt=%d  inner->refcnt=%d\n",
+		env->refcnt, outer->refcnt, inner->refcnt);
+	printf("drop env = %d\n", userp_drop_env(env));
+	printf("drop outer = %d\n", userp_drop_scope(outer));
+	printf("# free all via refcnt\n");
+	printf("drop inner = %d\n", userp_drop_scope(inner));
+}
+/*OUTPUT
+alloc 0x0+ to \d+ = 0x\w+
+# alloc outer
+alloc 0x0+ to \d+ = 0x\w+
+# alloc inner
+alloc 0x0+ to \d+ = 0x\w+
+# env->refcnt=3  outer->refcnt=2  inner->refcnt=1
+drop env = 0
+drop outer = 0
+# free all via refcnt
+alloc 0x\w+ to 0 = 0x0+
+alloc 0x\w+ to 0 = 0x0+
+alloc 0x\w+ to 0 = 0x0+
+drop inner = 1
+*/
+
+#endif
