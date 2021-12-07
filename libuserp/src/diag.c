@@ -231,11 +231,11 @@ int userp_process_diag_tpl(userp_diag diag, char *buf, size_t buf_len, FILE *fh)
 			// integer with "power of 2" notation
 			case USERP_DIAG_ALIGN_ID:
 				val= diag->align; if (0)
-			case USERP_DIAG_INDEX_ID:
-				val= diag->index;
 				n= snprintf(tmp_buf, sizeof(tmp_buf), "2**%lld", val);
 				break;
 			// Generic integer fields
+			case USERP_DIAG_INDEX_ID:
+				val= diag->index; if (0)
 			case USERP_DIAG_POS_ID:
 				val= diag->pos; if (0)
 			case USERP_DIAG_POS2_ID:

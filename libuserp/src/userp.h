@@ -50,6 +50,8 @@ struct userp_bstr;
 #define USERP_MSG_SYMTABLE_HASHTREE_EXTEND  0x0002
 #define USERP_MSG_SYMTABLE_HASHTREE_UPDATE  0x0002
 #define USERP_MSG_SYMTABLE_HASHTREE_REBUILD 0x0003
+#define USERP_MSG_CREATE                    0x0004
+#define USERP_MSG_DESTROY                   0x0005
 
 extern int    userp_diag_get_code(userp_diag diag);
 extern bool   userp_diag_get_buffer(userp_diag diag, userp_buffer *buf_p, size_t *pos_p, size_t *len_p);

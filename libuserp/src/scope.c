@@ -60,6 +60,13 @@ userp_scope userp_new_scope(userp_env env, userp_scope parent) {
 		return NULL;
 	}
 	bzero(scope, sizeof(*scope));
+	scope->serial_id= ++env->scope_serial;
+	if (env->log_trace) {
+		userp_diag_setf(&env->msg, USERP_MSG_CREATE,
+			USERP_DIAG_CSTR1 ": create " USERP_DIAG_INDEX " (" USERP_DIAG_PTR ")",
+			"userp_scope", scope->serial_id, scope);
+		USERP_DISPATCH_MSG(env);
+	}
 	scope->env= env;
 	scope->parent= parent;
 	scope->level= parent? parent->level + 1 : 0;
@@ -78,6 +85,13 @@ static void userp_free_scope(userp_scope scope) {
 	userp_env env= scope->env;
 	userp_scope parent= scope->parent;
 	struct scope_import *imp, *next_imp;
+
+	if (env->log_trace) {
+		userp_diag_setf(&env->msg, USERP_MSG_DESTROY,
+			USERP_DIAG_CSTR1 ": destroy " USERP_DIAG_INDEX " (" USERP_DIAG_PTR ")",
+			"userp_scope", scope->serial_id, scope);
+		USERP_DISPATCH_MSG(env);
+	}
 	if (scope->has_symbols) {
 		if (scope->symtable.nodes)
 			USERP_FREE(env, &scope->symtable.nodes);
@@ -90,7 +104,8 @@ static void userp_free_scope(userp_scope scope) {
 	// Free elements of linked list while walking it
 	for (imp= scope->lazyimports; imp; imp= next_imp) {
 		next_imp= imp->next_import;
-		scope_import_free(next_imp);
+		userp_drop_scope(imp->src);
+		scope_import_free(imp);
 	}
 	USERP_FREE(env, &scope);
 	if (parent) userp_drop_scope(parent);
@@ -311,6 +326,39 @@ alloc 0x\w+ to 0 = 0x0+
 alloc 0x\w+ to 0 = 0x0+
 alloc 0x\w+ to 0 = 0x0+
 drop inner = 1
+*/
+
+UNIT_TEST(scope_import_lazy) {
+	userp_env env= userp_new_env(NULL, userp_file_logger, stdout, 0);
+	env->log_debug= env->log_trace= 1;
+	printf("# Create typelib\n");
+	userp_scope typelib= userp_new_scope(env, NULL);
+	userp_scope_finalize(typelib, 0);
+	printf("# Create scope\n");
+	userp_scope scope= userp_new_scope(env, NULL);
+	printf("# lazy-import\n");
+	userp_scope_import(scope, typelib, USERP_LAZY);
+	printf("# trigger an import\n");
+	// TODO
+	printf("# drop ref to typelib\n");
+	userp_drop_scope(typelib);
+	printf("# drop ref to scope\n");
+	userp_drop_scope(scope);
+	printf("# drop ref to env\n");
+	userp_drop_env(env);
+}
+/*OUTPUT
+# Create typelib
+debug: userp_scope: create 1 .*
+# Create scope
+debug: userp_scope: create 2 .*
+# lazy-import
+# trigger an import
+# drop ref to typelib
+# drop ref to scope
+debug: userp_scope: destroy 2 .*
+debug: userp_scope: destroy 1 .*
+# drop ref to env
 */
 
 #endif

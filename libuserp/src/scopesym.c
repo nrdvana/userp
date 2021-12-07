@@ -867,6 +867,7 @@ UNIT_TEST(scope_symbol_treesort) {
 	userp_drop_env(env);
 }
 /*OUTPUT
+debug: userp_scope: create 1 .*
 # two out-of-order nodes
 Scope level=0  refcnt=1 has_symbols
   Symbol Table: stack of 1 tables, 1 symbols
@@ -881,6 +882,8 @@ Scope level=0  refcnt=1 has_symbols
  *buffers:  \[0-4\]/4096
  *Type Table: stack of 0 tables, 0 types
 # reset
+debug: userp_scope: destroy 1 .*
+debug: userp_scope: create 2 .*
 # 12K nodes increasing
 (debug:.*\n)*
 # 10K nodes decreasing
@@ -902,6 +905,7 @@ Scope level=0  refcnt=1 has_symbols
  *hashtree:.*
  *buffers:.*
  *Type Table: stack of 0 tables, 0 types
+debug: userp_scope: destroy 2 .*
 */
 
 static const char symbol_data_sorted[]=
@@ -942,7 +946,9 @@ UNIT_TEST(scope_parse_symtable_sorted) {
 	userp_drop_env(env);
 }
 /*OUTPUT
-(alloc 0x0+ to .*\n){5}
+(alloc 0x0+ to .*\n){2}
+debug: userp_scope: create 1 .*
+(alloc 0x0+ to .*\n){3}
 return: 1
 Scope level=0  refcnt=1 has_symbols
  *Symbol Table: stack of 1 tables, 5 symbols
@@ -951,6 +957,7 @@ Scope level=0  refcnt=1 has_symbols
  *Type Table: stack of 0 tables, 0 types
 # drop buffer
 # drop scope
+debug: userp_scope: destroy 1 .*
 (alloc 0x\w+ to 0 = 0x0+\n){4}
 # drop env
 alloc 0x\w+ to 0 = 0x0+

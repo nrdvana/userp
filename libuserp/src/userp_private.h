@@ -79,6 +79,12 @@ struct userp_env {
 		err, // Most recent error
 		msg; // Most recent non-error message
 	
+	// diagnostic ID names
+	int scope_serial;
+	int buffer_serial;
+	int encoder_serial;
+	int decoder_serial;
+	
 	// Defaults values
 	int scope_stack_max;
 	int enc_output_parts;
@@ -233,6 +239,7 @@ struct userp_scope {
 	struct scope_import *lazyimports;
 	size_t level;
 	unsigned refcnt;
+	int serial_id;
 	bool is_final:1,
 		has_symbols:1,
 		has_types:1,
