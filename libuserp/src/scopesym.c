@@ -1,6 +1,6 @@
 // This file is included into scope.c
 
-/*----------------------------------------------------------------------------
+/*IMPLDOC
 
 ## Symbol Table
 
@@ -93,6 +93,7 @@ or any time the references need to upgrade to more bits.  When the hashtable
 rebuilds, the tree is reset and the same memory re-used, only reallocating
 if the hash collisions exceed its size.
 
+### Methods
 */
 
 static inline uint32_t userp_symtable_calc_hash(struct userp_symtable *st, const char *name);
@@ -101,6 +102,8 @@ static inline uint32_t userp_symtable_calc_hash(struct userp_symtable *st, const
 // and also guards against overflow of size_t for allocations on 32-bit systems.
 #define MAX_SYMTABLE_ENTRIES (MIN(SIZE_MAX/sizeof(struct symbol_entry), (size_t)(1<<31)-1))
 
+// The hashtree is implemented as a template which can be compiled multiple
+// times for different bit-size references.
 #define HASHTREE_BITS 8
 #include "hashtree.c"
 #undef HASHTREE_BITS
@@ -113,6 +116,7 @@ static inline uint32_t userp_symtable_calc_hash(struct userp_symtable *st, const
 #include "hashtree.c"
 #undef HASHTREE_BITS
 
+// The bucket size and node size are determined by the current value of st->alloc
 #define MAX_HASHTREE_BUCKET_SIZE 4
 #define HASHTREE_BUCKET_SIZE(count) \
 	( (((count)-1) >> 15)? 4 : (((count)-1) >> 7)? 2 : 1 )
@@ -122,6 +126,31 @@ static inline uint32_t userp_symtable_calc_hash(struct userp_symtable *st, const
     : (((count)-1) >> 7)?  sizeof(struct hashtree_node15) \
     :                      sizeof(struct hashtree_node7))
 
+/*IMPLDOC
+
+#### scope_symtable_alloc
+
+    current_size= scope->symtable.alloc;
+    new_size= (current_size? current_size : 1) + additional_items;
+    if (!scope_symtable_alloc(scope, new_size)) { ... }
+
+Resize the scope->symtable.symbols[] vector.
+
+This function allocates space for up to n-1 symbols.  (symbol 0 is reserved
+as a NULL value, but is still counted in the vector length)
+
+If the symbol table of this scope has not been initialized yet, this function
+does that, and includes it into the symbol table stack of this scope.  This
+is the only function that initializes the symbol table, so you should always
+check the symbol allocation first before using the symbol table.
+
+If the allocation crosses a threshold of 7->8 bits or 15->16 bits, it resets
+the hashtree, to be rebuilt on next use.
+
+This function is not public API, so it does not check is_final.  The caller
+should do that.
+
+*/
 static bool scope_symtable_alloc(userp_scope scope, size_t n) {
 	userp_env env= scope->env;
 	struct userp_symtable *st= &scope->symtable;
@@ -181,6 +210,22 @@ static bool scope_symtable_alloc(userp_scope scope, size_t n) {
 	return true;
 }
 
+/*IMPLDOC
+
+#### userp_symtable_calc_hash
+
+    struct userp_symtable *st= &scope->symtable;
+    const char *name= ...
+    uint32_t hash= userp_symtable_calc_hash(st, name);
+
+This calculates the hash for a NUL-terminated string.  The algorithm
+is subject to change, but is currently a munged-up interpretation of
+[MurmurHash32 by Austin Appleby](https://github.com/aappleby/smhasher)
+
+Only 32 bits are used because it seems unnecessary to do 64 for symbol
+tables that likely never even cross 16 bit number of entries.
+
+*/
 static inline uint32_t userp_symtable_calc_hash(struct userp_symtable *st, const char *name) {
 	// This is mostly MurmurHash32 by Austin Appleby, but I fudged the
 	// implementation a bit since I don't have the key length in advance.
@@ -208,6 +253,32 @@ static inline uint32_t userp_symtable_calc_hash(struct userp_symtable *st, const
 	return hash? hash : 1;
 }
 
+/*IMPLDOC
+
+#### userp_symtable_hashtree_get
+
+    struct userp_symtable *st= &scope->symtable;
+	userp_scope_symtable_hashtree_populate(...);
+    userp_symbol sym= userp_symtable_hashtree_get(st, hash, name);
+
+This function looks up the name in the hashtree.  The name and hash are both required. The symbol
+table must be fully 'processed' in advanced.  The userp_symbol returned includes the st->id_offset
+and is ready to be handed to the user.
+
+#### userp_symtable_hashtree_insert
+
+    struct userp_symtable *st= &scope->symtable;
+    scope_symtable_alloc(...);
+    scope->symtable.symbols[ofs]= ...
+    if (!userp_hashtree_insert(st, ofs)) { ... }
+
+This function inserts a symbol into the hashtree.  The symbol must already have been added to the
+symbol vector, and hashed.  The function will fail if there were not enough hashtree nodes, or if
+the tree is corrupt.  The caller must detect whether there were not enough nodes, and allocate
+more before trying again.
+
+*/
+
 userp_symbol userp_symtable_hashtree_get(struct userp_symtable *st, uint32_t hash, const char *name) {
 	return ((st->alloc-1) >> 15)? userp_symtable_hashtree_get31(st, hash, name)
 	     : ((st->alloc-1) >>  7)? userp_symtable_hashtree_get15(st, hash, name)
@@ -224,7 +295,22 @@ bool userp_symtable_hashtree_insert(struct userp_symtable *st, size_t sym_ofs) {
 // and also guards against overflow of size_t for allocations on 32-bit systems.
 #define MAX_HASH_BUCKETS (MIN((SIZE_MAX/MAX_HASHTREE_BUCKET_SIZE), MAX_SYMTABLE_ENTRIES*2))
 
-bool userp_scope_symtable_hashtree_populate(struct userp_symtable *st, userp_env env) {
+/*IMPLDOC
+
+#### userp_scope_symtable_hashtree_populate
+
+    struct userp_symtable *st= &scope->symtable;
+    if (!userp_scope_symtable_hashtree_populate(st, scope->env)) { ... }
+
+This function adds all new symbols to the hashtree.  The symbol table may grow without updating
+the hashtree (because the hashtree is only needed for lookup-by-name, not lookup-by-id) so this
+allows the hashtree to be lazily built on demand.  This function needs called before hashtree_get.
+
+This method only fails if it can't allocate memory, or if the trees are corrupt.
+
+*/
+
+static bool userp_scope_symtable_hashtree_populate(struct userp_symtable *st, userp_env env) {
 	size_t orig_bucket_alloc= st->bucket_alloc;
 	// Need at least 1.5x as many buckets as symbols
 	if (st->bucket_alloc < st->alloc + (st->alloc>>1)) {
@@ -336,6 +422,19 @@ bool userp_scope_symtable_hashtree_populate(struct userp_symtable *st, userp_env
 	return true;
 }
 
+/*APIDOC
+
+#### userp_scope_get_symbol
+
+    sym_id= userp_scope_get_symbol(scope, "example", USERP_CREATE);
+
+Get and/or optionally create a symbol in the symbol table.  Symbols can only be added when the
+symbol table has not been finalized.  Symbols can be returned from parent scopes unless you
+add the flag `USERP_GET_LOCAL`.  By combining `USERP_GET_LOCAL|USERP_CREATE`, you can create
+symbols in the local scope that mask the same name in a parent scope.
+
+*/
+
 userp_symbol userp_scope_get_symbol(userp_scope scope, const char *name, int flags) {
 	int i, pos, len;
 	struct userp_symtable *st;
@@ -388,6 +487,28 @@ userp_symbol userp_scope_get_symbol(userp_scope scope, const char *name, int fla
 	scope->symtable.used= pos+1;
 	return pos + scope->symtable.id_offset;
 }
+
+/*IMPLDOC
+
+#### parse_symbols
+
+	struct symbol_parse_state parse= {
+       .pos= buffer;
+       .limit= buffer + buffer_length,
+       .prev= NULL,
+       .dest_pos= &scope->symtable.symbols[i],
+       .dest_lim= &scope->symtable.symbols[i+n]
+    };
+    if (!parse_symbols(&parse)) { ... }
+
+`parse_symbols` scans through a buffer locating the starts of strings and checking for unicode
+UTF-8 validity.  It returns true if it parses a whole number of symbols (finding a NUL byte
+exactly before `limit`) or if it fills the destination symbol buffer.  It returns false if it
+finds a partial symbol before the end of the buffer and `dest_pos < dest_lim` was still true,
+or if any allocation fails, or if any UTF-8 sequence was incorrect, or if any symbol contains
+illegal characters.
+
+*/
 
 struct symbol_parse_state {
 	uint8_t
@@ -523,6 +644,27 @@ static bool parse_symbols(struct symbol_parse_state *parse) {
 	parse->pos= (uint8_t*) pos;
 	return false;
 }
+
+/*APIDOC
+
+#### userp_scope_parse_symbols
+
+    struct userp_bstr_part parts[]= { ... }
+    // parse an exact number of symbols
+    if (!userp_scope_parse_symbols(scope, parts, part_count, sym_count, flags)) { ... }
+    // parse however many symbols are found in the buffers
+    if (!userp_scope_parse_symbols(scope, parts, part_count, 0, flags)) { ... }
+
+This method parses NUL-terminated strings from one or more buffers.  The buffers may be part of a
+`userp_bstr` or you can allocate them on the stack.  If `sym_count` is not zero, this function
+parses exactly that number of symbols from the buffer and returns true only if it found that many
+(and was able to allocate space for them all).  If `sym_count` is zero, this function parses as
+many symbols as it can from the buffer and only succeeds if the last byte in the buffer was a NUL
+byte (end of the final symbol).
+
+On error, the `userp_env` error data contains the pointer where the parse ended.
+
+*/
 
 bool userp_scope_parse_symbols(userp_scope scope, struct userp_bstr_part *parts, size_t part_count, int sym_count, int flags) {
 	userp_env env= scope->env;
