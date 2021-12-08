@@ -200,7 +200,7 @@ static void scope_import_free(struct scope_import *imp) {
 }
 
 bool userp_scope_import(userp_scope scope, userp_scope source, int flags) {
-	struct scope_import *imp, **prev;
+	struct scope_import *imp, **ref_p;
 	userp_env env= scope->env;
 	
 	// current scope cannot be final
@@ -225,10 +225,10 @@ bool userp_scope_import(userp_scope scope, userp_scope source, int flags) {
 			return false;
 		}
 		// Append to linked list of lazy imports
-		prev= &scope->lazyimports;
-		while (*prev)
-			prev= &((*prev)->next_import);
-		*prev= imp;
+		ref_p= &scope->lazyimports;
+		while (*ref_p)
+			ref_p= &((*ref_p)->next_import);
+		*ref_p= imp;
 	}
 	else {
 		unimplemented("copy symbols and types");
@@ -268,7 +268,7 @@ static void dump_scope(userp_scope scope) {
 			printf("      hashtree: %d/%d+%d (%lld table bytes, %lld node bytes)\n",
 				(int)scope->symtable.bucket_used,
 				(int)scope->symtable.bucket_alloc,
-				(int)scope->symtable.node_used-1,
+				(int)(scope->symtable.node_used? scope->symtable.node_used-1 : 0),
 				(long long)( scope->symtable.bucket_alloc * HASHTREE_BUCKET_SIZE(scope->symtable.processed) ),
 				(long long)( scope->symtable.node_alloc * HASHTREE_NODE_SIZE(scope->symtable.processed) )
 			);

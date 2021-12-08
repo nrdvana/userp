@@ -95,19 +95,43 @@ if the hash collisions exceed its size.
 
 */
 
+static inline uint32_t userp_symtable_calc_hash(struct userp_symtable *st, const char *name);
+
 // This handles both the case of limiting symbols to the 2**31 limit imposed by the hash table,
 // and also guards against overflow of size_t for allocations on 32-bit systems.
 #define MAX_SYMTABLE_ENTRIES (MIN(SIZE_MAX/sizeof(struct symbol_entry), (size_t)(1<<31)-1))
 
+#define HASHTREE_BITS 8
+#include "hashtree.c"
+#undef HASHTREE_BITS
+
+#define HASHTREE_BITS 16
+#include "hashtree.c"
+#undef HASHTREE_BITS
+
+#define HASHTREE_BITS 32
+#include "hashtree.c"
+#undef HASHTREE_BITS
+
+#define MAX_HASHTREE_BUCKET_SIZE 4
+#define HASHTREE_BUCKET_SIZE(count) \
+	( (((count)-1) >> 15)? 4 : (((count)-1) >> 7)? 2 : 1 )
+
+#define HASHTREE_NODE_SIZE(count) \
+	( (((count)-1) >> 15)? sizeof(struct hashtree_node31) \
+    : (((count)-1) >> 7)?  sizeof(struct hashtree_node15) \
+    :                      sizeof(struct hashtree_node7))
+
 static bool scope_symtable_alloc(userp_scope scope, size_t n) {
 	userp_env env= scope->env;
-	size_t i;
+	struct userp_symtable *st= &scope->symtable;
+	size_t i, old_n;
 
 	assert(!scope->is_final);
 	assert(n > 0);
 	// On the first allocation, allocate the exact number requested.
 	// After that, allocate in powers of two.
-	if (scope->symtable.alloc)
+	if (st->alloc)
 		n= roundup_pow2(n);
 	else {
 		if (n == 1) n= 64; // n=1 indicates defining symbols in a loop
@@ -115,20 +139,20 @@ static bool scope_symtable_alloc(userp_scope scope, size_t n) {
 			// On the first allocation, also need to add this symtable to the set used by the scope.
 			// When allocated, the userp_scope left room in symtable_stack for one extra
 			i= scope->symtable_count++;
-			scope->symtable_stack[i]= &scope->symtable;
-			scope->symtable.id_offset= !i? 0
+			scope->symtable_stack[i]= st;
+			st->id_offset= !i? 0
 				: scope->symtable_stack[i-1]->id_offset
 				+ scope->symtable_stack[i-1]->used
 				- 1; // because slot 0 of each symbol table is used as a NUL element.
-			scope->symtable.chardata.env= scope->env;
-			scope->symtable.hash_salt= scope->env->salt;
-			scope->symtable.used= 1; // elem 0 is always reserved
+			st->chardata.env= scope->env;
+			st->hash_salt= scope->env->salt;
+			st->used= 1; // elem 0 is always reserved
 			scope->has_symbols= true;
 			// All other fields were blanked during the userp_scope constructor
 		}
 	}
 	// Symbol tables never lose symbols until destroyed, so don't bother with shrinking
-	if (n <= scope->symtable.alloc)
+	if (n <= st->alloc)
 		return true; // nothing to do
 	// Library implementation is capped at 31-bit references, but on a 32-bit host it's less than that
 	// to prevent size_t overflow.
@@ -141,10 +165,19 @@ static bool scope_symtable_alloc(userp_scope scope, size_t n) {
 		return false;
 	}
 
-	if (!USERP_ALLOC_ARRAY(env, &scope->symtable.symbols, n))
+	if (!USERP_ALLOC_ARRAY(env, &st->symbols, n))
 		return false;
 
-	scope->symtable.alloc= n;
+	// If the bit size of the hashtree is changing, reset it.
+	old_n= st->alloc;
+	if (HASHTREE_BUCKET_SIZE(n) != HASHTREE_BUCKET_SIZE(old_n)) {
+		st->processed= 0;
+		st->bucket_alloc= st->bucket_alloc
+			* HASHTREE_BUCKET_SIZE(old_n) / HASHTREE_BUCKET_SIZE(n);
+		st->node_alloc= st->node_alloc
+			* HASHTREE_NODE_SIZE(old_n) / HASHTREE_NODE_SIZE(n);
+	}
+	st->alloc= n;
 	return true;
 }
 
@@ -175,37 +208,16 @@ static inline uint32_t userp_symtable_calc_hash(struct userp_symtable *st, const
 	return hash? hash : 1;
 }
 
-#define HASHTREE_BITS 8
-#include "hashtree.c"
-#undef HASHTREE_BITS
-
-#define HASHTREE_BITS 16
-#include "hashtree.c"
-#undef HASHTREE_BITS
-
-#define HASHTREE_BITS 32
-#include "hashtree.c"
-#undef HASHTREE_BITS
-
-#define MAX_HASHTREE_BUCKET_SIZE 4
-#define HASHTREE_BUCKET_SIZE(count) \
-	( (((count)-1) >> 15)? 4 : (((count)-1) >> 7)? 2 : 1 )
-
-#define HASHTREE_NODE_SIZE(count) \
-	( (((count)-1) >> 15)? sizeof(struct hashtree_node31) \
-    : (((count)-1) >> 7)?  sizeof(struct hashtree_node15) \
-    :                      sizeof(struct hashtree_node7))
-
 userp_symbol userp_symtable_hashtree_get(struct userp_symtable *st, uint32_t hash, const char *name) {
-	return ((st->used-1) >> 15)? userp_symtable_hashtree_get31(st, hash, name)
-	     : ((st->used-1) >>  7)? userp_symtable_hashtree_get15(st, hash, name)
-	     :                       userp_symtable_hashtree_get7 (st, hash, name);
+	return ((st->alloc-1) >> 15)? userp_symtable_hashtree_get31(st, hash, name)
+	     : ((st->alloc-1) >>  7)? userp_symtable_hashtree_get15(st, hash, name)
+	     :                        userp_symtable_hashtree_get7 (st, hash, name);
 }
 
 bool userp_symtable_hashtree_insert(struct userp_symtable *st, size_t sym_ofs) {
-	return ((st->used-1) >> 15)? userp_symtable_hashtree_insert31(st, sym_ofs)
-	     : ((st->used-1) >>  7)? userp_symtable_hashtree_insert15(st, sym_ofs)
-	     :                       userp_symtable_hashtree_insert7 (st, sym_ofs);
+	return ((st->alloc-1) >> 15)? userp_symtable_hashtree_insert31(st, sym_ofs)
+	     : ((st->alloc-1) >>  7)? userp_symtable_hashtree_insert15(st, sym_ofs)
+	     :                        userp_symtable_hashtree_insert7 (st, sym_ofs);
 }
 
 // This handles both the case of limiting tables to 2x the max number of symbols,
@@ -213,15 +225,50 @@ bool userp_symtable_hashtree_insert(struct userp_symtable *st, size_t sym_ofs) {
 #define MAX_HASH_BUCKETS (MIN((SIZE_MAX/MAX_HASHTREE_BUCKET_SIZE), MAX_SYMTABLE_ENTRIES*2))
 
 bool userp_scope_symtable_hashtree_populate(struct userp_symtable *st, userp_env env) {
-	size_t alloc, new_buckets, batch;
-
-	// Need to rebuild the hashtable if:
-	//   * the bits requirements have changed
-	//   * it has fewer buckets than symtable.used
-	if (HASHTREE_BUCKET_SIZE(st->processed) < HASHTREE_BUCKET_SIZE(st->used)
-		|| st->bucket_alloc < st->used + (st->used>>1)
-	) {
-		if (env->log_trace && st->processed > 1) {
+	size_t orig_bucket_alloc= st->bucket_alloc;
+	// Need at least 1.5x as many buckets as symbols
+	if (st->bucket_alloc < st->alloc + (st->alloc>>1)) {
+		// The allocated size of the symbol vector is a good hint about the ideal size for
+		// the hashtable, since the user might have requested something specific.
+		// But don't go smaller than 256;
+		assert(st->alloc <= MAX_SYMTABLE_ENTRIES);
+		// For first allocation, only reserve 2x.  For later allocations, jump by 4x.
+		// Guaranteed to be within size_t because of MAX_SYMTABLE_ENTRIES
+		size_t new_buckets= st->alloc << (st->bucket_alloc? 2 : 1);
+		// don't allocate tiny hash tables, just adds collisions for insignificant savings
+		if (new_buckets < 0x200)
+			new_buckets= 0x200;
+		else if (new_buckets > MAX_HASH_BUCKETS)
+			new_buckets= MAX_HASH_BUCKETS;
+		// The current hash algorithm gets a lot better if the bucket count is odd
+		if (!(new_buckets & 1)) --new_buckets;
+		assert(new_buckets > st->bucket_alloc);
+		size_t size= new_buckets * HASHTREE_BUCKET_SIZE(st->alloc);
+		if (env->log_trace) {
+			userp_diag_setf(&env->msg, USERP_MSG_SYMTABLE_HASHTREE_ALLOC,
+				"userp_scope: alloc symtable hashtree size=" USERP_DIAG_SIZE
+					" buckets=" USERP_DIAG_COUNT
+					" for " USERP_DIAG_POS " symbols",
+				size, new_buckets, st->used
+			);
+			USERP_DISPATCH_MSG(env);
+		}
+		// don't use "realloc" because there is no reason to copy the old content of the buffer
+		userp_alloc(env, &st->buckets, 0, 0);
+		if (!userp_alloc(env, &st->buckets, size, 0)) {
+			st->bucket_alloc= 0;
+			st->processed= 0;
+			st->node_used= 0;
+			return false;
+		}
+		st->bucket_alloc= new_buckets;
+		st->processed= 0;
+	}
+	
+	// initial setup of hash table and nodes.  Processed counts symbol[0] (NULL), so use that
+	// as a flag whether the tables are cleared or not.
+	if (!st->processed) {
+		if (env->log_trace && orig_bucket_alloc > 0) {
 			userp_diag_setf(&env->msg, USERP_MSG_SYMTABLE_HASHTREE_REBUILD,
 				"userp_scope: rebuild hashtree "
 					"(" USERP_DIAG_COUNT "/" USERP_DIAG_SIZE "+" USERP_DIAG_COUNT2 ")"
@@ -230,58 +277,19 @@ bool userp_scope_symtable_hashtree_populate(struct userp_symtable *st, userp_env
 			);
 			USERP_DISPATCH_MSG(env);
 		}
-		// The allocated size of the symbol vector is a good hint about the ideal size for
-		// the hashtable, since the user might have requested something specific.
-		// But don't go smaller than 256;
-		assert(st->alloc <= MAX_SYMTABLE_ENTRIES);
-		// For first allocation, only reserve 2x.  For later allocations, jump by 4x.
-		// Guaranteed to be within size_t because of MAX_SYMTABLE_ENTRIES
-		new_buckets= st->alloc << (st->bucket_alloc? 2 : 1);
-		// don't allocate tiny hash tables, just adds collisions for insignificant savings
-		if (new_buckets < 0x200)
-			new_buckets= 0x200;
-		else if (new_buckets > MAX_HASH_BUCKETS)
-			new_buckets= MAX_HASH_BUCKETS;
-		// The current hash algorithm gets a lot better if the bucket count is odd
-		if (!(new_buckets & 1)) --new_buckets;
-		// check how many bytes that it, and how many we have already
-		alloc= HASHTREE_BUCKET_SIZE(st->used) * new_buckets;
-		if (alloc > HASHTREE_BUCKET_SIZE(st->processed) * st->bucket_alloc) {
-			if (env->log_trace) {
-				userp_diag_setf(&env->msg, USERP_MSG_SYMTABLE_HASHTREE_ALLOC,
-					"userp_scope: alloc symtable hashtree size=" USERP_DIAG_SIZE
-						" buckets=" USERP_DIAG_COUNT
-						" for " USERP_DIAG_POS " symbols",
-					alloc, new_buckets, st->used
-				);
-				USERP_DISPATCH_MSG(env);
-			}
-			// don't use "realloc" because there is no reason to copy the old content of the buffer
-			userp_alloc(env, &st->buckets, 0, 0);
-			if (!userp_alloc(env, &st->buckets, alloc, 0)) {
-				st->bucket_alloc= 0;
-				st->bucket_used= 0;
-				st->node_used= 0;
-				return false;
-			}
-		}
-		// if tree nodes are allocated, and the bit size just crossed from 15->31, change the
-		// recorded number of allocated nodes.
-		if (st->node_alloc && (HASHTREE_NODE_SIZE(st->processed) != HASHTREE_NODE_SIZE(st->used))) {
-			st->node_alloc= st->node_alloc * HASHTREE_NODE_SIZE(st->processed)
-				/ HASHTREE_NODE_SIZE(st->used);
-			// re-clear the sentinel node
-			bzero(st->nodes, HASHTREE_NODE_SIZE(st->used));
-		}
 		// clear the entire hash table
-		bzero(st->buckets, alloc);
-		st->processed= 1;
-		st->node_used= 1;
-		st->bucket_alloc= new_buckets;
+		bzero(st->buckets, st->bucket_alloc * HASHTREE_BUCKET_SIZE(st->alloc));
 		st->bucket_used= 0;
-	}		
-	
-	batch= st->used - st->processed;
+		// node zero is the sentinel node
+		if (st->node_alloc) {
+			bzero(st->nodes, HASHTREE_NODE_SIZE(st->alloc));
+			st->node_used= 1;
+		} else {
+			assert(st->node_used == 0);
+		}
+		st->processed= 1;
+	}
+	size_t batch= st->used - st->processed;
 	while (st->processed < st->used) {
 		// Now try adding the symbol entry
 		if (userp_symtable_hashtree_insert(st, st->processed))
@@ -289,21 +297,21 @@ bool userp_scope_symtable_hashtree_populate(struct userp_symtable *st, userp_env
 		// Did it fail because it was out of tree nodes?
 		else if (st->node_used+3 >= st->node_alloc) {
 			// Allocate in powers of 2, min 32 nodes
-			alloc= roundup_pow2(st->node_used + 17);
+			size_t alloc= roundup_pow2(st->node_used + 17);
 			if (env->log_debug) {
 				userp_diag_setf(&env->msg, USERP_MSG_SYMTABLE_HASHTREE_EXTEND,
 					"userp_scope: symtable hashtree "
 					"(" USERP_DIAG_COUNT "/" USERP_DIAG_SIZE "+" USERP_DIAG_COUNT2 ")"
 					" collisions require more nodes, realloc " USERP_DIAG_SIZE2 " more",
-					st->bucket_used, st->bucket_alloc, st->node_used, alloc - st->node_used
+					st->bucket_used, st->bucket_alloc, st->node_used, alloc - st->node_alloc
 				);
 				USERP_DISPATCH_MSG(env);
 			}
-			if (!userp_alloc(env, &st->nodes, alloc * HASHTREE_NODE_SIZE(st->used), USERP_HINT_DYNAMIC))
+			if (!userp_alloc(env, &st->nodes, alloc * HASHTREE_NODE_SIZE(st->alloc), USERP_HINT_DYNAMIC))
 				return false;
 			if (!st->node_alloc) {
 				// first node is a sentinel set to zeroes
-				bzero(st->nodes, HASHTREE_NODE_SIZE(st->used));
+				bzero(st->nodes, HASHTREE_NODE_SIZE(st->alloc));
 				st->node_used= 1;
 			}
 			st->node_alloc= alloc;
@@ -887,6 +895,7 @@ debug: userp_scope: create 2 .*
 # 12K nodes increasing
 (debug:.*\n)*
 # 10K nodes decreasing
+(debug:.*\n)*
 # 10K nodes into the middle of the tree
 (debug:.*\n)*
 Scope level=0  refcnt=1 has_symbols
@@ -896,8 +905,8 @@ Scope level=0  refcnt=1 has_symbols
  *buffers:.*
  *Type Table: stack of 0 tables, 0 types
 # insert one more node forcing it to upgrade to 31-bit tree
-debug: userp_scope: rebuild hashtree .*? at 32769 symbols
 debug: userp_scope: alloc symtable hashtree .*
+debug: userp_scope: rebuild hashtree .*? at 32769 symbols
 debug: userp_scope: added symbols 1..32769 to hashtree .*
 Scope level=0  refcnt=1 has_symbols
   Symbol Table: stack of 1 tables, 32768 symbols
