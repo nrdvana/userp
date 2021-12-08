@@ -306,63 +306,66 @@ static bool BIT_SUFFIX_NAME(userp_symtable_hashtree_insert, IDBITS) (
 	return true;
 }
 
-/*
-static bool symbol_tree_walk15(struct symbol_table *st, const char *key, bool (*walk_cb)(void *context, int sym_ofs), void *context) {
-	struct hashtree_node15 *tree;
-	uint16_t node, parent[32];
+static bool BIT_SUFFIX_NAME(userp_symtable_hashtree_walk, IDBITS) (
+	struct userp_symtable *st,
+	WORD_TYPE root,
+	const char *key,
+	bool (*walk_cb)(void *context, int sym_ofs),
+	void *context
+) {
+	NODE_TYPE *nodes= (NODE_TYPE*) st->nodes;
+	WORD_TYPE node, stack[TREE_HEIGHT_LIMIT];
 	int parent_pos, cmp;
 
-	assert(st->tree);
-	assert(st->tree15[0].left == 0);
-	assert(st->tree15[0].right == 0);
-	assert(st->tree15[0].color == 0);
+	assert(nodes);
+	assert(nodes[0].left == 0);
+	assert(nodes[0].right == 0);
+	assert(nodes[0].color == 0);
 
-	tree= st->tree15;
-	parent[0]= 0;
+	stack[0]= 0;
 	parent_pos= 0;
-	node= (uint16_t) st->tree_root;
+	node= root;
 	// seek initial node, if given
 	if (key) {
-		while (node && parent_pos < 32) {
+		while (node && parent_pos < TREE_HEIGHT_LIMIT) {
 			cmp= strcmp(key, st->symbols[node].name);
 			if (cmp == 0) break;
-			parent[++parent_pos]= node;
-			node= (cmp > 0)? tree[node].right : tree[node].left;
+			stack[++parent_pos]= node;
+			node= (cmp > 0)? nodes[node].right : nodes[node].left;
 		}
 		if (node) // ran out of stack, tree is corrupt
 			return false;
-		node= parent[parent_pos--];
+		node= stack[parent_pos--];
 		goto emit_node;
 	}
 	// Now begin iterating
 	{
 	seek_left:
-		while (tree[node].left) {
-			if (parent_pos+1 >= 32) return false; // tree corrupt
-			parent[++parent_pos]= node;
-			node= tree[node].left;
+		while (nodes[node].left) {
+			if (parent_pos+1 >= TREE_HEIGHT_LIMIT) return false; // tree corrupt
+			stack[++parent_pos]= node;
+			node= nodes[node].left;
 		}
 	emit_node:
 		if (!walk_cb(context, node))
 			return true; // user requested end, which is success
 	//step_right:
 		// start over from right subtree, if any
-		if (tree[node].right) {
-			if (parent_pos+1 >= 32) return false; // tree corrupt
-			parent[++parent_pos]= node;
-			node= tree[node].right;
+		if (nodes[node].right) {
+			if (parent_pos+1 >= TREE_HEIGHT_LIMIT) return false; // tree corrupt
+			stack[++parent_pos]= node;
+			node= nodes[node].right;
 			goto seek_left;
 		}
 		// else walk upward while this node was to the right of the parent
-		while (tree[parent[parent_pos]].right == node)
-			node= parent[parent_pos--];
+		while (nodes[stack[parent_pos]].right == node)
+			node= stack[parent_pos--];
 		// then up one more parent
-		node= parent[parent_pos--];
+		node= stack[parent_pos--];
 		if (node) goto emit_node;
 	}
 	return true;
 }
-*/
 
 #undef IDBITS
 #undef WORD_TYPE

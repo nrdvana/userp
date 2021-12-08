@@ -279,16 +279,32 @@ more before trying again.
 
 */
 
-userp_symbol userp_symtable_hashtree_get(struct userp_symtable *st, uint32_t hash, const char *name) {
+static userp_symbol userp_symtable_hashtree_get(struct userp_symtable *st, uint32_t hash, const char *name) {
+	assert(hash != 0);
+	assert(name != NULL && *name != '\0');
 	return ((st->alloc-1) >> 15)? userp_symtable_hashtree_get31(st, hash, name)
 	     : ((st->alloc-1) >>  7)? userp_symtable_hashtree_get15(st, hash, name)
 	     :                        userp_symtable_hashtree_get7 (st, hash, name);
 }
 
-bool userp_symtable_hashtree_insert(struct userp_symtable *st, size_t sym_ofs) {
+static bool userp_symtable_hashtree_insert(struct userp_symtable *st, size_t sym_ofs) {
+	assert(sym_ofs < st->alloc);
 	return ((st->alloc-1) >> 15)? userp_symtable_hashtree_insert31(st, sym_ofs)
 	     : ((st->alloc-1) >>  7)? userp_symtable_hashtree_insert15(st, sym_ofs)
 	     :                        userp_symtable_hashtree_insert7 (st, sym_ofs);
+}
+
+static bool userp_symtable_hashtree_walk(
+	struct userp_symtable *st,
+	uint32_t root_node,
+	const char *from_key, 
+	bool (*walk_cb)(void *context, int sym_ofs),
+	void *context
+) {
+	assert(root_node < st->node_alloc);
+	return ((st->alloc-1) >> 15)? userp_symtable_hashtree_walk31(st, root_node, from_key, walk_cb, context)
+	     : ((st->alloc-1) >>  7)? userp_symtable_hashtree_walk15(st, root_node, from_key, walk_cb, context)
+	     :                        userp_symtable_hashtree_walk7 (st, root_node, from_key, walk_cb, context);
 }
 
 // This handles both the case of limiting tables to 2x the max number of symbols,
