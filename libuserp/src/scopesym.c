@@ -945,7 +945,7 @@ UNIT_TEST(scope_symbol_sorted) {
 /*OUTPUT
 Scope level=0  refcnt=1 has_symbols
  *Symbol Table: stack of 1 tables, 1000 symbols
- *local table: 1000/1024 partially indexed \(\d+ vector bytes\)
+ *local table: 0-1000 .*
  *hashtree: \d+/\d+\+\d+ \(\d+ table bytes, \d+ node bytes\)
  *buffers:  \[0-4095\]/4096  \[0-4905\]/8192
  *Type Table: stack of 0 tables, 0 types
@@ -1037,13 +1037,13 @@ debug: userp_scope: create 1 .*
 # two out-of-order nodes
 Scope level=0  refcnt=1 has_symbols
   Symbol Table: stack of 1 tables, 1 symbols
-   local table: 1/\d+ not indexed \(\d+ vector bytes\)
+   local table: 0-1 .*
        buffers:  \[0-2\]/4096
     Type Table: stack of 0 tables, 0 types
 debug: userp_scope: alloc symtable hashtree size=\d+ buckets=\d+ for 2 symbols
 Scope level=0  refcnt=1 has_symbols
   Symbol Table: stack of 1 tables, 2 symbols
- *local table: 2/\d+ partially indexed \(\d+ vector bytes\)
+ *local table: 0-2 .*
  *hashtree: 1/\d+\+0 \(\d+ table bytes, \d+ node bytes\)
  *buffers:  \[0-4\]/4096
  *Type Table: stack of 0 tables, 0 types
@@ -1058,7 +1058,7 @@ debug: userp_scope: create 2 .*
 (debug:.*\n)*
 Scope level=0  refcnt=1 has_symbols
   Symbol Table: stack of 1 tables, 32767 symbols
- *local table: 32767/\d+ indexed \(\d+ vector bytes\)
+ *local table: 0-32767 .*
  *hashtree:.*
  *buffers:.*
  *Type Table: stack of 0 tables, 0 types
@@ -1068,7 +1068,7 @@ debug: userp_scope: rebuild hashtree .*? at 32769 symbols
 debug: userp_scope: added symbols 1..32769 to hashtree .*
 Scope level=0  refcnt=1 has_symbols
   Symbol Table: stack of 1 tables, 32768 symbols
- *local table: 32768/\d+ indexed \(\d+ vector bytes\)
+ *local table: 0-32768 .*
  *hashtree:.*
  *buffers:.*
  *Type Table: stack of 0 tables, 0 types
@@ -1119,7 +1119,7 @@ debug: userp_scope: create 1 .*
 return: 1
 Scope level=0  refcnt=1 has_symbols
  *Symbol Table: stack of 1 tables, 5 symbols
- *local table: 5/.*
+ *local table: 0-5 .*
  *buffers:  \[0-20\]/20
  *Type Table: stack of 0 tables, 0 types
 # drop buffer
@@ -1163,7 +1163,7 @@ UNIT_TEST(scope_parse_split_symtable) {
 return: 1
 Scope level=0  refcnt=1 has_symbols
  *Symbol Table: stack of 1 tables, 10 symbols
- *local table: 10/.*
+ *local table: 0-10 .*
  *buffers:  \[0-20\]/20  \[0-20\]/20
  *Type Table: stack of 0 tables, 0 types
 # drop scope
@@ -1204,7 +1204,7 @@ UNIT_TEST(scope_parse_split_symbol) {
 return: 1
 Scope level=0  refcnt=1 has_symbols
  *Symbol Table: stack of 1 tables, 6 symbols
- *local table: 6/.*
+ *local table: 0-6 .*
  *buffers:  \[0-10\]/19  \[0-13\]/13  \[4-16\]/20
  *Type Table: stack of 0 tables, 0 types
 # drop scope

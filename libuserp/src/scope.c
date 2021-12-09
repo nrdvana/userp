@@ -256,9 +256,9 @@ static void dump_scope(userp_scope scope) {
 			+ scope->symtable_stack[scope->symtable_count-1]->used - 1 )
 	);
 	if (scope->has_symbols) {
-		printf("   local table: %d/%d %s (%lld vector bytes)\n",
-			(int)scope->symtable.used-1,
-			(int)scope->symtable.alloc,
+		printf("   local table: %d-%d %s (%lld vector bytes)\n",
+			(int)scope->symtable.id_offset,
+			(int)(scope->symtable.id_offset + scope->symtable.used - 1),
 			!scope->symtable.bucket_alloc? "not indexed"
 				: scope->symtable.processed == scope->symtable.used? "indexed"
 				: "partially indexed",
