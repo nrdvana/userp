@@ -164,7 +164,8 @@ sub write_entrypoint {
 	my $fh;
 	open($fh, '>', $dest) && (print $fh <<END) && close $fh or die "Can't write to $dest\n";
 #include "local.h"
-#define UNIT_TEST(name) void name(int argc, char **argv)
+#define UNIT_TEST_CONCAT_NAME_(prefix,name) prefix##name
+#define UNIT_TEST(name) void UNIT_TEST_CONCAT_NAME_(test_,name)(int argc, char **argv)
 #define TRACE(env, x...) do{ if(env->log_trace){ userp_diag_set(env->diag,x); userp_env_emit_diag(env); } }while(0)
 #include "userp_private.h"
 
@@ -175,7 +176,7 @@ struct tests {
 	const char *name;
 	test_entrypoint *entrypoint;
 } tests[]= {
-@{[ map qq:	{ "$_", &$_ },\n:, @test_names ]}
+@{[ map qq:	{ "$_", &test_$_ },\n:, @test_names ]}
 	{ NULL, NULL }
 };
 
