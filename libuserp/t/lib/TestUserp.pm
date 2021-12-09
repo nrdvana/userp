@@ -64,13 +64,13 @@ sub diff_regex_vs_text {
 		if ($match) {
 			# If resyncing, add any skipped lines
 			if ($resync && $-[0] > $t_pos) {
-				push @output, [ undef, split /\n/, substr($text, $t_pos, $-[0] - $t_pos), -1 ];
+				push @output, [ undef, grep length, split /(.*\n)/, substr($text, $t_pos, $-[0] - $t_pos) ];
 				$resync= 0;
 			}
 			my $matchtext= substr($text, $-[0], $+[0] - $-[0]);
 			#&p([ $matchtext, length $matchtext? split(/\n/, $matchtext, -1) : (""), substr($text, pos $text) ])
 			#	if !$regexes->[$re_i];
-			push @output, [ $regexes->[$re_i], length $matchtext? (split /\n/, $matchtext, -1) : ('') ];
+			push @output, [ $regexes->[$re_i], length $matchtext? (grep length, split /(.*\n)/, $matchtext) : ('') ];
 			# throw away line ending
 			$text =~ /\G\r?\n?/gc;
 		}
@@ -97,7 +97,7 @@ sub diff_regex_vs_text {
 				push @output, @$best;
 			} else {
 				push @output, map [ $_, undef ], @{$regexes}[ $re_i .. $#$regexes ];
-				push @output, map [ undef, $_ ], split /\n/, substr($text, pos($text));
+				push @output, map [ undef, $_ ], grep length, split /(.*\n)/, substr($text, pos($text));
 			}
 			return \@output;
 		}
