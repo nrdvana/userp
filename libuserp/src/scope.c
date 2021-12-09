@@ -75,8 +75,8 @@ userp_scope userp_new_scope(userp_env env, userp_scope parent) {
 	scope->symtable_stack= (struct userp_symtable**) (scope->typetable_stack + num_type_tables);
 	scope->typetable_count= num_type_tables-1; // final element is left off until first use
 	if (parent) {
-		memcpy(scope->symtable_stack, parent->symtable_stack, parent->symtable_count);
-		memcpy(scope->typetable_stack, parent->typetable_stack, parent->typetable_count);
+		memcpy(scope->symtable_stack, parent->symtable_stack, parent->symtable_count * sizeof(*parent->symtable_stack));
+		memcpy(scope->typetable_stack, parent->typetable_stack, parent->typetable_count * sizeof(*parent->symtable_stack));
 	}
 	return scope;
 }
@@ -237,6 +237,54 @@ bool userp_scope_import(userp_scope scope, userp_scope source, int flags) {
 	return true;
 }
 
+userp_symbol userp_scope_resolve_relative_symref(userp_scope scope, size_t val) {
+	int which_table= 0;
+	//  ....0 means "normal symbol ref from 0"
+	//  ...01 means "symbol offset from table[-1]"
+	//  ..011 means "symbol offset from table[1]"
+	while (val & 1) {
+		which_table++;
+		val >>= 1;
+	}
+	val >>= 1;
+	if (!which_table) return val; // not relative
+	// odd numbered "which_table" count down from the top
+	if (which_table & 1)
+		which_table= scope->symtable_count - 1 - (which_table >> 1);
+	else
+		which_table >>= 1;
+	if (which_table < 0 || which_table >= scope->symtable_count)
+		return 0;
+	++val; // symbol element 0 is the NULL symbol; skip over it.
+	if (val >= scope->symtable_stack[which_table]->used)
+		return 0;
+	return scope->symtable_stack[which_table]->id_offset + val;
+}
+
+userp_type userp_scope_resolve_relative_typeref(userp_scope scope, size_t val) {
+	int which_table= 0;
+	//  ....0 means "normal symbol ref from 0"
+	//  ...01 means "symbol offset from table[-1]"
+	//  ..011 means "symbol offset from table[1]"
+	while (val & 1) {
+		which_table++;
+		val >>= 1;
+	}
+	val >>= 1;
+	if (!which_table) return val; // not relative
+	// odd numbered "which_table" count down from the top
+	if (which_table & 1)
+		which_table= scope->typetable_count - 1 - (which_table >> 1);
+	else
+		which_table >>= 1;
+	if (which_table < 0 || which_table >= scope->typetable_count)
+		return 0;
+	++val; // symbol element 0 is the NULL symbol; skip over it.
+	if (val >= scope->typetable_stack[which_table]->used)
+		return 0;
+	return scope->typetable_stack[which_table]->id_offset + val;
+}
+
 #ifdef UNIT_TEST
 
 static void dump_scope(userp_scope scope) {
@@ -359,6 +407,83 @@ debug: userp_scope: create 2 .*
 debug: userp_scope: destroy 2 .*
 debug: userp_scope: destroy 1 .*
 # drop ref to env
+*/
+
+UNIT_TEST(relative_refs) {
+	userp_env env= userp_new_env(NULL, userp_file_logger, stdout, 0);
+	userp_scope scopes[4];
+	userp_symbol sym;
+	size_t ref;
+	char buf[16];
+	for (int i=0; i < 4; i++) {
+		scopes[i]= userp_new_scope(env, i > 0? scopes[i-1] : NULL);
+		snprintf(buf, sizeof(buf), "sym%d_%d", i, 1);
+		userp_scope_get_symbol(scopes[i], buf, USERP_CREATE);
+		snprintf(buf, sizeof(buf), "sym%d_%d", i, 2);
+		userp_scope_get_symbol(scopes[i], buf, USERP_CREATE);
+		userp_scope_finalize(scopes[i], 0);
+	}
+	dump_scope(scopes[3]);
+	printf("symbol 'sym0_1' = %d\n", (int) userp_scope_get_symbol(scopes[3], "sym0_1", 0));
+	printf("symbol 'sym3_2' = %d\n", (int) userp_scope_get_symbol(scopes[3], "sym3_2", 0));
+	for (int i= 0; i < 4; i++) {
+		ref= i << 1;
+		for (int j= 0; j < 8; j++) {
+			sym= (int) userp_scope_resolve_relative_symref(scopes[3], ref);
+			printf("ref %d%d%d%d%d%d%d%d%d%d = %s%s%s\n",
+				(int)(ref>>9)&1, (int)(ref>>8)&1, (int)(ref>>7)&1, (int)(ref>>6)&1, (int)(ref>>5)&1,
+				(int)(ref>>4)&1, (int)(ref>>3)&1, (int)(ref>>2)&1, (int)(ref>>1)&1, (int) ref&1,
+				sym? "'" : "",
+				sym? userp_scope_get_symbol_str(scopes[3], sym) : "NULL",
+				sym? "'" : "");
+			ref= (ref << 1) | 1;
+		}
+	}
+	for (int i=0; i < 4; i++)
+		userp_drop_scope(scopes[i]);
+	userp_drop_env(env);
+}
+/*OUTPUT
+Scope level=3  refcnt=1 is_final has_symbols
+ *Symbol Table: stack of 4 tables, 8 symbols
+ *local table: 6-8 partially indexed .*
+ *hashtree:.*
+ *buffers:.*
+ *Type Table: stack of 0 tables, 0 types
+symbol 'sym0_1' = 1
+symbol 'sym3_2' = 8
+ref 0000000000 = NULL
+ref 0000000001 = 'sym3_1'
+ref 0000000011 = 'sym1_1'
+ref 0000000111 = 'sym2_1'
+ref 0000001111 = 'sym2_1'
+ref 0000011111 = 'sym1_1'
+ref 0000111111 = 'sym3_1'
+ref 0001111111 = 'sym0_1'
+ref 0000000010 = 'sym0_1'
+ref 0000000101 = 'sym3_2'
+ref 0000001011 = 'sym1_2'
+ref 0000010111 = 'sym2_2'
+ref 0000101111 = 'sym2_2'
+ref 0001011111 = 'sym1_2'
+ref 0010111111 = 'sym3_2'
+ref 0101111111 = 'sym0_2'
+ref 0000000100 = 'sym0_2'
+ref 0000001001 = NULL
+ref 0000010011 = NULL
+ref 0000100111 = NULL
+ref 0001001111 = NULL
+ref 0010011111 = NULL
+ref 0100111111 = NULL
+ref 1001111111 = NULL
+ref 0000000110 = 'sym1_1'
+ref 0000001101 = NULL
+ref 0000011011 = NULL
+ref 0000110111 = NULL
+ref 0001101111 = NULL
+ref 0011011111 = NULL
+ref 0110111111 = NULL
+ref 1101111111 = NULL
 */
 
 #endif

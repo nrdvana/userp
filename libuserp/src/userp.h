@@ -217,6 +217,7 @@ extern bool userp_drop_scope(userp_scope scope);
 extern bool userp_scope_reserve(userp_scope scope, size_t min_symbols, size_t min_types);
 
 extern userp_symbol userp_scope_get_symbol(userp_scope scope, const char * name, int flags);
+extern const char * userp_scope_get_symbol_str(userp_scope scope, userp_symbol sym);
 
 extern userp_type userp_scope_get_type(userp_scope scope, userp_symbol name, int flags);
 extern userp_type userp_scope_new_type(userp_scope scope, userp_symbol name, userp_type base_type);
@@ -225,6 +226,9 @@ extern userp_enc userp_type_encode(userp_type type);
 extern userp_dec userp_type_decode(userp_type type);
 
 extern bool userp_scope_import(userp_scope scope, userp_scope source, int flags);
+
+extern userp_symbol userp_scope_resolve_relative_symref(userp_scope scope, size_t val);
+extern userp_type   userp_scope_resolve_relative_typeref(userp_scope scope, size_t val);
 
 extern bool userp_scope_finalize(userp_scope scope, int flags);
 

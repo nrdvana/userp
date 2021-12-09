@@ -504,6 +504,47 @@ userp_symbol userp_scope_get_symbol(userp_scope scope, const char *name, int fla
 	return pos + scope->symtable.id_offset;
 }
 
+/*APIDOC
+
+#### userp_scope_get_symbol_str
+
+    const char *str= userp_scope_get_symbol_str(scope, sym);
+
+This returns a pointer to a NUL-terminated string of the given userp_symbol.
+If the userp_symbol is out of bounds, or is the special value 0, this returns NULL.
+
+*/
+const char * userp_scope_get_symbol_str(userp_scope scope, userp_symbol sym) {
+	size_t ofs, first, last;
+	struct userp_symtable *st;
+
+	// for the unlikely case of no symbols at all
+	if (!sym || (last= scope->symtable_count) == 0)
+		return NULL;
+	--last;
+	// Most common symtable is probably the most recent user-declared one
+	st= scope->symtable_stack[last];
+	if (sym > st->id_offset) {
+		ofs= sym - st->id_offset;
+		return ofs < st->used? st->symbols[ofs].name : NULL;
+	}
+	if (last == 0)
+		return NULL;
+	--last;
+	// else binary search for it
+	for (first= 0; first < last;) {
+		size_t mid= (first+last+1) >> 1;
+		if (sym > scope->symtable_stack[mid]->id_offset)
+			first= mid;
+		else
+			last= mid-1;
+	}
+	st= scope->symtable_stack[first];
+	assert(sym > st->id_offset);
+	assert(sym - st->id_offset < st->used); // already checked final range, and anything before should be covered
+	return st->symbols[sym - st->id_offset].name;
+}
+
 /*IMPLDOC
 
 #### parse_symbols
