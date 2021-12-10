@@ -698,73 +698,165 @@ bool userp_decode_qty(void *out, size_t out_size, struct userp_bit_io *in) {
 	}
 	return false;
 }
-	
-bool userp_decode_qty_incremental(void *out, size_t out_size, struct userp_bit_io *in) {
-	unimplemented("incremental decode qty");
-/*
-	struct userp_bit_io orig= *in; // save a copy so we can revert on failure
-	int shift, i, state= 0;
-	uint_least32_t val;
-	uint64_t size64;
-	while (1) {
-		while (in->pos >= in->lim) {
-			if (++in->part_pos >= in->str->part_count)
-				goto fail_overrun;
-			in->pos= in->str->parts[in->part_pos].data;
-			in->lim= in->str->parts[in->part_pos].len + in->pos;
+
+struct decode_dest {
+	size_t dest_ofs;
+	size_t dest_size;
+	size_t in_bits;
+	size_t endian: 1,
+		is_signed: 1,
+		align: 16;
+};
+#define DEC_INT_ST_VARQTY       0
+#define DEC_INT_ST_BITCOPY      4
+#define DEC_INT_ST_BITCOPY_SWAP 6
+#define DEC_INT_ST_COPY         8
+#define DEC_INT_ST_COPY_SWAP   10
+size_t userp_decode_ints(struct decode_dest *out, size_t n_out, struct userp_bit_io *in) {
+	unsigned
+		state= 0,                   // used for lightweight "calls" to the next-buffer code, and then return to the algorithm
+		accum_bits= in->accum_bits, // If bit-packing in effect, how many bits remain from the previous byte
+		i;
+	uint8_t
+		*in_pos= in->pos,
+		*in_lim= in->lim;
+	size_t
+		in_part_pos= in->part_pos,
+		out_pos= 0,
+		seek, align;
+	uint_least32_t
+        accum= in->accum;
+	uint64_t
+		in_bits,
+		in_bytes,
+		out_size, // handle up to 64-bit counts of bits
+		ofs, mask;
+
+	while (out_pos < n_out) {
+		in_bits= out[out_pos].in_bits;
+		// 0 means variable-length quantity
+		if (in_bits == 0) { // variable-length quantity
+			state= DEC_INT_ST_VARQTY;
+			accum_bits= 0; // varqty is alwas byte-aligned
+			seek= 0;
 		}
-		switch (state) {
-			val= *in->pos++;
-			if (!(val & 1)) {
-				val >>= 1;
-				size64= 1;
-				shift= 7;
-			} else if (!(val & 2))
-				val >>= 2;
-				size64= 2;
-				shift= 6;
-			} else if (!(val & 4))
-				val >>= 3;
-				size64= 4;
-				shift= 5;
-			} else if (!(val & 8))
-				val >>= 4;
-				size64= 8;
-				shift= 8;
-			} else {
-				case 1: if (in->pos >= in->lim) { state= 1; continue; }
-				size64= (val >> 4) | ((uint64_t) *in->pos++) << 4;
-				if (size64 == 0x0FFF) {
-					size64= 0;
-					for (i= 0; i < 4; i++) {
-						case 2: if (in->pos >= in->lim) { state= 2; continue; }
-						size64 |= ((uint64_t) *in->pos++) << (i * 8);
-					}
-					if (size64 == 0xFFFFFFFF) {
-						size64= 0;
-						for (i= 0; i < 8; i++) {
-							case 3: if (in->pos >= in->lim) { state= 3; continue; }
-							size64 |= ((uint64_t) *in->pos++) << (i * 8);
-						}
-						if (!(size64+1)) {
-							// Protocol theoretically continues, but no practical reason to implement beyond here
-							userp_diag_set(&in->str->env->err, USERP_ELIMIT, "Refusing to decode >64-bit length of length");
-							return false;
-						}
-					}
+		// else it's a whole number of bits, and might be aligned
+		else {
+			align= out[out_pos].align;
+			if (accum_bits && (align < 3)) {
+				if (align == 1) {
+					accum >>= (accum_bits & 1);
+					accum_bits -= (accum_bits & 1);
 				}
-				val= 0;
-				shift= 0;
+				else if (align == 2) {
+					accum >>= (accum_bits & 3);
+					accum_bits -= (accum_bits & 3);
+				}
+				seek= 0;
+				state= DEC_INT_ST_BITCOPY;
 			}
-			if (size64 > 
-			
-			
-			if (shift) {
-			#if ENDIAN == LSB_FIRST
-				// size indicates the 
-				while (size64)
-			state= 4;
-			case 4:
-*/
-	return false;
+			else {
+				if (align > 3) {
+					ofs= in->str->parts[in_part_pos].ofs
+						+ (in_pos - in->str->parts[in_part_pos].data);
+					mask= 1 << (align-3);
+					seek= mask - (ofs & (mask-1));
+				} else
+					seek= 0;
+				accum_bits= 0;
+				state= (in_bits & 7)? DEC_INT_ST_BITCOPY : DEC_INT_ST_COPY;
+			}
+		}
+		// Loop repeats each time a buffer part is consumed.
+		while (1) {
+			// Start of loop always guarantees that *pos is readable
+			while (in_pos + seek >= in_lim) {
+				if (++in_part_pos >= in->str->part_count)
+					goto fail_overrun;
+				seek -= (in_lim - in_pos);
+				in_pos= in->str->parts[in_part_pos].data;
+				in_lim= in->str->parts[in_part_pos].len + in_pos;
+			}
+			in_pos += seek;
+			// Next, go back to whatever was interrupted by running out of buffer
+			switch (state) {
+			case DEC_INT_ST_VARQTY:
+				// State 0 is a variable quantity, need to read one byte to know what to do next.
+				accum= *in_pos++;
+				if (!(accum & 1)) {
+					accum >>= 1;
+					accum_bits= 7;
+					in_bits= 7;
+				} else if (!(accum & 2)) {
+					accum >>= 2;
+					accum_bits= 6;
+					in_bits= 14;
+				} else if (!(accum & 4)) {
+					accum >>= 3;
+					accum_bits= 5;
+					in_bits= 29;
+				} else if (!(accum & 8)) {
+					accum >>= 4;
+					accum_bits= 4;
+					in_bits= 60;
+				} else {
+					// read one additional byte to find the length of the int
+					if (in_pos >= in_lim) { state= 1+DEC_INT_ST_VARQTY; continue; }
+					case 1+DEC_INT_ST_VARQTY:
+					in_bytes= (accum >> 4) | (((uint64_t) *in_pos++) << 4);
+					if (in_bytes == 0xFFF) { // max val means try again with twice as many bytes
+						in_bytes= 0;
+						for (i= 0; i < 4; i++) {
+							if (in_pos >= in_lim) { state= 2+DEC_INT_ST_VARQTY; continue; }
+							case 2+DEC_INT_ST_VARQTY:
+							in_bytes |= ((uint64_t) *in_pos++) << (i * 8);
+						}
+						if (in_bytes == 0xFFFFFFFF) { // and again
+							in_bytes= 0;
+							for (i= 0; i < 8; i++) {
+								if (in_pos >= in_lim) { state= 3+DEC_INT_ST_VARQTY; continue; }
+								case 3+DEC_INT_ST_VARQTY:
+								in_bytes |= ((uint64_t) *in_pos++) << (i * 8);
+							}
+							// Protocol theoretically continues, but no practical reason to implement beyond here
+							if (!(in_bits+1))
+								goto fail_bigint_sizesize;
+							// make sure limbs-to-bits conversion doesn't overflow
+							if (in_bytes >> (64-7))
+								goto fail_overflow;
+						}
+					}
+					in_bytes <<= 2; // the number read was 4-byte quantities
+					state= DEC_INT_ST_COPY;
+					continue;
+				}
+			case DEC_INT_ST_BITCOPY:
+				unimplemented("bit copy");
+			case DEC_INT_ST_COPY:
+				unimplemented("byte copy");
+			}
+			break;
+		}
+		out_pos++;
+	}
+
+	CATCH(fail_overflow) {
+		userp_diag_set(&in->str->env->err, USERP_ELIMIT,
+			"Decoded value would exceed implementation limits");
+	}
+	CATCH(fail_bigint_sizesize) {
+		userp_diag_set(&in->str->env->err, USERP_ELIMIT,
+			"Refusing to decode bigint length stored in >64-bits");
+	}
+	CATCH(fail_overrun) {
+		if (out[out_pos].in_bits)
+			userp_diag_setf(&in->str->env->err, USERP_EOVERRUN,
+				"Ran out of buffer while decoding " USERP_DIAG_SIZE "-bit integer",
+				(size_t) out[out_pos].in_bits);
+		else
+			userp_diag_set(&in->str->env->err, USERP_EOVERRUN,
+				"Ran out of buffer while decoding variable-length integer");
+	}
+
+	return out_pos;
 }
