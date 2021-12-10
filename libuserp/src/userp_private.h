@@ -255,6 +255,14 @@ struct userp_scope {
 
 userp_symbol userp_scope_add_symbol(userp_scope scope, const char *name);
 
+struct userp_bit_io {
+	uint8_t *pos, *lim;
+	uint64_t accum;
+	struct userp_bstr *str;
+	size_t part_pos;
+	int accum_bits;
+};
+
 // ----------------------------- enc.c -------------------------------
 
 struct userp_enc {
@@ -268,6 +276,12 @@ struct userp_enc {
 };
 
 // ----------------------------- dec.c -------------------------------
+
+bool userp_decode_qty(void *out, size_t sizeof_out, struct userp_bit_io *in);
+static inline bool userp_decode_qty_quick(struct userp_bit_io *in, size_t *out) {
+	if (in->pos < in->lim && !(*in->pos & 1)) { *out= *in->pos++ >> 1; return true; }
+	else return userp_decode_qty(out, sizeof(*out), in);
+}
 
 struct userp_dec {
 	userp_env env;

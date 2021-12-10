@@ -3,14 +3,14 @@ build_script_dir = ../script
 ACLOCAL_AMFLAGS=-I m4
 
 lib_LTLIBRARIES = libuserp.la
-libuserp_la_SOURCES = diag.c env.c buf.c bstr.c enc.c scope.c
+libuserp_la_SOURCES = diag.c env.c buf.c bstr.c scope.c enc.c dec.c
 
 autogen_src = unittest.c
 
 check_PROGRAMS = unittest
 unittest_SOURCES = unittest.c
 unittest_LDADD = libuserp.la
-unittest_autoscan = diag.c env.c buf.c bstr.c enc.c scope.c
+unittest_autoscan = diag.c env.c buf.c bstr.c scope.c enc.c dec.c
 unittest_autogen_tests = $(addprefix t/,$(patsubst %.c,%.t,$(unittest_autoscan)))
 
 AM_CPPFLAGS=-I$(top_srcdir)

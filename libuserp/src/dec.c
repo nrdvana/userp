@@ -3,11 +3,12 @@
 
 typedef struct userp_dec_frame *frame;
 
-static void frame_init(userp_dec dec, frame f, userp_type t);
-static void frame_destroy(userp_dec dec, frame f);
+// static void frame_init(userp_dec dec, frame f, userp_type t);
+// static void frame_destroy(userp_dec dec, frame f);
+
 
 /*APIDOC
-## userp_env
+## userp_dec
 
 ### Synopsis
 
@@ -88,7 +89,7 @@ It is undefined behavior to drop a decoder that was already freed, unless you en
 USERP_MEASURE_TWICE option.  Errors (if any) are reported via the `env`. `env` may be null to
 deliberately skip any safety or error reporting.
 
-*/
+*
 
 userp_dec userp_new_dec(
 	userp_env env, userp_scope scope, userp_type root_type,
@@ -254,7 +255,7 @@ decoder, avoiding the error condition.
 
 You may pass NULL to un-set the reader.
 
-*/
+*
 
 userp_env userp_dec_env(userp_dec dec) {
 	return dec->env;
@@ -303,7 +304,7 @@ recycled.  Attempting to alter this struct (which is deliberately marked const) 
 undefined behavior.  Do not make shallow copies of this struct either, as the referenced arrays
 like `subtypes` and `array_dims` are similarly transient.
 
-*/
+*
 
 const userp_node_info userp_dec_node_info(userp_dec dec) {
 	unimplemented("userp_dec_node_info");
@@ -337,10 +338,12 @@ whatever follows it.
 
 bool userp_dec_begin(userp_dec dec) {
 	unimplemented("userp_dec_begin");
+	return false;
 }
 
 bool userp_dec_end(userp_dec dec) {
 	unimplemented("userp_dec_end");
+	return false;
 }
 
 /*APIDOC
@@ -357,6 +360,7 @@ sets a error flag on the `userp_env`.
 */
 bool userp_dec_seek_elem(userp_dec dec, size_t elem_idx) {
 	unimplemented("userp_dec_seek");
+	return false;
 }
 
 /*APIDOC
@@ -373,6 +377,7 @@ and sets an error flag in `userp_env`.
 */
 bool userp_dec_seek_field(userp_dec dec, userp_symbol fieldname) {
 	unimplemented("userp_dec_seek_field");
+	return false;
 }
 
 /*APIDOC
@@ -385,6 +390,7 @@ To skip more than one element, use `userp_seek_elem`.
 */
 bool userp_dec_skip(userp_dec dec) {
 	unimplemented("userp_dec_skip");
+	return false;
 }
 
 /*APIDOC
@@ -433,12 +439,15 @@ sets an error on the `userp_env`.  (to find the size of buffer required, inspect
 */
 bool userp_dec_int(userp_dec dec, int *out) {
 	unimplemented("userp_dec_int");
+	return false;
 }
 bool userp_dec_int_n(userp_dec dec, void *intbuf, size_t word_size, bool is_signed) {
 	unimplemented("userp_dec_int_n");
+	return false;
 }
 bool userp_dec_bigint(userp_dec dec, void *intbuf, size_t *len, int *sign) {
 	unimplemented("userp_dec_bigint");
+	return false;
 }
 
 /*
@@ -455,6 +464,7 @@ integer value) return the Symbol.  Else returns NULL and sets an error flag in t
 */
 bool userp_dec_symbol(userp_dec dec, userp_symbol *out) {
 	unimplemented("userp_dec_symbol");
+	return false;
 }
 
 /*
@@ -472,6 +482,7 @@ error flag in the `userp_env`.
 */
 bool userp_dec_typeref(userp_dec dec, userp_type *out) {
 	unimplemented("userp_dec_typeref");
+	return false;
 }
 
 /*
@@ -496,9 +507,11 @@ Same as `userp_dec_float` but with storage into a double.
 */
 bool userp_dec_float(userp_dec dec, float *out) {
 	unimplemented("userp_dec_float");
+	return false;
 }
 bool userp_dec_double(userp_dec dec, double *out) {
 	unimplemented("userp_dec_double");
+	return false;
 }
 
 /*
@@ -544,8 +557,9 @@ meet the restrictions of the `flags` in effect, this returns false and sets an e
 the len argument to let you know how many bytes were required.**
 
 */
-bool userp_dec_bytes(userp_dec dec, void *out, size_t *length_inout, size_t elem_size, userp_flags flags) {
+bool userp_dec_bytes(userp_dec dec, void *out, size_t *length_inout, size_t elem_size, int flags) {
 	unimplemented("userp_dec_bytes");
+	return false;
 }
 
 /*
@@ -574,8 +588,9 @@ for any data that didn't need changed.
 On failure, this function returns NULL and sets a code in `userp_env` as usual.
 
 */
-userp_bstrings userp_dec_bytes_zerocopy(userp_dec dec, size_t elem_size, userp_flags flags) {
+struct userp_bstr* userp_dec_bytes_zerocopy(userp_dec dec, size_t elem_size, int flags) {
 	unimplemented("userp_dec_bytes_zerocopy");
+	return NULL;
 }
 
 /* Zerocopy API
@@ -611,3 +626,145 @@ safe to write code like
   }
 
 */
+
+bool userp_decode_qty_incremental(void *out, size_t out_size, struct userp_bit_io *in);
+bool userp_decode_qty(void *out, size_t out_size, struct userp_bit_io *in) {
+	assert(out != NULL);
+	uint_least32_t val;
+	// Optimize for common case, of entire value in single buffer and 8 bytes or less
+	// Switch to more iterative implementation if not the common case.
+	if (in->pos + 8 > in->lim)
+		return userp_decode_qty_incremental(out, out_size, in);
+
+	val= *in->pos;
+	if (!(val & 1)) {
+		in->pos++;
+		val >>= 1;
+	}
+	else if (!(val & 2)) {
+		val= *((uint16_t*) in->pos) >> 2;
+		in->pos += 2;
+		if (out_size < 2 && (val >> (out_size * 8)))
+			goto fail_overflow;
+	}
+	else if (!(val & 4) && sizeof(val) >= sizeof(uint32_t)) {
+		val= *((uint32_t*) in->pos) >> 3;
+		in->pos += 4;
+		if (out_size < 4 && (val >> (out_size * 8)))
+			goto fail_overflow;
+	}
+	else if (!(val & 8) && sizeof(val) >= sizeof(uint64_t)) {
+		val= *((uint64_t*) in->pos) >> 4;
+		in->pos += 8;
+		if (out_size < 8 && (val >> (out_size * 8)))
+			goto fail_overflow;
+	}
+	else
+		return userp_decode_qty_incremental(out, out_size, in);
+		
+	switch (out_size) {
+	case 1: *((uint8_t*)out)= val; break;
+	case 2: *((uint16_t*)out)= val; break;
+	case 4: *((uint32_t*)out)= val; break;
+	case 8: *((uint64_t*)out)= val; break;
+	default:
+		if (out_size > sizeof(val)) {
+			bzero(out, out_size);
+			#if ENDIAN == LSB_FIRST
+			memcpy(out, &val, sizeof(val));
+			#elif ENDIAN == MSB_FIRST
+			memcpy(((char*)out)+out_size-sizeof(val), &val, sizeof(val));
+			#else
+			#error unhandled endianness
+			#endif
+		}
+		else {
+			#if ENDIAN == LSB_FIRST
+			memcpy(out, &val, out_size);
+			#elif ENDIAN == MSB_FIRST
+			memcpy(out, ((char*)&val)+sizeof(val)-out_size, out_size);
+			#else
+			#error unhandled endianness
+			#endif
+		}
+	}
+	return true;
+	
+	CATCH(fail_overflow) {
+		userp_diag_setf(&in->str->env->err, USERP_ELIMIT,
+			"Value " USERP_DIAG_COUNT " exceeds destination of " USERP_DIAG_SIZE " bytes",
+			(size_t) val, (size_t) out_size);
+		// don't emit error.  Let caller do that.
+	}
+	return false;
+}
+	
+bool userp_decode_qty_incremental(void *out, size_t out_size, struct userp_bit_io *in) {
+	unimplemented("incremental decode qty");
+/*
+	struct userp_bit_io orig= *in; // save a copy so we can revert on failure
+	int shift, i, state= 0;
+	uint_least32_t val;
+	uint64_t size64;
+	while (1) {
+		while (in->pos >= in->lim) {
+			if (++in->part_pos >= in->str->part_count)
+				goto fail_overrun;
+			in->pos= in->str->parts[in->part_pos].data;
+			in->lim= in->str->parts[in->part_pos].len + in->pos;
+		}
+		switch (state) {
+			val= *in->pos++;
+			if (!(val & 1)) {
+				val >>= 1;
+				size64= 1;
+				shift= 7;
+			} else if (!(val & 2))
+				val >>= 2;
+				size64= 2;
+				shift= 6;
+			} else if (!(val & 4))
+				val >>= 3;
+				size64= 4;
+				shift= 5;
+			} else if (!(val & 8))
+				val >>= 4;
+				size64= 8;
+				shift= 8;
+			} else {
+				case 1: if (in->pos >= in->lim) { state= 1; continue; }
+				size64= (val >> 4) | ((uint64_t) *in->pos++) << 4;
+				if (size64 == 0x0FFF) {
+					size64= 0;
+					for (i= 0; i < 4; i++) {
+						case 2: if (in->pos >= in->lim) { state= 2; continue; }
+						size64 |= ((uint64_t) *in->pos++) << (i * 8);
+					}
+					if (size64 == 0xFFFFFFFF) {
+						size64= 0;
+						for (i= 0; i < 8; i++) {
+							case 3: if (in->pos >= in->lim) { state= 3; continue; }
+							size64 |= ((uint64_t) *in->pos++) << (i * 8);
+						}
+						if (!(size64+1)) {
+							// Protocol theoretically continues, but no practical reason to implement beyond here
+							userp_diag_set(&in->str->env->err, USERP_ELIMIT, "Refusing to decode >64-bit length of length");
+							return false;
+						}
+					}
+				}
+				val= 0;
+				shift= 0;
+			}
+			if (size64 > 
+			
+			
+			if (shift) {
+			#if ENDIAN == LSB_FIRST
+				// size indicates the 
+				while (size64)
+			state= 4;
+			case 4:
+*/
+	return false;
+}
