@@ -627,78 +627,6 @@ safe to write code like
 
 */
 
-bool userp_decode_qty_incremental(void *out, size_t out_size, struct userp_bit_io *in);
-bool userp_decode_qty(void *out, size_t out_size, struct userp_bit_io *in) {
-	assert(out != NULL);
-	uint_least32_t val;
-	// Optimize for common case, of entire value in single buffer and 8 bytes or less
-	// Switch to more iterative implementation if not the common case.
-	if (in->pos + 8 > in->lim)
-		return userp_decode_qty_incremental(out, out_size, in);
-
-	val= *in->pos;
-	if (!(val & 1)) {
-		in->pos++;
-		val >>= 1;
-	}
-	else if (!(val & 2)) {
-		val= *((uint16_t*) in->pos) >> 2;
-		in->pos += 2;
-		if (out_size < 2 && (val >> (out_size * 8)))
-			goto fail_overflow;
-	}
-	else if (!(val & 4) && sizeof(val) >= sizeof(uint32_t)) {
-		val= *((uint32_t*) in->pos) >> 3;
-		in->pos += 4;
-		if (out_size < 4 && (val >> (out_size * 8)))
-			goto fail_overflow;
-	}
-	else if (!(val & 8) && sizeof(val) >= sizeof(uint64_t)) {
-		val= *((uint64_t*) in->pos) >> 4;
-		in->pos += 8;
-		if (out_size < 8 && (val >> (out_size * 8)))
-			goto fail_overflow;
-	}
-	else
-		return userp_decode_qty_incremental(out, out_size, in);
-		
-	switch (out_size) {
-	case 1: *((uint8_t*)out)= val; break;
-	case 2: *((uint16_t*)out)= val; break;
-	case 4: *((uint32_t*)out)= val; break;
-	case 8: *((uint64_t*)out)= val; break;
-	default:
-		if (out_size > sizeof(val)) {
-			bzero(out, out_size);
-			#if ENDIAN == LSB_FIRST
-			memcpy(out, &val, sizeof(val));
-			#elif ENDIAN == MSB_FIRST
-			memcpy(((char*)out)+out_size-sizeof(val), &val, sizeof(val));
-			#else
-			#error unhandled endianness
-			#endif
-		}
-		else {
-			#if ENDIAN == LSB_FIRST
-			memcpy(out, &val, out_size);
-			#elif ENDIAN == MSB_FIRST
-			memcpy(out, ((char*)&val)+sizeof(val)-out_size, out_size);
-			#else
-			#error unhandled endianness
-			#endif
-		}
-	}
-	return true;
-	
-	CATCH(fail_overflow) {
-		userp_diag_setf(&in->str->env->err, USERP_ELIMIT,
-			"Value " USERP_DIAG_COUNT " exceeds destination of " USERP_DIAG_SIZE " bytes",
-			(size_t) val, (size_t) out_size);
-		// don't emit error.  Let caller do that.
-	}
-	return false;
-}
-
 struct decode_dest {
 	size_t dest_ofs;
 	size_t dest_size;
@@ -707,12 +635,13 @@ struct decode_dest {
 		is_signed: 1,
 		align: 16;
 };
+
 #define DEC_INT_ST_VARQTY       0
 #define DEC_INT_ST_BITCOPY      4
 #define DEC_INT_ST_BITCOPY_SWAP 6
 #define DEC_INT_ST_COPY         8
 #define DEC_INT_ST_COPY_SWAP   10
-size_t userp_decode_ints(struct decode_dest *out, size_t n_out, struct userp_bit_io *in) {
+size_t userp_decode_ints(void *dest, struct decode_dest *out, size_t n_out, struct userp_bit_io *in) {
 	unsigned
 		state= 0,                   // used for lightweight "calls" to the next-buffer code, and then return to the algorithm
 		accum_bits= in->accum_bits, // If bit-packing in effect, how many bits remain from the previous byte
@@ -860,3 +789,174 @@ size_t userp_decode_ints(struct decode_dest *out, size_t n_out, struct userp_bit
 
 	return out_pos;
 }
+
+bool userp_decode_qty(void *out, size_t out_size, struct userp_bit_io *in) {
+	assert(out != NULL);
+	uint_least32_t val;
+	// Optimize for common case, of entire value in single buffer and 8 bytes or less
+	// Switch to more iterative implementation if not the common case.
+	if (in->pos + 8 > in->lim)
+		goto decode_complex;
+
+	val= *in->pos;
+	if (!(val & 1)) {
+		in->pos++;
+		val >>= 1;
+	}
+	else if (!(val & 2)) {
+		val= *((uint16_t*) in->pos) >> 2;
+		in->pos += 2;
+		if (out_size < 2 && (val >> (out_size * 8)))
+			goto fail_overflow;
+	}
+	else if (!(val & 4) && sizeof(val) >= sizeof(uint32_t)) {
+		val= *((uint32_t*) in->pos) >> 3;
+		in->pos += 4;
+		if (out_size < 4 && (val >> (out_size * 8)))
+			goto fail_overflow;
+	}
+	else if (!(val & 8) && sizeof(val) >= sizeof(uint64_t)) {
+		val= *((uint64_t*) in->pos) >> 4;
+		in->pos += 8;
+		if (out_size < 8 && (val >> (out_size * 8)))
+			goto fail_overflow;
+	}
+	else
+		goto decode_complex;
+		
+	switch (out_size) {
+	case 1: *((uint8_t*)out)= val; break;
+	case 2: *((uint16_t*)out)= val; break;
+	case 4: *((uint32_t*)out)= val; break;
+	case 8: *((uint64_t*)out)= val; break;
+	default:
+		if (out_size > sizeof(val)) {
+			bzero(out, out_size);
+			if (ENDIAN == LSB_FIRST)
+				memcpy(out, &val, sizeof(val));
+			else
+				memcpy(((char*)out)+out_size-sizeof(val), &val, sizeof(val));
+		}
+		else {
+			if (ENDIAN == LSB_FIRST)
+				memcpy(out, &val, out_size);
+			else
+				memcpy(out, ((char*)&val)+sizeof(val)-out_size, out_size);
+		}
+	}
+	return true;
+	
+	decode_complex: {
+		struct decode_dest dest= {
+			.dest_ofs= 0,
+			.dest_size= out_size,
+			.in_bits= 0,
+			.endian= ENDIAN
+		};
+		return (bool) userp_decode_ints(out, &dest, 1, in);
+	}
+	CATCH(fail_overflow) {
+		userp_diag_setf(&in->str->env->err, USERP_ELIMIT,
+			"Value " USERP_DIAG_COUNT " exceeds destination of " USERP_DIAG_SIZE " bytes",
+			(size_t) val, (size_t) out_size);
+		// don't emit error.  Let caller do that.
+	}
+	return false;
+}
+
+#ifdef UNIT_TEST
+
+struct varqty_test {
+	const char *data;
+	size_t size;
+	uint64_t expected;
+};
+static const struct varqty_test varqty_tests[]= {
+	{ .expected= 0x00000000, .data= "\x00", .size= 1 },
+	{ .expected= 0x00000001, .data= "\x02", .size= 1 },
+	{ .expected= 0x0000007F, .data= "\xFE", .size= 1 },
+	{ .expected= 0x00000080, .data= "\x01\x02", .size= 2 },
+	{ .expected= 0x000000FF, .data= "\xFD\x03", .size= 2 },
+	{ .expected= 0x00000100, .data= "\x01\x04", .size= 2 },
+	{ .expected= 0x00003FFF, .data= "\xFD\xFF", .size= 2 },
+	{ .expected= 0x00004000, .data= "\x03\x00\x02\x00", .size= 4 },
+	{ .data= NULL, .size= 0 }
+};
+
+UNIT_TEST(decode_ints_varqty) {
+	userp_env env= userp_new_env(NULL, userp_file_logger, stdout, 0);
+	int i;
+	struct userp_bstr_part parts[2];
+	struct userp_bstr str= {
+		.parts= parts, .part_count= 0, .env= env
+	};
+	struct userp_bit_io in= {
+		.str= &str, .accum_bits= 0, .part_pos= 0,
+	};
+	size_t value;
+	struct decode_dest dest= {
+		.dest_ofs= 0, .dest_size= sizeof(value), .in_bits= 0, .is_signed= 0, .align= 0
+	};
+	const struct varqty_test *test= varqty_tests;
+
+	while (test->data) {
+		str.part_count= 1;
+		str.parts[0].data= (uint8_t*) test->data;
+		str.parts[0].len= test->size;
+		str.parts[0].ofs= 0;
+		in.part_pos= 0;
+		in.pos= str.parts[0].data;
+		in.lim= str.parts[0].data + test->size;
+		in.accum_bits= 0;
+
+		printf("# \"");
+		for (i= 0; i < test->size; i++)
+			printf("\\x%02X", (int) test->data[i]);
+		printf("\"\n");
+
+		size_t got= userp_decode_ints(&value, &dest, 1, &in);
+		if (got) {
+			printf("actual=%08llX expected=%08llX\n", (long long)value, (long long)test->expected);
+		} else {
+			printf("failed to parse: ");
+			userp_diag_print(&env->err, stdout);
+			printf("\n");
+		}
+		
+		// Now do it again with a buffer split at each possible position
+		for (i= 0; i < test->size; i++) {
+			str.part_count= 2;
+			str.parts[0].len= i;
+			str.parts[1].ofs= i;
+			str.parts[1].data= str.parts[0].data + i;
+			str.parts[1].len= test->size - i;
+			in.part_pos= 0;
+			in.pos= str.parts[0].data;
+			in.lim= in.pos + str.parts[0].len;
+			in.accum_bits= 0;
+			got= userp_decode_ints(&value, &dest, 1, &in);
+			if (got) {
+				printf("  works with split at %d\n", i);
+			} else {
+				printf("  failed with split at %d: ", i);
+				userp_diag_print(&env->err, stdout);
+				printf("\n");
+			}
+		}
+		
+		test++;
+	}
+	userp_drop_env(env);
+}
+/*OUTPUT
+actual=00000000 expected=00000000
+actual=00000001 expected=00000001
+actual=0000007F expected=0000007F
+actual=00000080 expected=00000080
+actual=000000FF expected=000000FF
+actual=00000100 expected=00000100
+actual=00003FFF expected=00003FFF
+actual=00004000 expected=00004000
+*/
+
+#endif /* UNT_TEST */

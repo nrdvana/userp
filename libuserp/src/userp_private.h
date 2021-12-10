@@ -349,10 +349,25 @@ static inline size_t roundup_pow2(size_t s) {
 #define MAX(a,b) (((a)>(b))?(a):(b))
 #endif
 
+#define LSB_FIRST 0
+#define MSB_FIRST 1
+
+#ifndef ENDIAN
+  #if defined(__BYTE_ORDER__)
+    #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    #define ENDIAN LSB_FIRST
+    #else
+    #define ENDIAN MSB_FIRST
+    #endif
+  #else
+    #error Unknown endianness (define ENDIAN, LSB_FIRST, and MSB_FIRST in local.h)
+  #endif
+#endif
+
 #define CATCH(label) if (0) label: 
 
 static inline void unimplemented(const char* msg) {
-	printf("unimplemented: %s", msg);
+	printf("unimplemented: %s\n", msg);
 	abort();
 }
 
