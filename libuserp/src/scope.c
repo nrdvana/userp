@@ -2,23 +2,50 @@
 #include "userp.h"
 #include "userp_private.h"
 
+/*APIDOC
+
+## userp_scope
+
+The userp_scope is a container for symbols and types.  It can inherit symbols and types from a
+parent scope, and it can import symbols/types from unrelated scopes.  When created, a scope
+is mutable and you can add symbols and types in whatever order you like.  If careful, you can
+even encode blocks with it while it is mutable.  In order to create child scopes, though, the
+parent scope must be 'finalized', after which the list of symbols and types cannot be changed.
+
+`userp_scope` objects are reference-counted top-level objects which hold strong references to
+other libuserp objects.
+
+    // Create an empty scope
+    userp_scope root_scope= userp_new_scope(env, NULL);
+    if (!root_scope) ...
+    	
+    // Create a symbol in a scope
+    userp_symbol sym1= userp_scope_get_symbol(root_scope, "Sym1", USERP_CREATE);
+    if (!sym1) ...
+    	
+    // Create a scope inheriting from root_scope
+    userp_scope_finalize(root_scope);
+    userp_scope derived_scope= userp_new_scope(env, root_scope);
+    if (!derived_scope) ...
+    	
+    // Create symbols in the new scope
+    userp_symbol sym2= userp_scope_get_symbol(derived_scope, "Sym2", USERP_CREATE);
+    if (!sym2) ...
+    
+    // Free everything
+    userp_drop_scope(root_scope);
+    userp_drop_scope(derived_scope);
+
+*/
+
+static struct scope_import* scope_import_new(userp_scope dst, userp_scope src);
+static void scope_import_free(struct scope_import *imp);
+static void userp_free_scope(userp_scope scope);
+
 // Scope Table and Type Table implementations are split into separate files
 // for readability, but are part of the same compilation unit.
 #include "scopesym.c"
 #include "scopetype.c"
-
-/*----------------------------------------------------------------------------
-
-## Scope
-
-The scope is just a container for a symbol table and type table, and some
-efficient lookup functions that make the parent scope's symbols and types
-available.
-
-*/
-
-static void scope_import_free(struct scope_import *imp);
-static struct scope_import* scope_import_new(userp_scope dst, userp_scope src);
 
 userp_scope userp_new_scope(userp_env env, userp_scope parent) {
 	size_t num_sym_tables, num_type_tables;
@@ -112,6 +139,27 @@ static void userp_free_scope(userp_scope scope) {
 	userp_drop_env(env);
 }
 
+/*APIDOC
+
+#### userp_grab_scope
+
+    if (!userp_grab_scope(scope))
+      ... // handle userp_env error
+
+Take an additional reference to a scope.  This only returns false (with an error in the user_env)
+if the reference count overflows, which will never happen under sane conditions.  Calling this on
+a scope that is already freed will either crash or abort.
+
+#### userp_drop_scope
+
+    bool was_last_ref= userp_drop_scope(scope);
+
+Release a reference to a scope.  If this was the last reference, the scope is destroyed and this
+returns true.  If this was not the last reference, this returns false. (which is not an error)
+Calling this on a scope that is already freed will either crash or abort.
+
+*/
+
 bool userp_grab_scope(userp_scope scope) {
 	if (!scope || !scope->refcnt) {
 		fprintf(stderr, "fatal: attemp to grab a destroyed scope\n");
@@ -138,6 +186,24 @@ bool userp_drop_scope(userp_scope scope) {
 	return false;
 }
 
+/*APIDOC
+
+#### userp_scope_finalize
+
+    if (!userp_scope_finalize(scope, flags))
+      ... // handle userp_env error
+
+This marks the scope 'final', preventing further changes to the symbol table and type table.
+Once finalized, a scope can be used as a parent context for new scopes, and can be used as a
+source of type imports for other scopes.
+
+No flags are currently defined, but there may be future options to re-allocate any "loose"
+data structures to be more ticktly packed, etc.
+
+Any errors are reported via the scope's `userp_env`.
+
+*/
+
 bool userp_scope_finalize(userp_scope scope, int flags) {
 	// If user requests 'optimize' flag,
 	//   if symbol table has a tree, build a new buffer large enough for all symbol data,
@@ -149,6 +215,22 @@ bool userp_scope_finalize(userp_scope scope, int flags) {
 	return true;
 }
 
+/*APIDOC
+
+#### userp_scope_reserve
+
+    if (!userp_scope_reserve(scope, min_symbols, min_types))
+      ... // handle userp_env error
+
+This is minor optimization to allow you to pre-alocate some of the data structures inside the
+scope, instead of growing them on demand.  Specify the total number of symbols or types you
+intend the scope to hold *excluding* the ones it inherits from the parent scope.  This returns
+false if it fails to allocate the space or if the scope is finalized.  The logical state of the
+object remains unchanged regardless of whether it succeeds or fails.  You may call this multiple
+times.  If you exceed these numbers, the scope will go back to dynamic growth.
+
+*/
+
 bool userp_scope_reserve(userp_scope scope, size_t min_symbols, size_t min_types) {
 	// if scope is finalized, emit an error
 	if (scope->is_final) {
@@ -156,48 +238,35 @@ bool userp_scope_reserve(userp_scope scope, size_t min_symbols, size_t min_types
 		USERP_DISPATCH_ERR(scope->env);
 		return false;
 	}
-	if (scope->symtable.alloc < min_symbols)
-		if (!scope_symtable_alloc(scope, min_symbols))
+	if (scope->symtable.alloc < min_symbols+1)
+		if (!scope_symtable_alloc(scope, min_symbols+1))
 			return false;
-	if (scope->typetable.alloc < min_types)
-		if (!scope_typetable_alloc(scope, min_types))
+	if (scope->typetable.alloc < min_types+1)
+		if (!scope_typetable_alloc(scope, min_types+1))
 			return false;
 	return true;
 }
 
-static struct scope_import* scope_import_new(userp_scope dst, userp_scope src) {
-	struct scope_import *imp= NULL;
-	if (!USERP_ALLOC_OBJ(dst->env, &imp))
-		return false;
-	bzero(imp, sizeof(*imp));
-	if (src->symtable_count) {
-		imp->sym_map_count= src->symtable_stack[src->symtable_count-1]->id_offset
-			+ src->symtable_stack[src->symtable_count-1]->used;
-		if (!USERP_ALLOC_ARRAY(dst->env, &imp->sym_map, imp->sym_map_count)) {
-			USERP_FREE(dst->env, &imp);
-			return false;
-		}
-	}
-	if (src->typetable_count) {
-		imp->type_map_count= src->typetable_stack[src->typetable_count-1]->id_offset
-			+ src->typetable_stack[src->typetable_count-1]->used;
-		if (!USERP_ALLOC_ARRAY(dst->env, &imp->type_map, imp->type_map_count)) {
-			USERP_FREE(dst->env, &imp->sym_map);
-			USERP_FREE(dst->env, &imp);
-			return false;
-		}
-	}
-	imp->src= src;
-	imp->dst= dst;
-	return imp;
-}
+/*APIDOC
 
-static void scope_import_free(struct scope_import *imp) {
-	userp_env env= imp->dst->env;
-	USERP_FREE(env, &imp->type_map);
-	USERP_FREE(env, &imp->sym_map);
-	USERP_FREE(env, &imp);
-}
+#### userp_scope_import
+
+    if (!userp_scope_import(dest_scope, src_scope, flags))
+      ... // handle userp_env error
+
+With no flags, this loads all the types and symbols of `src_scope` into `dst_scope`, creating any
+that didn't exist already.  Existing symbols of the same name are re-used, and types of identical
+definition are re-used.  Every symbol and type imported receives a new `userp_symbol` /
+`userp_type` ID, which are not valid with any scope other than `dst_scope` or a descendant.
+
+With the flag `USERP_LAZY`, this sets up a linkage such that the first time any type or symbol
+of `src_scope` is requested *by name* from `dest_scope`, `dest_scope` will immediately copy the
+symbol or type and return success as if it had already been loaded.  This does *not* allow you to
+use the `userp_type` or `userp_symbol` references from `src_scope` on `dst_scope`.  The automatic
+importing for `dest_scope` ends when `dest_scope` is finalized, but symbols can still be auto-
+imported into scopes derived from `dest_scope`.
+
+*/
 
 bool userp_scope_import(userp_scope scope, userp_scope source, int flags) {
 	struct scope_import *imp, **ref_p;
@@ -237,11 +306,72 @@ bool userp_scope_import(userp_scope scope, userp_scope source, int flags) {
 	return true;
 }
 
+static struct scope_import* scope_import_new(userp_scope dst, userp_scope src) {
+	struct scope_import *imp= NULL;
+	if (!USERP_ALLOC_OBJ(dst->env, &imp))
+		return false;
+	bzero(imp, sizeof(*imp));
+	if (src->symtable_count) {
+		imp->sym_map_count= src->symtable_stack[src->symtable_count-1]->id_offset
+			+ src->symtable_stack[src->symtable_count-1]->used;
+		if (!USERP_ALLOC_ARRAY(dst->env, &imp->sym_map, imp->sym_map_count)) {
+			USERP_FREE(dst->env, &imp);
+			return false;
+		}
+	}
+	if (src->typetable_count) {
+		imp->type_map_count= src->typetable_stack[src->typetable_count-1]->id_offset
+			+ src->typetable_stack[src->typetable_count-1]->used;
+		if (!USERP_ALLOC_ARRAY(dst->env, &imp->type_map, imp->type_map_count)) {
+			USERP_FREE(dst->env, &imp->sym_map);
+			USERP_FREE(dst->env, &imp);
+			return false;
+		}
+	}
+	imp->src= src;
+	imp->dst= dst;
+	return imp;
+}
+
+static void scope_import_free(struct scope_import *imp) {
+	userp_env env= imp->dst->env;
+	USERP_FREE(env, &imp->type_map);
+	USERP_FREE(env, &imp->sym_map);
+	USERP_FREE(env, &imp);
+}
+
+/*APIDOC
+
+#### userp_scope_resolve_relative_symref
+
+    userp_symbol sym= userp_scope_resolve_relative_symref(scope, ref);
+
+Given a relative reference to a symbol as returned by `userp_scope_get_relative_symref`), this
+finds the absolute symbol ID for it in the current scope.  This returns 0 if the reference is not
+valid.
+
+Since these are simple integers, there is no way to guarantee that the reference is actually
+compatible with the current scope, so the caller needs to take care to verify that.
+
+#### userp_scope_resolve_relative_typeref
+
+    userp_type type= userp_scope_resolve_relative_typeref(scope, ref);
+
+Given a relative reference to a type as returned by `userp_scope_get_relative_typeref`), this
+finds the absolute type ID for it in the current scope.  This returns 0 if the reference is not
+valid.
+
+Since these are simple integers, there is no way to guarantee that the reference is actually
+compatible with the current scope, so the caller needs to take care to verify that.
+
+*/
+
 userp_symbol userp_scope_resolve_relative_symref(userp_scope scope, size_t val) {
 	int which_table= 0;
 	//  ....0 means "normal symbol ref from 0"
-	//  ...01 means "symbol offset from table[-1]"
-	//  ..011 means "symbol offset from table[1]"
+	//  ...01 means "symbol offset from table[N-1].sym[1]"
+	//  ..011 means "symbol offset from table[1].sym[1]"
+	//  .0111 means "symbol offset from table[N-2].sym[1]"
 	while (val & 1) {
 		which_table++;
 		val >>= 1;
@@ -263,9 +393,6 @@ userp_symbol userp_scope_resolve_relative_symref(userp_scope scope, size_t val) 
 
 userp_type userp_scope_resolve_relative_typeref(userp_scope scope, size_t val) {
 	int which_table= 0;
-	//  ....0 means "normal symbol ref from 0"
-	//  ...01 means "symbol offset from table[-1]"
-	//  ..011 means "symbol offset from table[1]"
 	while (val & 1) {
 		which_table++;
 		val >>= 1;
