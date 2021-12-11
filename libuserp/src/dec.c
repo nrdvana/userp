@@ -627,11 +627,50 @@ safe to write code like
 
 */
 
+/*
+#define DEC_OP_END
+#define DEC_OP_SRC_ALIGN
+#define DEC_OP_DST_ALIGN
+#define DEC_OP_DST_SEEK
+#define DEC_OP_LOAD_VARQTY
+#define DEC_OP_LOAD_8
+#define DEC_OP_LOAD_16
+#define DEC_OP_LOAD_16_BE
+#define DEC_OP_LOAD_32
+#define DEC_OP_LOAD_32_BE
+#define DEC_OP_LOAD_64
+#define DEC_OP_LOAD_64_BE
+#define DEC_OP_LOAD_BITS
+#define DEC_OP_TRANSFORM
+#define DEC_OP_STOR_8
+#define DEC_OP_STOR_16
+#define DEC_OP_STOR_16_BE
+#define DEC_OP_STOR_32
+#define DEC_OP_STOR_32_BE
+#define DEC_OP_STOR_64
+#define DEC_OP_STOR_64_BE
+
+
+
+#define DEC_OP_
+#define DEC_OP_DST_ENDIAN
+#define DEC_OP_CP_VARQTY
+#define DEC_OP_CP_BITS_LE_LE
+#define DEC_OP_CP_BITS_BE_LE
+#define DEC_OP_CP_BITS_LE_BE
+#define DEC_OP_CP_BITS_BE_BE
+#define DEC_OP_CP_BYTES_LE_LE
+#define DEC_OP_CP_BYTES_BE_LE
+#define DEC_OP_CP_BYTES_LE_BE
+#define DEC_OP_CP_BYTES_BE_BE
+
+
 struct decode_dest {
 	size_t dest_ofs;
 	size_t dest_size;
 	size_t in_bits;
-	size_t endian: 1,
+	size_t in_endian: 1,
+		dest_endian: 1,
 		is_signed: 1,
 		align: 16;
 };
@@ -641,7 +680,7 @@ struct decode_dest {
 #define DEC_INT_ST_BITCOPY_SWAP 6
 #define DEC_INT_ST_COPY         8
 #define DEC_INT_ST_COPY_SWAP   10
-size_t userp_decode_ints(void *dest, struct decode_dest *out, size_t n_out, struct userp_bit_io *in) {
+size_t userp_decode_ints(void *out, struct userp_bit_io *in, uint8_t *script, uint64_t *scriptvalues) {
 	unsigned
 		state= 0,                   // used for lightweight "calls" to the next-buffer code, and then return to the algorithm
 		accum_bits= in->accum_bits, // If bit-packing in effect, how many bits remain from the previous byte
@@ -649,6 +688,8 @@ size_t userp_decode_ints(void *dest, struct decode_dest *out, size_t n_out, stru
 	uint8_t
 		*in_pos= in->pos,
 		*in_lim= in->lim;
+		*dest_pos,
+		*dest_lim;
 	size_t
 		in_part_pos= in->part_pos,
 		out_pos= 0,
@@ -760,6 +801,14 @@ size_t userp_decode_ints(void *dest, struct decode_dest *out, size_t n_out, stru
 					continue;
 				}
 			case DEC_INT_ST_BITCOPY:
+				if (out[out_pos].endian == LSB_FIRST && out[out_pos].
+				in_bytes= ((in_bits - accum_bits)+7) >> 3;
+				while (in_bytes
+				if (out[ == LSB_FIRST) {
+					
+				// of the native endianness
+				if (out[out_pos].dest_size < 8) {
+				}
 				unimplemented("bit copy");
 			case DEC_INT_ST_COPY:
 				unimplemented("byte copy");
@@ -789,79 +838,228 @@ size_t userp_decode_ints(void *dest, struct decode_dest *out, size_t n_out, stru
 
 	return out_pos;
 }
+*/
 
-bool userp_decode_qty(void *out, size_t out_size, struct userp_bit_io *in) {
+size_t userp_decode_vqty(void** out, size_t sizeof_out, struct userp_bit_io *in) {
+	uint8_t
+		*in_pos= in->pos,
+		*in_lim= in->lim;
+	size_t
+		i, n,
+		in_part_pos= in->part_pos;
+	uint64_t
+		accum,
+		in_bytes;
 	assert(out != NULL);
-	uint_least32_t val;
-	// Optimize for common case, of entire value in single buffer and 8 bytes or less
-	// Switch to more iterative implementation if not the common case.
-	if (in->pos + 8 > in->lim)
-		goto decode_complex;
-
-	val= *in->pos;
-	if (!(val & 1)) {
-		in->pos++;
-		val >>= 1;
-	}
-	else if (!(val & 2)) {
-		val= *((uint16_t*) in->pos) >> 2;
-		in->pos += 2;
-		if (out_size < 2 && (val >> (out_size * 8)))
-			goto fail_overflow;
-	}
-	else if (!(val & 4) && sizeof(val) >= sizeof(uint32_t)) {
-		val= *((uint32_t*) in->pos) >> 3;
-		in->pos += 4;
-		if (out_size < 4 && (val >> (out_size * 8)))
-			goto fail_overflow;
-	}
-	else if (!(val & 8) && sizeof(val) >= sizeof(uint64_t)) {
-		val= *((uint64_t*) in->pos) >> 4;
-		in->pos += 8;
-		if (out_size < 8 && (val >> (out_size * 8)))
-			goto fail_overflow;
-	}
-	else
-		goto decode_complex;
-		
-	switch (out_size) {
-	case 1: *((uint8_t*)out)= val; break;
-	case 2: *((uint16_t*)out)= val; break;
-	case 4: *((uint32_t*)out)= val; break;
-	case 8: *((uint64_t*)out)= val; break;
-	default:
-		if (out_size > sizeof(val)) {
-			bzero(out, out_size);
-			if (ENDIAN == LSB_FIRST)
-				memcpy(out, &val, sizeof(val));
-			else
-				memcpy(((char*)out)+out_size-sizeof(val), &val, sizeof(val));
+	assert((sizeof_out & 3) == 0);
+	#define MAYBE_ADVANCE_BUFFER \
+		while (in_pos >= in_lim) { \
+			if (++in_part_pos >= in->str->part_count) \
+				goto fail_overrun; \
+			in_pos= in->str->parts[in_part_pos].data; \
+			in_lim= in->str->parts[in_part_pos].len + in_pos; \
+		}
+		// Next, go back to whatever was interrupted by running out of buffer
+	MAYBE_ADVANCE_BUFFER
+	accum= *in_pos++;
+	if (!(accum & 1)) {
+		accum >>= 1;
+	} else if (!(accum & 2)) {
+		accum >>= 2;
+		MAYBE_ADVANCE_BUFFER
+		accum |= ((uint64_t) *in_pos++) << 6;
+	} else if (!(accum & 4)) {
+		accum >>= 3;
+		for (i= 5; i < (8*3); i+= 8) {
+			MAYBE_ADVANCE_BUFFER
+			accum |= ((uint64_t) *in_pos++) << i;
+		}
+	} else if (!(accum & 8)) {
+		accum >>= 4;
+		for (i= 4; i < (8*7); i+= 8) {
+			MAYBE_ADVANCE_BUFFER
+			accum |= ((uint64_t) *in_pos++) << i;
+		}
+	} else {
+		// read one additional byte to find the length of the int
+		MAYBE_ADVANCE_BUFFER
+		limbs= (accum >> 4) | (((uint64_t) *in_pos++) << 4);
+		if (limbs == 0xFFF) { // max val means try again with twice as many bytes
+			limbs= 0;
+			for (i= 0; i < (8*4); i+= 8) {
+				MAYBE_ADVANCE_BUFFER
+				limbs |= ((uint64_t) *in_pos++) << i;
+			}
+			if (limbs == 0xFFFFFFFF) { // and again
+				limbs= 0;
+				for (i= 0; i < (8*8); i++) {
+					MAYBE_ADVANCE_BUFFER
+					limbs |= ((uint64_t) *in_pos++) << i;
+				}
+				// Protocol theoretically continues, but no practical reason to implement beyond here
+				if (!(limbs+1))
+					goto fail_bigint_sizesize;
+				// make sure limbs-to-byte conversion doesn't overflow
+				if (limbs >> (sizeof(size_t)*8-2))
+					goto fail_overflow;
+			}
+		}
+		if (!*out) {
+			// this means the caller doesn't want a copy, just the number of bytes in the bigint
+			in->pos= in_pos;
+			in->lim= in_lim;
+			in->part_pos= in_part_pos;
+			return limbs << 2;
+		}
+		size_t orig_pos= in_pos - in->str->parts[in_part_pos].data;
+		size_t orig_part_pos= in_part_pos;
+		size_t out_used= MIN(sizeof_out, limbs << 2);
+		if (ENDIAN == LSB_FIRST) {
+			uint8_t *dest= (uint8_t*) *out;
+			for (i= out_used; i > 0;) {
+				MAYBE_ADVANCE_BUFFER
+				n= MIN(in_lim - in_pos, i);
+				memcpy(dest, in_pos, n);
+				in_pos += n;
+				dest += n;
+				i -= n;
+			}
 		}
 		else {
-			if (ENDIAN == LSB_FIRST)
-				memcpy(out, &val, out_size);
-			else
-				memcpy(out, ((char*)&val)+sizeof(val)-out_size, out_size);
+			uint8_t *dest= ((uint8_t*) *out) + out_used;
+			for (i= out_used; i > 0;) {
+				MAYBE_ADVANCE_BUFFER
+				n= MIN(in_lim - in_pos, i);
+				for (uint8_t *tmp_lim= in_pos + n; in_pos < tmp_lim;)
+					*--dest = *in_pos++;
+				i -= n;
+			}
+			assert(dest == *out);
 		}
+		if (out_used < (limbs << 2)) {
+			// check the rest of the bytes for nonzero values.
+			for (i= (limbs<<2) - out_used; i > 0;) {
+				MAYBE_ADVANCE_BUFFER
+				n= MIN(in_lim - in_pos, i);
+				for (uint8_t *tmp_lim= in_pos + n; in_pos < tmp_lim; in_pos++) {
+					if (*in_pos) {
+						// found a nonzero byte, so the bigint didn't fit in *out,
+						// so roll back and return the length of the bigint.
+						in->part_pos= orig_part_pos;
+						in->pos= in->str->parts[orig_part_pos].data + orig_pos;
+						in->lim= in->str->parts[orig_part_pos].len;
+						return (limbs << 2);
+					}
+				}
+				i -= n;
+			}
+		}
+		in->part_pos= in_part_pos;
+		in->pos= in_pos;
+		in->lim= in_lim;
+		return out_used;
+		// This concludes the BigInt logic.
 	}
-	return true;
+	// This is the remainder of the accumulator logic
+	in->pos= in_pos;
+	in->lim= in_lim;
+	in->part_pos= in_part_pos;
+	if (sizeof_out >= 8) {
+		if (dest)
+			(*(uint64_t)dest) = accum;
+		return 8;
+	}
+	else if (sizeof_out >= 4) {
+		if (accum >> 32)
+			goto fail_overflow;
+		if (dest)
+			(*(uint32_t)dest) = accum;
+		return 4;
+	}
+	else if (sizeof_out >= 2) {
+		if (accum >> 16)
+			goto fail_overflow;
+		if (dest)
+			(*(uint16_t)dest) = accum;
+		return 2;
+	} else {
+		if (accum >> 8)
+			goto fail_overflow;
+		if (dest)
+			*dest= accum;
+		return 1;
+	}
 	
-	decode_complex: {
-		struct decode_dest dest= {
-			.dest_ofs= 0,
-			.dest_size= out_size,
-			.in_bits= 0,
-			.endian= ENDIAN
-		};
-		return (bool) userp_decode_ints(out, &dest, 1, in);
-	}
 	CATCH(fail_overflow) {
 		userp_diag_setf(&in->str->env->err, USERP_ELIMIT,
 			"Value " USERP_DIAG_COUNT " exceeds destination of " USERP_DIAG_SIZE " bytes",
-			(size_t) val, (size_t) out_size);
+			(size_t) accum, (size_t) sizeof_out);
 		// don't emit error.  Let caller do that.
 	}
+	CATCH(fail_bigint_sizesize) {
+		userp_diag_set(&in->str->env->err, USERP_ELIMIT,
+			"Refusing to decode bigint length stored in >64-bits");
+	}
+	CATCH(fail_overrun) {
+		userp_diag_set(&in->str->env->err, USERP_EOVERRUN,
+			"Ran out of buffer while decoding variable-length integer");
+	}
 	return false;
+}
+
+size_t userp_decode_vqty_u64vec(uint64_t *out, size_t count, struct userp_bit_io *in) {
+	assert(out != NULL);
+	uint8_t
+		*in_pos= in->pos,
+		*in_lim= in->lim;
+	size_t i;
+	for (i= 0; i < count; i++) {
+		// Optimize for common case, of entire value in single buffer and 8 bytes or less
+		// Switch to more iterative implementation if not the common case.
+		if (in_pos + 8 <= in_lim) {
+			uint64_t val= *in_pos;
+			if (!(val & 1)) {
+				out[i]= val >> 1;
+				in_pos++;
+				continue;
+			}
+			else if (!(val & 2)) {
+				out[i]= *((uint16_t*) in_pos) >> 2;
+				in_pos += 2;
+				continue;
+			}
+			else if (!(val & 4)) {
+				out[i]= *((uint32_t*) in_pos) >> 3;
+				in_pos += 4;
+				continue;
+			}
+			else if (!(val & 8)) {
+				out[i]= *((uint64_t*) in_pos) >> 4;
+				in_pos += 8;
+				continue;
+			}
+		}
+		// for anything complicated, go to the full implementation, which takes a buffer size
+		// and either fills it or replaces the argument with a pointer to the input.
+		void *tmp= out+i;
+		if (userp_decode_vqty(&tmp, sizeof(*out), in)) {
+			// If the pointer is the same as we supplied, then it got filled with the value
+			if (tmp == out+i) {
+				in_pos= in->pos;
+				in_lim= in->lim;
+				continue;
+			}
+			// Else the value could not be copied into 8 bytes, so it's an overflow.
+			else {
+				userp_diag_set(&in->str->env->err, USERP_ELIMIT,
+					"Decoded value would exceed implementation limits");
+				break;
+			}
+		}
+	}
+	in->pos= in_pos;
+	in->lim= in_lim;
+	return i;
 }
 
 #ifdef UNIT_TEST
