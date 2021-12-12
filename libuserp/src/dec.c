@@ -848,8 +848,7 @@ size_t userp_decode_vqty(void** out, size_t sizeof_out, struct userp_bit_io *in)
 		i, n,
 		in_part_pos= in->part_pos;
 	uint64_t
-		accum,
-		in_bytes;
+		accum;
 	assert(out != NULL);
 	assert((sizeof_out & 3) == 0);
 	#define MAYBE_ADVANCE_BUFFER \
@@ -883,7 +882,7 @@ size_t userp_decode_vqty(void** out, size_t sizeof_out, struct userp_bit_io *in)
 	} else {
 		// read one additional byte to find the length of the int
 		MAYBE_ADVANCE_BUFFER
-		limbs= (accum >> 4) | (((uint64_t) *in_pos++) << 4);
+		uint64_t limbs= (accum >> 4) | (((uint64_t) *in_pos++) << 4);
 		if (limbs == 0xFFF) { // max val means try again with twice as many bytes
 			limbs= 0;
 			for (i= 0; i < (8*4); i+= 8) {
@@ -946,8 +945,9 @@ size_t userp_decode_vqty(void** out, size_t sizeof_out, struct userp_bit_io *in)
 						// found a nonzero byte, so the bigint didn't fit in *out,
 						// so roll back and return the length of the bigint.
 						in->part_pos= orig_part_pos;
-						in->pos= in->str->parts[orig_part_pos].data + orig_pos;
-						in->lim= in->str->parts[orig_part_pos].len;
+						in->pos= in->str->parts[orig_part_pos].data;
+						in->lim= in->str->parts[orig_part_pos].len + in->pos;
+						in->pos += orig_pos;
 						return (limbs << 2);
 					}
 				}
@@ -965,28 +965,28 @@ size_t userp_decode_vqty(void** out, size_t sizeof_out, struct userp_bit_io *in)
 	in->lim= in_lim;
 	in->part_pos= in_part_pos;
 	if (sizeof_out >= 8) {
-		if (dest)
-			(*(uint64_t)dest) = accum;
+		if (*out)
+			*((uint64_t*)*out) = accum;
 		return 8;
 	}
 	else if (sizeof_out >= 4) {
 		if (accum >> 32)
 			goto fail_overflow;
-		if (dest)
-			(*(uint32_t)dest) = accum;
+		if (*out)
+			*((uint32_t*)*out) = accum;
 		return 4;
 	}
 	else if (sizeof_out >= 2) {
 		if (accum >> 16)
 			goto fail_overflow;
-		if (dest)
-			(*(uint16_t)dest) = accum;
+		if (*out)
+			*((uint16_t*)*out) = accum;
 		return 2;
 	} else {
 		if (accum >> 8)
 			goto fail_overflow;
-		if (dest)
-			*dest= accum;
+		if (*out)
+			*((uint8_t*)*out) = accum;
 		return 1;
 	}
 	
@@ -1091,10 +1091,7 @@ UNIT_TEST(decode_ints_varqty) {
 	struct userp_bit_io in= {
 		.str= &str, .accum_bits= 0, .part_pos= 0,
 	};
-	size_t value;
-	struct decode_dest dest= {
-		.dest_ofs= 0, .dest_size= sizeof(value), .in_bits= 0, .is_signed= 0, .align= 0
-	};
+	uint64_t value;
 	const struct varqty_test *test= varqty_tests;
 
 	while (test->data) {
@@ -1112,7 +1109,7 @@ UNIT_TEST(decode_ints_varqty) {
 			printf("\\x%02X", (int) test->data[i]);
 		printf("\"\n");
 
-		size_t got= userp_decode_ints(&value, &dest, 1, &in);
+		size_t got= userp_decode_vqty_u64vec(&value, 1, &in);
 		if (got) {
 			printf("actual=%08llX expected=%08llX\n", (long long)value, (long long)test->expected);
 		} else {
@@ -1132,7 +1129,7 @@ UNIT_TEST(decode_ints_varqty) {
 			in.pos= str.parts[0].data;
 			in.lim= in.pos + str.parts[0].len;
 			in.accum_bits= 0;
-			got= userp_decode_ints(&value, &dest, 1, &in);
+			got= userp_decode_vqty_u64vec(&value, 1, &in);
 			if (got) {
 				printf("  works with split at %d\n", i);
 			} else {
@@ -1147,14 +1144,37 @@ UNIT_TEST(decode_ints_varqty) {
 	userp_drop_env(env);
 }
 /*OUTPUT
+# "\\x00"
 actual=00000000 expected=00000000
+  works with split at 0
+# "\\x02"
 actual=00000001 expected=00000001
+  works with split at 0
+# "\\xFFFFFFFE"
 actual=0000007F expected=0000007F
+  works with split at 0
+# "\\x01\\x02"
 actual=00000080 expected=00000080
+  works with split at 0
+  works with split at 1
+# "\\xFFFFFFFD\\x03"
 actual=000000FF expected=000000FF
+  works with split at 0
+  works with split at 1
+# "\\x01\\x04"
 actual=00000100 expected=00000100
+  works with split at 0
+  works with split at 1
+# "\\xFFFFFFFD\\xFFFFFFFF"
 actual=00003FFF expected=00003FFF
+  works with split at 0
+  works with split at 1
+# "\\x03\\x00\\x02\\x00"
 actual=00004000 expected=00004000
+  works with split at 0
+  works with split at 1
+  works with split at 2
+  works with split at 3
 */
 
 #endif /* UNT_TEST */
