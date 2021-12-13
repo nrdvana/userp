@@ -104,6 +104,8 @@ userp_scope userp_new_scope(userp_env env, userp_scope parent) {
 	if (parent) {
 		memcpy(scope->symtable_stack, parent->symtable_stack, parent->symtable_count * sizeof(*parent->symtable_stack));
 		memcpy(scope->typetable_stack, parent->typetable_stack, parent->typetable_count * sizeof(*parent->symtable_stack));
+		scope->symbol_count= scope->parent->symbol_count;
+		scope->type_count= scope->parent->type_count;
 	}
 	return scope;
 }
@@ -377,7 +379,8 @@ userp_symbol userp_scope_resolve_relative_symref(userp_scope scope, size_t val) 
 		val >>= 1;
 	}
 	val >>= 1;
-	if (!which_table) return val; // not relative
+	if (!which_table) // not relative
+		return (val > scope->symbol_count)? 0 : val;
 	// odd numbered "which_table" count down from the top
 	if (which_table & 1)
 		which_table= scope->symtable_count - 1 - (which_table >> 1);
@@ -398,7 +401,8 @@ userp_type userp_scope_resolve_relative_typeref(userp_scope scope, size_t val) {
 		val >>= 1;
 	}
 	val >>= 1;
-	if (!which_table) return val; // not relative
+	if (!which_table) // not relative
+		return (val > scope->type_count)? 0 : val;
 	// odd numbered "which_table" count down from the top
 	if (which_table & 1)
 		which_table= scope->typetable_count - 1 - (which_table >> 1);

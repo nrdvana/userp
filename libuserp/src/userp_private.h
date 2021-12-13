@@ -297,8 +297,8 @@ struct userp_scope {
 		has_types:1,
 		is_importing:1;
 
-	size_t symtable_count;
-	size_t typetable_count;
+	size_t symtable_count, symbol_count;
+	size_t typetable_count, type_count;
 	struct userp_symtable symtable, 
 		**symtable_stack;
 	struct userp_typetable typetable,

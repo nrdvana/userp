@@ -490,6 +490,7 @@ userp_symbol userp_scope_get_symbol(userp_scope scope, const char *name, int fla
 		if (!scope_symtable_alloc(scope, scope->symtable.alloc+1))
 			return 0;
 	pos= scope->symtable.used++;
+	scope->symbol_count++;
 	// Copy the name into scope storage
 	len= strlen(name);
 	if (!(name= (char*) userp_bstr_append_bytes(&scope->symtable.chardata, (const uint8_t*) name, len+1, USERP_CONTIGUOUS)))
@@ -882,6 +883,8 @@ bool userp_scope_parse_symbols(userp_scope scope, struct userp_bstr_part *parts,
 	// The stream protocol allows buffers to have extra characters at the end
 	// of the symbol table.  Maybe there should be a flag to detect that when
 	// it isn't wanted?
+	// Update the total symbol count. (which does not include the NULL symbol)
+	scope->symbol_count += scope->symtable.used - (orig_sym_used? orig_sym_used : 1);
 	return true;
 
 	CATCH(failure) {
