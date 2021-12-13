@@ -41,7 +41,8 @@ struct userp_bstr;
 #define USERP_ELIMIT        0x4103 // decoded data exceeds a limit
 #define USERP_ESYMBOL       0x4104 // symbol table entry is not valid
 #define USERP_ETYPE         0x4105 // type definition is not valid
-#define USERP_EBUFPOINTER   0x4106 // specified pointer is not within specified buffer
+#define USERP_ERECORD       0x4106 // record fields declaration is invalid
+#define USERP_EBUFPOINTER   0x4107 // specified pointer is not within specified buffer
 // Warnings
 #define USERP_WARN          0x2000 // generic warning
 #define USERP_WLARGEMETA    0x2001 // encoded or decoded metadata is suspiciously large
@@ -68,7 +69,9 @@ extern int    userp_diag_print(userp_diag diag, FILE *fh);
 #define USERP_HINT_DYNAMIC            0x0002
 #define USERP_HINT_BRIEF              0x0004
 #define USERP_HINT_PERSIST            0x0008
-#define USERP_HINT_ALIGN              0x0010
+#define USERP_ALLOC_ALIGN_SIZET       0x0010
+#define USERP_ALLOC_ALIGN_INTMAX      0x0020
+#define USERP_ALLOC_ALIGN_PAGE        0x0030
 #define USERP_POINTER_IS_BUFFER_DATA  0x0100
 #define USERP_ALLOC_FLAG_MASK         0x011F
 
@@ -218,6 +221,14 @@ extern bool userp_scope_reserve(userp_scope scope, size_t min_symbols, size_t mi
 
 extern userp_symbol userp_scope_get_symbol(userp_scope scope, const char * name, int flags);
 extern const char * userp_scope_get_symbol_str(userp_scope scope, userp_symbol sym);
+
+#define USERP_TYPECLASS_ANY     1
+#define USERP_TYPECLASS_TYPEREF 2
+#define USERP_TYPECLASS_SYMREF  3
+#define USERP_TYPECLASS_INTEGER 4
+#define USERP_TYPECLASS_CHOICE  5
+#define USERP_TYPECLASS_ARRAY   6
+#define USERP_TYPECLASS_RECORD  7
 
 extern userp_type userp_scope_get_type(userp_scope scope, userp_symbol name, int flags);
 extern userp_type userp_scope_new_type(userp_scope scope, userp_symbol name, userp_type base_type);

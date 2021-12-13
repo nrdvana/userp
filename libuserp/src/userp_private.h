@@ -205,8 +205,9 @@ struct userp_symtable {
 
 struct type_entry {
 	userp_symbol name;
-	int32_t typeclass;
+	userp_type parent;
 	void *typeobj;
+	unsigned typeclass: 3;
 };
 
 struct userp_typetable {
@@ -312,7 +313,9 @@ struct userp_bit_io {
 	struct userp_bstr_part *part;
 	struct userp_bstr *str;
 	uint64_t accum;
-	int accum_bits;
+	uint64_t selector;
+	int accum_bits: 8,
+		has_selector: 1;
 };
 
 // ----------------------------- enc.c -------------------------------
@@ -330,8 +333,11 @@ struct userp_enc {
 // ----------------------------- dec.c -------------------------------
 
 size_t userp_decode_vqty(void* out, size_t sizeof_out, struct userp_bit_io *in);
+
 size_t userp_decode_vqty_u64vec(uint64_t *out, size_t count, struct userp_bit_io *in);
+
 size_t userp_decode_vqty_u32vec(uint32_t *out, size_t count, struct userp_bit_io *in);
+
 #if SIZE_MAX == 0xFFFFFFFF
 #define userp_decode_vqty_sizevec userp_decode_vqty_u32vec
 #elif SIZE_MAX == 0xFFFFFFFFFFFFFFFF
@@ -351,6 +357,19 @@ static inline bool userp_decode_vqty_quick(size_t *out, struct userp_bit_io *in)
 		return true;
 	}
 	else return sizeof(*out) == userp_decode_vqty(out, sizeof(*out), in);
+}
+
+bool userp_decode_bits(void* out, size_t bits, struct userp_bit_io *in);
+
+static inline bool userp_decode_selector(uint64_t *out, size_t bits, struct userp_bit_io *in) {
+	if (in->has_selector) {
+		in->has_selector= 0;
+		*out= in->selector;
+		return true;
+	}
+	assert(bits <= 64);
+	return bits? userp_decode_bits(out, bits, in)
+		: userp_decode_vqty_quick(out, in);
 }
 
 struct userp_dec {

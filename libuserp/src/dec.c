@@ -840,6 +840,11 @@ size_t userp_decode_ints(void *out, struct userp_bit_io *in, uint8_t *script, ui
 }
 */
 
+bool userp_decode_bits(void *out, size_t bits, struct userp_bit_io *in) {
+	unimplemented("decode bits");
+	return false;
+}
+
 size_t userp_decode_vqty(void* out, size_t sizeof_out, struct userp_bit_io *in) {
 	size_t
 		i, n, limbs, out_used;
@@ -1088,6 +1093,28 @@ size_t userp_decode_vqty_u32vec(uint32_t *out, size_t count, struct userp_bit_io
 	}
 	in->pos= in_pos;
 	return i;
+}
+
+static inline bool userp_decode_bits_u8(unsigned *out, struct userp_bit_io *in) {
+	if (in->accum_bits == 0) {
+		if (in->pos < in->lim) {
+			*out= *in->pos++;
+			return true;
+		}
+	} else if (in->accum_bits < 8) {
+		if (in->pos < in->lim) {
+			in->accum |= ((unsigned) *in->pos++) << in->accum_bits;
+			*out= in->accum & 0xFF;
+			in->accum >>= 8;
+			return true;
+		}
+	} else {
+		*out= in->accum & 0xFF;
+		in->accum >>= 8;
+		in->accum_bits -= 8;
+		return true;
+	}
+	return userp_decode_bits(out, 8, in);
 }
 
 #ifdef UNIT_TEST
