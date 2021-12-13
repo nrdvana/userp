@@ -172,6 +172,10 @@ int userp_process_diag_tpl(userp_diag diag, char *buf, size_t buf_len, FILE *fh)
 	size_t n= 0, str_len= 0;
 	bool hex= false, at_pos;
 	long long val= 0;
+	if (!pos)
+		pos= "(no message)";
+	if (!diag->code)
+		pos= "(no error)";
 	while (*pos) {
 		// here, *pos is either \x01 followed by a code indicating which variable to insert,
 		// or any other character means to scan forward.
