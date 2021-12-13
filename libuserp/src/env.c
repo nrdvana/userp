@@ -93,6 +93,7 @@ userp_env userp_new_env(userp_alloc_fn alloc_fn, userp_diag_fn diag_fn, void *cb
 	env->refcnt= 1;
 	env->log_warn= 1;
 	env->scope_stack_max=    USERP_DEFAULT_SCOPE_STACK_MAX;
+	env->record_fields_max=  MIN(USERP_DEFAULT_RECORD_FIELDS_MAX, USERP_IMPL_RECORD_FIELDS_MAX);
 	env->enc_output_parts=   USERP_DEFAULT_ENC_OUTPUT_PARTS;
 	env->enc_output_bufsize= USERP_DEFAULT_ENC_OUTPUT_BUFSIZE;
 	return env;

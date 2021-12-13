@@ -98,13 +98,17 @@ void userp_diag_setf(userp_diag diag, int code, const char *tpl, ...);
 // ------------------------------ env.c --------------------------------------
 
 #ifndef USERP_DEFAULT_SCOPE_STACK_MAX
-#define USERP_DEFAULT_SCOPE_STACK_MAX 256
+#define USERP_DEFAULT_SCOPE_STACK_MAX 255
 #endif
 #ifndef USERP_DEFAULT_ENC_OUTPUT_PARTS
 #define USERP_DEFAULT_ENC_OUTPUT_PARTS 8
 #endif
 #ifndef USERP_DEFAULT_ENC_OUTPUT_BUFSIZE
 #define USERP_DEFAULT_ENC_OUTPUT_BUFSIZE 4096
+#endif
+#ifndef USERP_DEFAULT_RECORD_FIELDS_MAX
+#define USERP_DEFAULT_RECORD_FIELDS_MAX ((1<<16)-1)
+// constrained by USERP_IMPL_RECORD_FIELDS_MAX declared below
 #endif
 
 struct userp_env {
@@ -133,6 +137,7 @@ struct userp_env {
 	
 	// Defaults values
 	int scope_stack_max;
+	int record_fields_max;
 	int enc_output_parts;
 	int enc_output_bufsize;
 	int salt;
@@ -269,6 +274,7 @@ struct userp_type_record {
 	size_t field_count;
 	struct record_field fields[];
 };
+#define USERP_IMPL_RECORD_FIELDS_MAX ((SIZE_MAX - sizeof(struct userp_type_record)) / sizeof(struct record_field))
 
 struct scope_import {
 	struct scope_import *next_import; // linked list of imports
