@@ -2,6 +2,52 @@
 #define USERP_PRIVATE_H
 #include "userp.h"
 
+// ----------------------------- endian utilities ----------------------------
+
+#define LSB_FIRST 0
+#define MSB_FIRST 1
+
+#ifndef ENDIAN
+  #if defined(__BYTE_ORDER__)
+    #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    #define ENDIAN LSB_FIRST
+    #else
+    #define ENDIAN MSB_FIRST
+    #endif
+  #else
+    #error Unknown endianness (define ENDIAN in local.h to either LSB_FIRST or MSB_FIRST)
+  #endif
+#endif
+
+#if ENDIAN == LSB_FIRST
+  #define userp_load_le16(p) ( *((uint16_t*) p) )
+  #define userp_load_le32(p) ( *((uint32_t*) p) )
+  #define userp_load_le64(p) ( *((uint64_t*) p) )
+  // TODO: handle platforms that require aligned reads
+#elif ENDIAN == MSB_FIRST
+static inline uint16_t userp_load_le16(char *p) {
+	return (((uint16_t) ((uint8_t*) p)[1]) << 8) | ((uint16_t) ((uint8_t*) p)[0]);
+}
+static inline uint32_t userp_load_le32(char *p) {
+	return (((uint32_t) ((uint8_t*) p)[3]) << 24)
+	    |  (((uint32_t) ((uint8_t*) p)[2]) << 16)
+	    |  (((uint32_t) ((uint8_t*) p)[1]) << 8)
+	    |  (((uint32_t) ((uint8_t*) p)[0]);
+}
+static inline uint64_t userp_load_le64(char *p) {
+	return (((uint64_t) ((uint8_t*) p)[7]) << 56)
+	    |  (((uint64_t) ((uint8_t*) p)[6]) << 48)
+	    |  (((uint64_t) ((uint8_t*) p)[5]) << 40)
+	    |  (((uint64_t) ((uint8_t*) p)[4]) << 32)
+	    |  (((uint64_t) ((uint8_t*) p)[3]) << 24)
+	    |  (((uint64_t) ((uint8_t*) p)[2]) << 16)
+	    |  (((uint64_t) ((uint8_t*) p)[1]) << 8)
+	    |  (((uint64_t) ((uint8_t*) p)[0]);
+}
+#else
+#error Library implementation requires ENDIAN of LSB_FIRST or MSB_FIRST
+#endif
+
 // ----------------------------- diag.c --------------------------------------
 
 struct userp_diag {
@@ -257,9 +303,9 @@ userp_symbol userp_scope_add_symbol(userp_scope scope, const char *name);
 
 struct userp_bit_io {
 	uint8_t *pos, *lim;
-	uint64_t accum;
+	struct userp_bstr_part *part;
 	struct userp_bstr *str;
-	size_t part_pos;
+	uint64_t accum;
 	int accum_bits;
 };
 
@@ -277,10 +323,28 @@ struct userp_enc {
 
 // ----------------------------- dec.c -------------------------------
 
-bool userp_decode_qty(void *out, size_t sizeof_out, struct userp_bit_io *in);
-static inline bool userp_decode_qty_quick(struct userp_bit_io *in, size_t *out) {
-	if (in->pos < in->lim && !(*in->pos & 1)) { *out= *in->pos++ >> 1; return true; }
-	else return userp_decode_qty(out, sizeof(*out), in);
+size_t userp_decode_vqty(void* out, size_t sizeof_out, struct userp_bit_io *in);
+size_t userp_decode_vqty_u64vec(uint64_t *out, size_t count, struct userp_bit_io *in);
+size_t userp_decode_vqty_u32vec(uint32_t *out, size_t count, struct userp_bit_io *in);
+#if SIZE_MAX == 0xFFFFFFFF
+#define userp_decode_vqty_sizevec userp_decode_vqty_u32vec
+#elif SIZE_MAX == 0xFFFFFFFFFFFFFFFF
+#define userp_decode_vqty_sizevec userp_decode_vqty_u64vec
+#else
+#error unhandled SIZE_MAX
+#endif
+
+static inline bool userp_decode_vqty_quick(size_t *out, struct userp_bit_io *in) {
+	if (in->lim - in->pos > 0 && !(*in->pos & 1)) {
+		*out= *in->pos++ >> 1;
+		return true;
+	}
+	else if (in->lim - in->pos > 1 && !(*in->pos & 2)) {
+		*out= userp_load_le16(in->pos) >> 2;
+		in->pos += 2;
+		return true;
+	}
+	else return sizeof(*out) == userp_decode_vqty(out, sizeof(*out), in);
 }
 
 struct userp_dec {
@@ -347,21 +411,6 @@ static inline size_t roundup_pow2(size_t s) {
 #endif
 #ifndef MAX
 #define MAX(a,b) (((a)>(b))?(a):(b))
-#endif
-
-#define LSB_FIRST 0
-#define MSB_FIRST 1
-
-#ifndef ENDIAN
-  #if defined(__BYTE_ORDER__)
-    #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-    #define ENDIAN LSB_FIRST
-    #else
-    #define ENDIAN MSB_FIRST
-    #endif
-  #else
-    #error Unknown endianness (define ENDIAN, LSB_FIRST, and MSB_FIRST in local.h)
-  #endif
 #endif
 
 #define CATCH(label) if (0) label: 
