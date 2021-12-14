@@ -230,7 +230,26 @@ an additional flag to indicate which `OFTEN` fields are present, and how many `S
 presence or absence; all present fields will be encoded end-to-end according to their declared
 type.  The remaining bits of the flag are then used as a count for the number of dynamic fields
 to read.  Each field is encoded as a reference to the field list or symbol table, and then a
-type encoded either according to the type of the field or the `other_field_typ`.
+type encoded either according to the type of the field or the `other_field_type`.
+
+Reecords are encoded as follows:
+  * If there are any dynamic fields (Often or Seldom placement or `other_field_type`) the
+    record begins with a selector to indicate which Often fields and how many Seldom fields.
+    (selectors can be inherited from a Choice, else they will be decoded as the first N bits
+    or vqty)
+  * The selector has one bit per Often field taken from the low bits of the selector in the
+    order the fields were declared.
+  * The remainder of the selector indicates how many seldom fields are present.
+  * The selector is a finite number of bits, unless `other_field_type` is given, then it is
+    un-bounded.
+  * For each of N Seldom fields, the selector is followed by an encoded Choice of any Seldom
+    field or (if `other_field_type`) any symbol in the symbol table.
+  * If the record contains any `static_bits` (directly specified, or implied by fields with
+    static placement) the `align`ment is applied, followed by that many static bits.
+  * Beyond here, all fields, field order, and types are known.  The location of any field
+    in the static area is known, and fixed-length optional fields can also be determined.
+    But, in order to reach aditional variable-length fields, it is necessary to read the fields
+    that come before them.
 
 Userp Stream Protocol 1
 -----------------------
@@ -321,6 +340,48 @@ not required in order to parse it.
   - BlockIndex: an index of locations of blocks within this stream.
   - BlockRootType: change the default root type for this block and any others in this Scope
   - BlockID: attach an ID to this block so that other blocks can refer to it.
+
+### Type Definition
+
+Type definitions are simply encoded records that describe a type.
+
+#### Integer Type Definition
+
+  - name        Always     SymbolRef
+  - parent      Often      TypeRef
+  - align       Often      IntU
+  - bits        Often      IntU
+  - min         Often      Int
+  - max         Seldom     Int
+  - bswap       Seldom     ByteSwapType
+  - names       Seldom     NamedIntArray
+  - pad         Seldom     Padding
+  - mask        Seldom     Integer
+  - shift       Seldom     Integer
+
+##### NamedInt
+
+  - name        Always     SymbolRef
+  - val_step    Always     Int
+
+#### Record Type Definition
+
+  - name        Always     SymbolRef
+  - parent      Often      TypeRef
+  - fields      Often      FieldArray
+  - static_bits Often      IntU
+  - align       Seldom     IntU
+  - pad         Seldom     Padding
+
+##### Field Definition:
+
+  - presence    Always     Choice(Always, Often, Seldom, Conditional)
+  - name        Always     SymbolRef
+  - type        Always     TypeRef
+  - offset      Often      Integer
+  - bswap       Often      Choice("MSB_FIRST")
+  - mask        Often      Integer
+  - shift       Often      Integer
 
 Data Language
 -------------
