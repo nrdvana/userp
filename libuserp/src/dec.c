@@ -1117,6 +1117,96 @@ static inline bool userp_decode_bits_u8(unsigned *out, struct userp_bit_io *in) 
 	return userp_decode_bits(out, 8, in);
 }
 
+struct record_context {
+	userp_type type;
+	struct userp_type_record *rec;
+	struct field_detail *field_detail;
+	size_t field_detail_alloc;
+};
+	
+static bool userp_dec_rec_begin(userp_dec dec, struct record_context *ctx, userp_type rectype) {
+	struct type_entry *type_entry= userp_scope_get_type_entry(dec->scope, rectype);
+	assert(type_entry && type_entry->typeclass == TYPE_CLASS_RECORD);
+	ctx->type= rectype;
+	ctx->rec= (struct userp_type_record*) type_entry->typeobj;
+
+	// If there are any dynamic fields (Often or Seldom placement or `other_field_type`) the
+    // record begins with a selector to indicate which Often fields and how many Seldom fields.
+	if (ctx->rec->often_field_count || ctx->rec->seldom_field_count || ctx->rev->other_field_type) {
+		// If a selector is supplied, it is both the often-presence flags (lower bits)
+		// and the other_field_count (upper bits)
+		if (dec->in->has_selector) {
+			ctx->often_field_presence= dec->in->selector;
+			ctx->extra_field_count= (ctx->rec->often_field_count < sizeof(dec->in->selector)*8)
+				? dec->in->selector >> ctx->rec->often_field_count
+				: 0;
+			dec->in->has_selector= false;
+		}
+		// Else the often-presence bits are the next N bits from here,
+		// and the other_field_count (if any) is encoded after that.
+		else {
+			if (ctx->rec->often_field_count) {
+				if (ctx->rec->often_field_count <= sizeof(ctx->often_field_presence)*8) {
+					if (!(ctx->often_field_presence= userp_decode_bits(dec->in, ctx->rec->often_field_count))
+						&& dec->in->failed)
+						goto fail_presence_bits;
+				}
+				else {
+					ctx->often_field_presence_vec= userp_dec_get_contiguous_bits(dec->in,
+						&ctx->often_field_presence_shift);
+				}
+			}
+			if (ctx->rec->other_field_type) {
+				if (!(ctx->extra_field_count= userp_decode_vqty(dec->in))
+					&& dec->in->failed)
+					goto fail_field_count;
+			}
+			else if (ctx->rec->seldom_field_count) {
+				if (!(ctx->extra_field_count= userp_decode_bits(dec->in, log2_sizet(ctx->rec->seldom_field_count)))
+					&& dec->in->failed)
+					goto fail_field_count;
+			}
+		}
+		// If the extra_field_count is nonzero, read that many field indicators.
+		// Field indicators are vqty if there are arbitrary "other" fields.
+		if (ctx->extra_field_count) {
+			size_n n= ctx->extra_field_count;
+			if (!USERP_ALLOC_ARRAY(dec->env, &ctx->extra_fields, n))
+				goto fail_alloc;
+			if (ctx->rec->other_field_type) {
+				if (userp_decode_vqty_sizevec(dec->in, ctx->extra_fields, n) < n)
+					goto fail_field_list;
+			}
+			else {
+				if (userp_decode_bits_sizevec(dec->in, ctx->extra_fields, n, log2_sizet(n), 0) < n)
+					goto fail_field_list;
+			}
+			for (i= 0; i < n; i++)
+				if (!userp_scope_verify_extra_field_ref(dec->scope, ctx->extra_fields[i]))
+					goto fail_field_list;
+		}
+	}
+	// Apply record alignment
+	if (ctx->rec->align)
+		if (!userp_decode_align(ctx->rec->align))
+			goto fail_align;
+	// Record the location of the start of the record's data
+	ctx->data_start.bitpos= dec->in->bitpos;
+	ctx->data_start.part= dec->in->part;
+	// For each "Conditional" field with placement outside of the official static area,
+	// check its condition and enlarge the static area if needed.
+	...
+	// Record is fully initialized here.
+	// The total number of present fields has not been determined, but that can be lazily
+	// calculated if needed.
+	return true;
+}
+
+bool userp_dec_rec_seek_field(userp_dec dec, size_t field_id) {
+	unimplemented("seek field");
+	return false;
+}
+
 #ifdef UNIT_TEST
 
 struct varqty_test {
