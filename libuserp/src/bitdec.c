@@ -1,4 +1,4 @@
-
+/*
 
 
 struct userp_bit_stream {
@@ -87,19 +87,12 @@ USERP_INPUT_READ_ALIGNED_WORD(dest, destype, srctype, in)
 	}
 }
 
-#define LIBWORD size_t
-#define IOWORD uint8_t
-#define IOWORD_BITS (sizeof(IOWORD)*8)
-#define LOG2_IOWORD_BITS (sizeof(IOWORD) == 1? 3 : sizeof(IOWORD) == 2? 4 : sizeof(IOWORD) == 4? 5 : sizeof(IOWORD) == 8? 6 : 7)
-struct userp_input {
-	unsigned bitpos;
-	IOWORD *pos, *lim;
-	struct userp_bstr_part *part;
-	struct userp_bstr *str;
-	bool fail;
-};
+*/
 
-bool userp_input_advance_pos(struct userp_input *in, size_t step) {
+#define LIBWORD userp_word_t
+#define IOWORD userp_ioword_t
+
+bool userp_bitdec_advance_pos(struct userp_bitdec *in, size_t step) {
 	struct userp_bstr_part *part, *part_lim;
 	if (step < in->lim - in->pos) {
 		in->pos += step;
@@ -127,37 +120,25 @@ bool userp_input_advance_pos(struct userp_input *in, size_t step) {
 	}
 }
 
-inline bool userp_input_align(struct userp_input *in, unsigned align) {
-	if (align < LOG2_IOWORD_BITS) {
-		unsigned bitpos= in->bitpos;
-		if (bitpos) {
-			bitpos= ((in->bitpos >> (align-1)) + 1) << (align-1);
-			if (bitpos == (1<<sizeof(IOWORD)*8)) {
-				bitpos= 0;
-				if (in->lim - in->pos > 1)
-					++in->pos;
-				else if (!userp_input_advance_pos(in, 1))
-					return false;
-			}
-			in->bitpos= bitpos;
-		}
-	}
-	else {
-		size_t ofs= in->part->ofs + (in->pos - (IOWORD*) in->part->data);
-		size_t mask= (1 << (align-LOG2_IOWORD_BITS)) - 1;
-		if (ofs & mask) {
-			size_t step= mask - (ofs & mask) + 1;
-			if (in->lim - in->pos > step)
-				in->pos += step;
-			else if (!userp_input_advance_pos(in, step))
-				return false;
-		}
+bool userp_bitdec_align(struct userp_bitdec *in, unsigned align) {
+	assert(in->bitpos <= sizeof(IOWORD)*8);
+	assert(in->bitpos == 0 || in->pos != in->lim);
+	size_t bitpos= in->bitpos;
+	bitpos += (1 << align)-1;
+	size_t step= bitpos >> LOG2_IOWORD_BITS;
+	if (step) {
+		if (in->lim - in->pos > step)
+			in->pos += step;
+		else if (!userp_input_advance_pos(in, step))
+			return false;
 		in->bitpos= 0;
 	}
+	else
+		in->bitpos= (bitpos >> align) << align;
 	return true;
 }
 
-LIBWORD userp_input_read_bits(struct userp_input *in, unsigned bits) {
+LIBWORD userp_bitdec_bits(struct userp_bitdec *in, unsigned bits) {
 	size_t bitpos= in->bitpos;
 	struct userp_bstr_part *part= in->part;
 	IOWORD *pos= in->pos, *lim= in->lim;
@@ -225,7 +206,7 @@ LIBWORD userp_input_read_bits(struct userp_input *in, unsigned bits) {
 	return out;
 }
 
-bool userp_input_skip_bits(struct userp_input *in, size_t bits) {
+bool userp_bitdec_skip_bits(struct userp_bitdec *in, size_t bits) {
 	struct userp_bstr_part *part= in->part;
 	IOWORD *pos= in->pos, *lim= in->lim;
 	size_t bitpos= in->bitpos + bits;
@@ -234,7 +215,7 @@ bool userp_input_skip_bits(struct userp_input *in, size_t bits) {
 			if (part - in->str->parts + 1 == in->str->part_count) {
 				userp_diag_set(&in->str->env->err, USERP_EOVERFLOW, "Unexpected end of input");
 				in->fail= true;
-				return 0;
+				return false;
 			}
 			++part;
 			assert((part->data & (sizeof(IOWORD)-1) == 0);
@@ -254,34 +235,4 @@ bool userp_input_skip_bits(struct userp_input *in, size_t bits) {
 			pos= lim;
 		}
 	}
-}
-
-static inline LIBWORD userp_input_read_bits_quick(struct userp_input *in, unsigned bits) {
-	size_t bitpos= in->bitpos;
-	// Common case - is the number of bits smaller or equal to the bits in an input word,
-	// and are there at least 2 words left in the buffer?
-	if (bits <= sizeof(IOWORD)*8 && in->lim - in->pos > 1) {
-		in->bitpos += bits;
-		if (in->bitpos > sizeof(IOWORD)*8) {
-			in->pos++;
-			in->bitpos -= sizeof(IOWORD)*8;
-			return (in->pos[-1] >> bitpos)
-				|  ((IOWORD)(in->pos[0] << (sizeof(IOWORD)*8 - in->bitpos)) >> (sizeof(IOWORD)*8 - bitpos));
-		}
-		return (in->pos[0] >> bitpos) & (( ((IOWORD)1) << bits )-1);
-	}
-	// else need to iterate and/or wrap between buffers
-	return userp_input_read_bits(in, bits);
-}
-
-static inline LIBWORD userp_input_skip_bits_quick(struct userp_input *in, size_t bits) {
-	size_t bitpos= in->bitpos + bits;
-	// Common case - is the number of bits smaller than is left in the buffer?
-	if ((bitpos + sizeof(IOWORD)*8-1 >> LOG2_IOWORD_BITS) <= in->lim - in->pos) {
-		in->pos += bitpos >> LOG2_IOWORD_BITS;		
-		in->bitpos= bitpos & sizeof(IOWORD)*8-1;
-		return true;
-	}
-	// else need to iterate and/or wrap between buffers
-	return userp_input_skip_bits(in, bits);
 }
