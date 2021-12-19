@@ -38,79 +38,65 @@ struct userptiny_dec* userptiny_dec_init(char *obj_buf, uint16_t size, struct us
 	return self;
 }
 
-uint16_t userptiny_dec_bits(struct userptiny_dec *dec, uint8_t bits) {
-	// sanity check
-	if (bits > 16) {
-		dec->error= USERPTINY_EOVERFLOW;
-		return 0;
-	}
-	// Bitpos is the number of bits of in[pos] which are already consumed.
-	// The number of bytes needed could be up to 3, for the bitpos and 16 bits
-	// after that.
-	uint8_t bitpos= dec->in_bitpos;
-	int bytes_needed= (bitpos + bits + 7) >> 3;
-	// verify the buffer has that many
-	if (dec->in_len - dec->in_pos < bytes_needed) {
-		dec->error= USERPTINY_EOVERRUN;
-		return 0;
-	}
-	// save the new value of bitpos, but hold the original in the local variable
-	dec->in_bitpos= (bitpos + bits) & 7;
-	// first byte, possibly partial
-	uint16_t out= dec->in[dec->in_pos] >> bitpos;
-	// did that satisfy it?
-	if (bits <= 8 - bitpos) {
-		if (!dec->in_bitpos) dec->in_pos++;
-		return out & (((uint16_t)1 << bits)-1);
-	}
-	// else add bytes 2 and maybe 3
-	out |= ((uint16_t) dec->in[++dec->in_pos]) << (8 - bitpos);
-	if (bytes_needed > 2)
-		out |= ((uint16_t) dec->in[++dec->in_pos]) << (16 - bitpos);
-	else if (!dec->in_bitpos)
-		++dec->in_pos; // if consumed up to an even multiple, advance the position
-	// need a bitmask, unless it was a full 16 bits
-	return bits == 16? out : (out & (((uint16_t)1 << bits)-1));
+uint16_t userptiny_dec_set_input(struct userptiny_dec *dec, uint8_t *in, uint16_t in_len) {
+	dec->in= in;
+	dec->in_pos= 0;
+	dec->in_len= in_len;
+	dec->in_bitpos= 0;
+	dec->state_pos= 0;
 }
 
-uint16_t userptiny_dec_vqty(struct userptiny_dec *dec) {
-	// align up to the next whole byte
-	if (dec->in_bitpos && dec->in_pos < dec->in_len) {
-		++dec->in_pos;
-		dec->in_bitpos= 0;
+userptiny_error_t userptiny_dec_raw_bits(uint16_t *out, uint8_t *buf_lim, uint16_t *bits_left, uint8_t bits) {
+	// sanity check
+	if (bits > 16)
+		return USERPTINY_EOVERFLOW;
+	if (bits > *bits_left)
+		return USERPTINY_OVERRUN;
+	uint16_t ofs= *bits_left >> 3;
+	uint8_t partial= *bits_left & 7;
+	if (bits > partial) {
+		uint8_t upper= bits - partial;
+		uint16_t val= (upper <= 8)? buf_lim[-ofs] & (0xFF >> (8-upper))
+			: buf_lim[-ofs] | ((uint16_t)(buf_lim[1-ofs] & (0xFF >> (16-upper))) << 8);
+		if (partial)
+			val= (val << partial) | (buf_lim[-1-ofs] >> (8-partial));
+		*out= val;
 	}
-	// need at least one available
-	if (dec->in_pos >= dec->in_len) {
-		dec->error= USERPTINY_EOVERRUN;
-		return 0;
+	else {
+		*out= (buf_lim[-1-ofs] & (0xFF >> (partial-bits))) >> (8 - bits);
 	}
+	*bits_left -= bits;
+	return 0;
+}
+
+userptiny_error_t userptiny_dec_raw_vqty(uint16_t *out, uint8_t *buf_lim, uint16_t *bits_left) {
+	// switch to bytes for the moment
+	uint16_t bytes_left= *bits_left >> 3;
+	// need at least one byte
+	if (!bytes_left)
+		return USERPTINY_EOVERRUN;
 	// This byte determines how many more will be read
-	uint16_t out= dec->in[dec->in_pos++];
-	if (!(out & 1))
-		return out >> 1;
-	if (dec->in_pos >= dec->in_len) {
-		dec->error= USERPTINY_EOVERRUN;
-		return 0;
+	uint8_t sel= buf_lim[-bytes_left--];
+	if (!(sel & 1)) {
+		*out= sel >> 1;
 	}
-	out |= ((uint16_t) dec->in[dec->in_pos++]) << 8;
-	if (!(out & 2))
-		return out >> 2;
-	if (!(out & 4)) {
-		// two more bytes left to read, but can only hold 3 more bitss
-		if (dec->in_len - dec->in_pos < 2) {
-			dec->error= USERPTINY_EOVERRUN;
-			return 0;
-		}
-		if ((dec->in[dec->in_pos] >> 3) || dec->in[dec->in_pos+1]) {
-			dec->error= USERPTINY_EOVERFLOW;
-			return 0;
-		}
-		out= (out >> 3) | ((uint16_t) dec->in[dec->in_pos]) << 13;
-		dec->in_pos += 2;
-		return out;
+	else if (bytes_left && !(sel & 2)) {
+		if (!bytes_left)
+			return USERPTINY_EOVERRUN;
+		*out= (sel >> 2) | ((uint16_t)buf_lim[-bytes_left--] << 6);
 	}
-	// could try checking if bigint holds less than 16 bits, but probably not worth it
-	dec->error= USERPTINY_EOVERFLOW;
+	else if (bytes_left >= 3 && !(sel & 4)) {
+		if (bytes_left < 3)
+			return USERPTINY_EOVERRUN;
+		if ((buf_lim[-bytes_left+1] >> 3) || buf_lim[-bytes_left+2])
+			return USERPTINY_EOVERFLOW;
+		*out= (sel >> 3) | ((uint16_t)buf_lim[-bytes_left+1] << 5) | ((uint16_t)buf_lim[-bytes_left+2] << 13);
+	}
+	else {
+		// just assume value in bigint is larger than int16
+		return USERPTINY_EOVERFLOW;
+	}
+	*bits_left= bytes_left << 3;
 	return 0;
 }
 
