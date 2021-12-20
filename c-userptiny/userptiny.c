@@ -1,6 +1,14 @@
 #include "config.h"
 #include "userptiny.h"
 
+const char *userptiny_error_name(userptiny_error_t code) {
+	switch (code) {
+	case USERPTINY_EOVERFLOW: return "overflow";
+	case USERPTINY_EOVERRUN:  return "overrun";
+	default: return "unknown";
+	}
+}
+
 struct userptiny_scope* userptiny_scope_init(char *obj_buf, uint16_t size, struct userptiny_scope *parent) {
 	struct userptiny_scope *self;
 	size_t ptr_mask= alignof(struct userptiny_scope)-1;
@@ -38,38 +46,43 @@ struct userptiny_dec* userptiny_dec_init(char *obj_buf, uint16_t size, struct us
 	return self;
 }
 
-uint16_t userptiny_dec_set_input(struct userptiny_dec *dec, uint8_t *in, uint16_t in_len) {
+userptiny_error_t userptiny_dec_set_input(struct userptiny_dec *dec, uint8_t *in, uint16_t in_len) {
 	dec->in= in;
 	dec->in_pos= 0;
 	dec->in_len= in_len;
 	dec->in_bitpos= 0;
 	dec->state_pos= 0;
+	return 0;
 }
 
-userptiny_error_t userptiny_dec_raw_bits(uint16_t *out, uint8_t *buf_lim, uint16_t *bits_left, uint8_t bits) {
+userptiny_error_t userptiny_decode_bits(uint16_t *out, uint8_t *buf_lim, uint16_t *bits_left, uint8_t bits) {
 	// sanity check
 	if (bits > 16)
 		return USERPTINY_EOVERFLOW;
 	if (bits > *bits_left)
-		return USERPTINY_OVERRUN;
+		return USERPTINY_EOVERRUN;
+	// ofs is the first byte following the partial byte (if any)
 	uint16_t ofs= *bits_left >> 3;
-	uint8_t partial= *bits_left & 7;
-	if (bits > partial) {
-		uint8_t upper= bits - partial;
-		uint16_t val= (upper <= 8)? buf_lim[-ofs] & (0xFF >> (8-upper))
-			: buf_lim[-ofs] | ((uint16_t)(buf_lim[1-ofs] & (0xFF >> (16-upper))) << 8);
-		if (partial)
-			val= (val << partial) | (buf_lim[-1-ofs] >> (8-partial));
+	// number of upper bits remaining in previous byte
+	uint8_t prev_unused= *bits_left & 7;
+	if (bits > prev_unused) {
+		uint8_t new_bits= bits - prev_unused;
+		uint16_t val= (new_bits <= 8)? buf_lim[-ofs] & (0xFF >> (8-new_bits))
+			: buf_lim[-ofs] | ((uint16_t)(buf_lim[1-ofs] & (0xFF >> (16-new_bits))) << 8);
+		if (prev_unused)
+			val= (val << prev_unused) | (buf_lim[-1-ofs] >> (8-prev_unused));
 		*out= val;
 	}
-	else {
-		*out= (buf_lim[-1-ofs] & (0xFF >> (partial-bits))) >> (8 - bits);
+	else if (bits > 0) {
+		*out= (buf_lim[-1-ofs] & (0xFF >> (prev_unused-bits))) >> (8-prev_unused);
 	}
+	else
+		*out= 0;
 	*bits_left -= bits;
 	return 0;
 }
 
-userptiny_error_t userptiny_dec_raw_vqty(uint16_t *out, uint8_t *buf_lim, uint16_t *bits_left) {
+userptiny_error_t userptiny_decode_vqty(uint16_t *out, uint8_t *buf_lim, uint16_t *bits_left) {
 	// switch to bytes for the moment
 	uint16_t bytes_left= *bits_left >> 3;
 	// need at least one byte
@@ -90,7 +103,8 @@ userptiny_error_t userptiny_dec_raw_vqty(uint16_t *out, uint8_t *buf_lim, uint16
 			return USERPTINY_EOVERRUN;
 		if ((buf_lim[-bytes_left+1] >> 3) || buf_lim[-bytes_left+2])
 			return USERPTINY_EOVERFLOW;
-		*out= (sel >> 3) | ((uint16_t)buf_lim[-bytes_left+1] << 5) | ((uint16_t)buf_lim[-bytes_left+2] << 13);
+		*out= (sel >> 3) | ((uint16_t)buf_lim[-bytes_left] << 5) | ((uint16_t)buf_lim[-bytes_left+1] << 13);
+		bytes_left -= 3;
 	}
 	else {
 		// just assume value in bigint is larger than int16
@@ -99,4 +113,3 @@ userptiny_error_t userptiny_dec_raw_vqty(uint16_t *out, uint8_t *buf_lim, uint16
 	*bits_left= bytes_left << 3;
 	return 0;
 }
-

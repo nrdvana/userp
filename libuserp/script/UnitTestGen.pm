@@ -132,7 +132,7 @@ sub scan_source_files {
 	my %included_from;
 	my @sources= @{ $self->source_files };
 	for my $fname (@sources) {
-		open my $fh, '<', $fname or die "Can't open $_\n";
+		open my $fh, '<', $fname or die "Can't open '$fname'\n";
 		while (<$fh>) {
 			if (/^UNIT_TEST\((\w+)\)/) {
 				my $file= $included_from{$fname} || $fname;
