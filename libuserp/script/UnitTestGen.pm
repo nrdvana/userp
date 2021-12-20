@@ -11,6 +11,10 @@ use Pod::Usage;
 
 =over
 
+=item --include=HEADER
+
+Insert an #include directive into the generated output
+
 =item --entrypoint=SRCFILE
 
 Write a test entrypoint to SRCFILE
@@ -32,6 +36,7 @@ sub parse_options {
 	my $opt= Getopt::Long::Parser->new;
 	$opt->configure(qw( permute ));
 	return $opt->getoptionsfromarray(\@_,
+		'include=s'    => $self->includes,
 		'entrypoint=s' => \$self->{test_entrypoint_srcfile},
 		'testdir=s'    => \$self->{test_script_dir},
 		'<>'           => sub { push @{ $self->{source_files} }, shift },
@@ -71,7 +76,9 @@ sub _proj_dir {
 	$path;
 }
 
-sub source_files { $_[0]{source_files} || [] }
+sub includes { $_[0]{includes} ||= [] }
+
+sub source_files { $_[0]{source_files} ||= [] }
 
 sub test_entrypoint_srcfile { $_[0]{test_entrypoint_srcfile} || _proj_dir . '/src/unittest.c' }
 
@@ -121,13 +128,16 @@ sub run {
 sub scan_source_files {
 	my $self= shift;
 	my @tests;
+	my %included= map { $_ => 1 } @{$self->includes};
 	my %included_from;
 	my @sources= @{ $self->source_files };
 	for my $fname (@sources) {
 		open my $fh, '<', $fname or die "Can't open $_\n";
 		while (<$fh>) {
 			if (/^UNIT_TEST\((\w+)\)/) {
-				push @tests, { name => $1, file => ($included_from{$fname}||$fname) };
+				my $file= $included_from{$fname} || $fname;
+				push @tests, { name => $1, file => $file };
+				push @{$self->{includes}}, $file unless $included{$file}++;
 			}
 			if (m,^/[*]OUTPUT$, && @tests) {
 				$tests[-1]{output}= '';
@@ -151,8 +161,6 @@ sub scan_source_files {
 
 sub write_entrypoint {
 	my $self= shift;
-	my %seen;
-	my @used_src= grep !$seen{$_}++, map $_->{file}, @{ $self->tests };
 	my @test_names= sort map $_->{name}, @{ $self->tests };
 	my $dest= $self->test_entrypoint_srcfile;
 	if (-e $dest) {
@@ -161,22 +169,21 @@ sub write_entrypoint {
 			or die "$dest already exists, and does not look like a generated test entrypoint";
 	}
 	print "Writing entrypoint '$dest'\n";
+	local $"= "\n";
 	my $fh;
 	open($fh, '>', $dest) && (print $fh <<END) && close $fh or die "Can't write to $dest\n";
-#include "local.h"
 #define UNIT_TEST_CONCAT_NAME_(prefix,name) prefix##name
 #define UNIT_TEST(name) void UNIT_TEST_CONCAT_NAME_(test_,name)(int argc, char **argv)
 #define TRACE(env, x...) do{ if(env->log_trace){ userp_diag_set(env->diag,x); userp_env_emit_diag(env); } }while(0)
-#include "userp_private.h"
 
-@{[ map qq:#include "$_"\n:, @used_src ]}
+@{[ map qq|#include "$_"|, @{ $self->includes } ]}
 
 typedef void test_entrypoint(int argc, char **argv);
 struct tests {
 	const char *name;
 	test_entrypoint *entrypoint;
 } tests[]= {
-@{[ map qq:	{ "$_", &test_$_ },\n:, @test_names ]}
+@{[ map qq|	{ "$_", &test_$_ },|, @test_names ]}
 	{ NULL, NULL }
 };
 

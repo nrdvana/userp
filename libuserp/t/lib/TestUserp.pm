@@ -111,7 +111,7 @@ sub diff_regex_vs_text {
 
 sub render_diff {
 	my $diff= shift;
-	my $widest_left= 0;
+	my $widest_left= 10;
 	for (@$diff) {
 		$widest_left= length $_->[0]
 			if $_->[0] && length $_->[0] > $widest_left;
