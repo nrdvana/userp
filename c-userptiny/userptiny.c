@@ -3,47 +3,77 @@
 
 const char *userptiny_error_name(userptiny_error_t code) {
 	switch (code) {
-	case USERPTINY_EOVERFLOW: return "overflow";
-	case USERPTINY_EOVERRUN:  return "overrun";
-	default: return "unknown";
+	case USERPTINY_EOVERFLOW:    return "integer overflow";
+	case USERPTINY_ELIMIT:       return "size limit exceeded";
+	case USERPTINY_EUNSUPPORTED: return "unsupported feature";
+	case USERPTINY_EOVERRUN:     return "buffer overrun";
+	default: return "unknown code";
 	}
 }
 
-struct userptiny_scope* userptiny_scope_init(char *obj_buf, uint16_t size, struct userptiny_scope *parent) {
-	struct userptiny_scope *self;
-	size_t ptr_mask= alignof(struct userptiny_scope)-1;
-	size_t align_ofs= (size_t)((intptr_t)obj_buf & ptr_mask);
-	if (!obj_buf || align_ofs + sizeof(struct userptiny_scope) > size)
-		return NULL;
-	size -= align_ofs + sizeof(struct userptiny_scope);
-	self= (struct userptiny_scope*) (obj_buf + align_ofs);
-	self->parent= parent;
-	self->symbols= NULL;
-	self->sym_base= 0;
-	self->sym_count= 0;
-	self->type_base= 0;
-	self->type_count= 0;
-	self->type_alloc= size / sizeof(self->type_table[0]);
-	return self;
+userptiny_error_t userptiny_scope_init(
+	struct userptiny_scope *scope,
+	const struct userptiny_scope *parent,
+	uint8_t *state, size_t state_size
+) {
+	scope->parent= parent;
+
+	scope->state= state;
+	scope->state_alloc= state_size;
+
+	scope->symbols= NULL;
+	scope->sym_count= parent? parent->sym_count : 0;
+	scope->sym_lookup_count= 0;
+
+	scope->types= NULL;
+	scope->type_count= parent? parent->type_count : 0;
+	scope->type_cache= NULL;
+	scope->type_cache_count= 0;
+	return 0;
 }
 
-struct userptiny_dec* userptiny_dec_init(char *obj_buf, uint16_t size, struct userptiny_scope *scope) {
-	struct userptiny_dec *self;
-	size_t ptr_mask= alignof(struct userptiny_dec)-1;
-	size_t align_ofs= (size_t)((intptr_t)obj_buf & ptr_mask);
-	if (!obj_buf || align_ofs + sizeof(struct userptiny_dec) > size)
-		return NULL;
-	size -= align_ofs + sizeof(struct userptiny_dec);
-	self= (struct userptiny_dec*) (obj_buf + align_ofs);
-	self->scope= scope;
-	self->in= NULL;
-	self->in_pos= 0;
-	self->in_len= 0;
-	self->in_bitpos= 0;
-	self->state_pos= 0;
-	self->state_alloc= size / sizeof(self->state_stack[0]);
-	self->error= 0;
-	return self;
+const char* const userptiny_v1_scope_symtable[]= {
+	"any",
+	"symref",
+	"typeref",
+	"integer",
+};
+
+const struct userptiny_type userptiny_v1_scope_types[]= {
+	{ .typeclass= USERPTINY_TYPECLASS_BUILTIN, .name= 1, .flags= 0, .builtin= { .subtype= USERPTINY_SCOPE_V1_TYPE_ANY } },
+	{ .typeclass= USERPTINY_TYPECLASS_BUILTIN, .name= 2, .flags= 0, .builtin= { .subtype= USERPTINY_SCOPE_V1_TYPE_SYMREF } },
+	{ .typeclass= USERPTINY_TYPECLASS_BUILTIN, .name= 3, .flags= 0, .builtin= { .subtype= USERPTINY_SCOPE_V1_TYPE_TYPEREF } },
+	{ .typeclass= USERPTINY_TYPECLASS_INTEGER, .name= 4, .flags= 0 },
+};
+
+const struct userptiny_scope userptiny_v1_scope= {
+	.parent= NULL,
+	.state= NULL,
+	.state_alloc= 0,
+	.symbols= userptiny_v1_scope_symtable,
+	.sym_count= 0,
+	.sym_lookup_count= 0,
+	.types= (struct userptiny_type*) userptiny_v1_scope_types,
+	.type_count= sizeof(userptiny_v1_scope_types)/sizeof(*userptiny_v1_scope_types),
+	.type_cache= NULL,
+	.type_cache_count= sizeof(userptiny_v1_scope_types)/sizeof(*userptiny_v1_scope_types),
+};
+
+userptiny_error_t
+userptiny_dec_init(struct userptiny_dec *dec,
+                   const struct userptiny_scope *scope,
+                   uint8_t *state_storage, size_t state_storage_size
+) {
+	dec->scope= scope;
+	dec->in= NULL;
+	dec->in_pos= 0;
+	dec->in_len= 0;
+	dec->in_bitpos= 0;
+	dec->state_stack= state_storage;
+	dec->state_alloc= state_storage_size;
+	dec->state_pos= 0;
+	dec->error= 0;
+	return 0;
 }
 
 userptiny_error_t userptiny_dec_set_input(struct userptiny_dec *dec, uint8_t *in, uint16_t in_len) {
@@ -113,3 +143,4 @@ userptiny_error_t userptiny_decode_vqty(uint16_t *out, uint8_t *buf_lim, uint16_
 	*bits_left= bytes_left << 3;
 	return 0;
 }
+

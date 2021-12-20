@@ -58,5 +58,5 @@ read = 41
 read = 2001
 read = 8001
 read = FFFF
-read : overflow
+read : integer overflow
 */

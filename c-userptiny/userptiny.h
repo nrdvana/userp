@@ -3,24 +3,79 @@
 
 typedef uint8_t userptiny_error_t;
 
-#define USERPTINY_EOVERFLOW 1
-#define USERPTINY_EOVERRUN  2
+#define USERPTINY_EOVERFLOW    1
+#define USERPTINY_EOVERRUN     2
+#define USERPTINY_EUNSUPPORTED 3
+#define USERPTINY_ELIMIT       4
 
 const char *userptiny_error_name(userptiny_error_t code);
 
-struct userptiny_scope {
-	struct userptiny_scope *parent;
-	uint8_t *symbols;
-	uint8_t sym_base, sym_count;
-	uint16_t type_base;
-	uint8_t type_count, type_alloc;
-	uint8_t *type_table[];
+#define USERPTINY_TYPECLASS_BUILTIN  1
+#define USERPTINY_TYPECLASS_INTEGER  2
+#define USERPTINY_TYPECLASS_CHOICE   3
+#define USERPTINY_TYPECLASS_ARRAY    4
+#define USERPTINY_TYPECLASS_RECORD   5
+
+#define USERPTINY_SCOPE_V1_TYPE_ANY     1
+#define USERPTINY_SCOPE_V1_TYPE_SYMREF  2
+#define USERPTINY_SCOPE_V1_TYPE_TYPEREF 3
+#define USERPTINY_SCOPE_V1_TYPE_INTEGER 4
+
+struct userptiny_type {
+	uint16_t
+		typeclass: 3,
+		flags: 13;
+	uint16_t name;
+	union {
+		struct userptiny_type_builtin {
+			uint8_t subtype;
+		} builtin;
+		struct userptiny_type_int {
+			uint16_t min, max, mask;
+			uint8_t bits, shift;
+		} intgr;
+		struct userptiny_type_record {
+			uint16_t other_type;
+			uint16_t *fields;
+			uint8_t field_count,
+				always_count,
+				often_count;
+		} rec;
+	};
 };
 
-struct userptiny_scope* userptiny_scope_init(char *obj_buf, uint16_t size, struct userptiny_scope *parent);
+struct userptiny_scope {
+	const struct userptiny_scope
+		*parent;
+	const char * const
+		* symbols;
+	struct userptiny_type
+		*types;
+	uint8_t
+		*type_cache,
+		*state;
+	uint16_t
+		state_alloc,
+		sym_count,
+		type_count;
+	uint8_t
+		sym_lookup_count,
+		type_cache_count;
+};
+
+userptiny_error_t
+userptiny_scope_init(struct userptiny_scope *scope,
+                     const struct userptiny_scope *parent,
+                     uint8_t *state_storage, size_t state_storage_size);
+
+userptiny_error_t
+userptiny_scope_parse(struct userptiny_scope *scope,
+                      uint8_t *data, uint16_t data_size);
+
+extern const struct userptiny_scope userptiny_v1_scope;
 
 struct userptiny_enc {
-	struct userptiny_scope *scope;
+	const struct userptiny_scope *scope;
 	uint8_t *out;
 	uint16_t out_pos;
 	uint16_t out_len;
@@ -32,7 +87,7 @@ struct userptiny_enc {
 };
 
 struct userptiny_dec {
-	struct userptiny_scope *scope;
+	const struct userptiny_scope *scope;
 	uint8_t *in;
 	uint16_t in_pos;
 	uint16_t in_len;
@@ -40,10 +95,14 @@ struct userptiny_dec {
 		state_pos,
 		state_alloc,
 		error;
-	uint8_t state_stack[];
+	uint8_t *state_stack;
 };
 
-struct userptiny_dec* userptiny_dec_init(char *obj, uint16_t size, struct userptiny_scope *scope);
+userptiny_error_t
+userptiny_dec_init(struct userptiny_dec *dec,
+                   const struct userptiny_scope *scope,
+                   uint8_t *state_storage, size_t state_storage_size);
+
 userptiny_error_t userptiny_dec_set_input(struct userptiny_dec *dec, uint8_t *in, uint16_t in_len);
 userptiny_error_t userptiny_decode_bits(uint16_t *out, uint8_t *buf_lim, uint16_t *bits_left, uint8_t bits);
 userptiny_error_t userptiny_decode_vqty(uint16_t *out, uint8_t *buf_lim, uint16_t *bits_left);
