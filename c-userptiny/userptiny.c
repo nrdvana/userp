@@ -40,9 +40,9 @@ const char* const userptiny_v1_scope_symtable[]= {
 };
 
 const struct userptiny_type userptiny_v1_scope_types[]= {
-	{ .typeclass= USERPTINY_TYPECLASS_BUILTIN, .name= 1, .flags= 0, .builtin= { .subtype= USERPTINY_SCOPE_V1_TYPE_ANY } },
-	{ .typeclass= USERPTINY_TYPECLASS_BUILTIN, .name= 2, .flags= 0, .builtin= { .subtype= USERPTINY_SCOPE_V1_TYPE_SYMREF } },
-	{ .typeclass= USERPTINY_TYPECLASS_BUILTIN, .name= 3, .flags= 0, .builtin= { .subtype= USERPTINY_SCOPE_V1_TYPE_TYPEREF } },
+	{ .typeclass= USERPTINY_TYPECLASS_BUILTIN, .name= 1, .flags= 0, .builtin= { .subtype= USERPTINY_V1_TYPE_ANY } },
+	{ .typeclass= USERPTINY_TYPECLASS_BUILTIN, .name= 2, .flags= 0, .builtin= { .subtype= USERPTINY_V1_TYPE_SYMREF } },
+	{ .typeclass= USERPTINY_TYPECLASS_BUILTIN, .name= 3, .flags= 0, .builtin= { .subtype= USERPTINY_V1_TYPE_TYPEREF } },
 	{ .typeclass= USERPTINY_TYPECLASS_INTEGER, .name= 4, .flags= 0 },
 };
 
@@ -65,10 +65,8 @@ userptiny_dec_init(struct userptiny_dec *dec,
                    uint8_t *state_storage, size_t state_storage_size
 ) {
 	dec->scope= scope;
-	dec->in= NULL;
-	dec->in_pos= 0;
-	dec->in_len= 0;
-	dec->in_bitpos= 0;
+	dec->input_end= NULL;
+	dec->bits_left= 0;
 	dec->state_stack= state_storage;
 	dec->state_alloc= state_storage_size;
 	dec->state_pos= 0;
@@ -76,13 +74,25 @@ userptiny_dec_init(struct userptiny_dec *dec,
 	return 0;
 }
 
-userptiny_error_t userptiny_dec_set_input(struct userptiny_dec *dec, uint8_t *in, uint16_t in_len) {
-	dec->in= in;
-	dec->in_pos= 0;
-	dec->in_len= in_len;
-	dec->in_bitpos= 0;
+userptiny_error_t
+userptiny_dec_set_input(struct userptiny_dec *dec,
+                        uint16_t root_type,
+                        uint8_t *in, uint16_t in_len
+) {
+	// iterating bits, so need 3 spare bits in a uin16_t
+	if (in_len & 0xE0000)
+		return USERPTINY_ELIMIT;
+	dec->input_end= in + in_len;
+	dec->bits_left= in_len << 3;
 	dec->state_pos= 0;
+	// look up root type
+	// if found, push it onto the stack
 	return 0;
+}
+
+userptiny_error_t
+userptiny_dec_int(struct userptiny_dec *dec, uint16_t *out) {
+	return userptiny_decode_vqty(out, dec->input_end, &dec->bits_left);
 }
 
 userptiny_error_t userptiny_decode_bits(uint16_t *out, uint8_t *buf_lim, uint16_t *bits_left, uint8_t bits) {
