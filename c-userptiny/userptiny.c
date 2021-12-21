@@ -3,10 +3,14 @@
 
 const char *userptiny_error_name(userptiny_error_t code) {
 	switch (code) {
-	case USERPTINY_EOVERFLOW:    return "integer overflow";
-	case USERPTINY_ELIMIT:       return "size limit exceeded";
-	case USERPTINY_EUNSUPPORTED: return "unsupported feature";
-	case USERPTINY_EOVERRUN:     return "buffer overrun";
+	case USERPTINY_EOVERFLOW:     return "integer overflow";
+	case USERPTINY_ELIMIT:        return "size limit exceeded";
+	case USERPTINY_EUNSUPPORTED:  return "unsupported feature";
+	case USERPTINY_EOVERRUN:      return "buffer overrun";
+	case USERPTINY_ETYPEREF:      return "invalid typeref";
+	case USERPTINY_ESYMREF:       return "invalid symref";
+	case USERPTINY_EALLOC:        return "insufficient memory";
+	case USERPTINY_EDOINGITWRONG: return "invalid api call";
 	default: return "unknown code";
 	}
 }
@@ -30,6 +34,26 @@ userptiny_error_t userptiny_scope_init(
 	scope->type_cache= NULL;
 	scope->type_cache_count= 0;
 	return 0;
+}
+
+struct userptiny_type *
+userptiny_scope_get_type(const struct userptiny_scope *scope, uint16_t type_id) {
+	// Type ID is 1-based, with 0 meaning NULL
+	if (type_id > scope->type_count)
+		return NULL;
+	// If type id is within the parent scope, switch to that one
+	while (scope->parent && type_id <= scope->parent->type_count)
+		scope= scope->parent;
+	uint16_t parent_count= scope->parent? scope->parent->type_count : 0;
+	// are all types decoded?
+	if (scope->type_cache_count == scope->type_count - parent_count) {
+		return &scope->types[ type_id - parent_count - 1 ];
+	}
+	else {
+		// not enough state space to decode all types, so pick a cache slot and decode the type
+		// TODO
+		return NULL;
+	}
 }
 
 const char* const userptiny_v1_scope_symtable[]= {
@@ -64,11 +88,17 @@ userptiny_dec_init(struct userptiny_dec *dec,
                    const struct userptiny_scope *scope,
                    uint8_t *state_storage, size_t state_storage_size
 ) {
+	// allocate as many state structs as possible from the givenn bytes.  Needs to be
+	// correctly aligned, though.
+	size_t ofs= (intptr_t)state_storage & (alignof(struct userptiny_dec_state)-1);
+	// and need at least one item
+	if (state_storage_size < ofs + sizeof(struct userptiny_dec_state))
+		return USERPTINY_EALLOC;
 	dec->scope= scope;
 	dec->input_end= NULL;
 	dec->bits_left= 0;
-	dec->state_stack= state_storage;
-	dec->state_alloc= state_storage_size;
+	dec->state_stack= (struct userptiny_dec_state*)(state_storage + ofs);
+	dec->state_alloc= (state_storage_size-ofs) / sizeof(struct userptiny_dec_state);
 	dec->state_pos= 0;
 	dec->error= 0;
 	return 0;
@@ -79,20 +109,33 @@ userptiny_dec_set_input(struct userptiny_dec *dec,
                         uint16_t root_type,
                         uint8_t *in, uint16_t in_len
 ) {
-	// iterating bits, so need 3 spare bits in a uin16_t
-	if (in_len & 0xE0000)
+	// look up root type
+	struct userptiny_type *type= userptiny_scope_get_type(dec->scope, root_type);
+	if (!type)
+		return USERPTINY_ETYPEREF;
+	// iterating bits, so need 3 spare bits in a uint16_t
+	if (in_len & 0xE000)
 		return USERPTINY_ELIMIT;
 	dec->input_end= in + in_len;
 	dec->bits_left= in_len << 3;
 	dec->state_pos= 0;
-	// look up root type
-	// if found, push it onto the stack
+	dec->state_stack[0].type= type;
+	dec->state_stack[0].elem_idx= 0;
 	return 0;
 }
 
 userptiny_error_t
 userptiny_dec_int(struct userptiny_dec *dec, uint16_t *out) {
-	return userptiny_decode_vqty(out, dec->input_end, &dec->bits_left);
+	struct userptiny_dec_state *st= &dec->state_stack[dec->state_pos];
+	switch(st->type->typeclass) {
+	case USERPTINY_TYPECLASS_INTEGER:
+		if (st->elem_idx)
+			return USERPTINY_EDOINGITWRONG;
+		st->elem_idx++;
+		return userptiny_decode_vqty(out, dec->input_end, &dec->bits_left);
+	default:
+		return USERPTINY_EDOINGITWRONG;
+	}
 }
 
 userptiny_error_t userptiny_decode_bits(uint16_t *out, uint8_t *buf_lim, uint16_t *bits_left, uint8_t bits) {

@@ -17,10 +17,10 @@ UNIT_TEST(decode_integer) {
 	}
 	uint16_t out;
 	while (!(err= userptiny_dec_int(&dec, &out)))
-		printf("read %d = %X\n", (unsigned)out);
-	printf("read : %s\n", userptiny_error_name(err));
+		printf("int = %X\n", (unsigned)out);
+	printf("int : %s\n", userptiny_error_name(err));
 }
 /*OUTPUT
-read 0 = 0
-read : buffer overrun
+int = 0
+int : invalid api call
 */

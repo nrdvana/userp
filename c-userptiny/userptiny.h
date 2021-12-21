@@ -3,10 +3,14 @@
 
 typedef uint8_t userptiny_error_t;
 
-#define USERPTINY_EOVERFLOW    1
-#define USERPTINY_EOVERRUN     2
-#define USERPTINY_EUNSUPPORTED 3
-#define USERPTINY_ELIMIT       4
+#define USERPTINY_EOVERFLOW     1
+#define USERPTINY_EOVERRUN      2
+#define USERPTINY_EUNSUPPORTED  3
+#define USERPTINY_ELIMIT        4
+#define USERPTINY_ETYPEREF      5
+#define USERPTINY_ESYMREF       6
+#define USERPTINY_EALLOC        7
+#define USERPTINY_EDOINGITWRONG 8
 
 const char *userptiny_error_name(userptiny_error_t code);
 
@@ -77,6 +81,9 @@ userptiny_error_t
 userptiny_scope_parse(struct userptiny_scope *scope,
                       uint8_t *data, uint16_t data_size);
 
+struct userptiny_type *
+userptiny_scope_get_type(const struct userptiny_scope *scope, uint16_t type_id);
+
 extern const struct userptiny_scope userptiny_v1_scope;
 
 struct userptiny_enc {
@@ -91,15 +98,23 @@ struct userptiny_enc {
 	uint8_t state_stack[];
 };
 
+struct userptiny_dec_state {
+	struct userptiny_type
+		*type;
+	uint16_t elem_idx;
+};
+
 struct userptiny_dec {
-	const struct userptiny_scope *scope;
+	const struct userptiny_scope
+		*scope;
 	uint8_t *input_end;
 	uint16_t bits_left;
 	uint8_t
 		state_pos,
 		state_alloc,
 		error;
-	uint8_t *state_stack;
+	struct userptiny_dec_state
+		*state_stack;
 };
 
 userptiny_error_t
