@@ -1,7 +1,7 @@
 #include "config.h"
 #include "userptiny.h"
 
-const char *userptiny_error_name(userptiny_error_t code) {
+const char *userptiny_error_text(userptiny_error_t code) {
 	switch (code) {
 	case USERPTINY_EOVERFLOW:     return "integer overflow";
 	case USERPTINY_ELIMIT:        return "size limit exceeded";

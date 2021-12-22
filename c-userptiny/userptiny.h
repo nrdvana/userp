@@ -12,7 +12,7 @@ typedef uint8_t userptiny_error_t;
 #define USERPTINY_EALLOC        7
 #define USERPTINY_EDOINGITWRONG 8
 
-const char *userptiny_error_name(userptiny_error_t code);
+const char *userptiny_error_text(userptiny_error_t code);
 
 #define USERPTINY_TYPECLASS_BUILTIN  1
 #define USERPTINY_TYPECLASS_INTEGER  2

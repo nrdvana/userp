@@ -17,7 +17,7 @@ UNIT_TEST(decode_bits) {
 		if (!err)
 			printf("read %d = %X\n", (int)decodes[i], (unsigned)out);
 		else
-			printf("read %d : %s\n", (int)decodes[i], userptiny_error_name(err));
+			printf("read %d : %s\n", (int)decodes[i], userptiny_error_text(err));
 	}
 }
 /*OUTPUT
@@ -50,7 +50,7 @@ UNIT_TEST(decode_vqty) {
 		if (!err)
 			printf("read = %X\n", (unsigned)out);
 		else
-			printf("read : %s\n", userptiny_error_name(err));
+			printf("read : %s\n", userptiny_error_text(err));
 	}
 }
 /*OUTPUT
