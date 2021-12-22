@@ -41,17 +41,23 @@ UNIT_TEST(decode_vqty) {
 		0x05, 0x80, // two bytes
 		0x0B, 0x00, 0x04, 0x00, // four bytes that fits in 16 bits
 		0xFB, 0xFF, 0x07, 0x00, // also fits
-		0x07, 0x00, 0x08, 0x00 // does not fit
+		0x03, 0x00, 0x08, 0x00 // does not fit
 	};
+	userptiny_error_t err;
 	uint16_t remaining= sizeof(bytes) * 8;
 	for (int i= 0; i < 5; i++) {
 		uint16_t out;
-		userptiny_error_t err= userptiny_decode_vqty(&out, bytes+sizeof(bytes), &remaining);
+		err= userptiny_decode_vqty(&out, bytes+sizeof(bytes), &remaining);
 		if (!err)
 			printf("read = %X\n", (unsigned)out);
 		else
 			printf("read : %s\n", userptiny_error_text(err));
 	}
+	printf("remaining = %u\n", (unsigned)remaining);
+	
+	remaining= sizeof(bytes) * 8;
+	err= userptiny_skip_vqty(5, bytes+sizeof(bytes), &remaining);
+	printf("skip: err=%s remaining=%u\n", err? userptiny_error_text(err) : "", (unsigned) remaining);
 }
 /*OUTPUT
 read = 41
@@ -59,4 +65,6 @@ read = 2001
 read = 8001
 read = FFFF
 read : integer overflow
+remaining = 32
+skip: err= remaining=0
 */
