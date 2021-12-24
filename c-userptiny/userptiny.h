@@ -123,10 +123,12 @@ userptiny_dec_init(struct userptiny_dec *dec,
                    uint8_t *state_storage, size_t state_storage_size);
 
 userptiny_error_t userptiny_dec_set_input(struct userptiny_dec *dec, uint16_t root_type, uint8_t *in, uint16_t in_len);
-userptiny_error_t userptiny_dec_int(struct userptiny_dec *dec, uint16_t *out);
+userptiny_error_t userptiny_dec_int(struct userptiny_dec *dec, int16_t *out);
 
-userptiny_error_t userptiny_decode_bits(uint16_t *out, uint8_t *buf_lim, uint16_t *bits_left, uint8_t bits);
-userptiny_error_t userptiny_decode_vqty(uint16_t *out, uint8_t *buf_lim, uint16_t *bits_left);
+userptiny_error_t userptiny_decode_bits_u16(uint16_t *out, uint8_t *buf_lim, uint16_t *bits_left, uint8_t bits);
+userptiny_error_t userptiny_decode_bits_s16( int16_t *out, uint8_t *buf_lim, uint16_t *bits_left, uint8_t bits);
+userptiny_error_t userptiny_decode_vint_u16(uint16_t *out, uint8_t *buf_lim, uint16_t *bits_left);
+userptiny_error_t userptiny_decode_vint_s16( int16_t *out, uint8_t *buf_lim, uint16_t *bits_left);
 //userptiny_error_t userptiny_decode_int(uint16_t *out, struct userptiny_scope *scope, uint16_t type, uint8_t *buf_lim, uint16_t *bits_left);
 //
 //userptiny_error_t userptiny_decode_int(uint16_t *out, struct userptiny_scope *scope, uint16_t type, uint8_t *buf_lim, uint16_t *bits_left) {
@@ -138,5 +140,13 @@ userptiny_error_t userptiny_decode_vqty(uint16_t *out, uint8_t *buf_lim, uint16_
 //		}
 //	}
 //}
+
+#if ENDIAN == LSB_FIRST && READ_UNALIGNED
+  #define userptiny_load_le16(p) ( *((uint16_t*) p) )
+#else
+static inline uint16_t userptiny_load_le16(uint8_t *p) {
+	return (((uint16_t) ((uint8_t*) p)[1]) << 8) | ((uint16_t) ((uint8_t*) p)[0]);
+}
+#endif
 
 #endif

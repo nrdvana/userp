@@ -15,9 +15,9 @@ UNIT_TEST(decode_integer) {
 		printf("userptiny_dec_set_input : %s\n", userptiny_error_text(err));
 		return;
 	}
-	uint16_t out;
+	int16_t out;
 	while (!(err= userptiny_dec_int(&dec, &out)))
-		printf("int = %X\n", (unsigned)out);
+		printf("int = %d\n", (int)out);
 	printf("int : %s\n", userptiny_error_text(err));
 }
 /*OUTPUT

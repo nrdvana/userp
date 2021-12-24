@@ -3,39 +3,57 @@
 
 UNIT_TEST(decode_bits) {
 	uint8_t bytes[]= { 0x9F, 0x01, 0x03, 0x03, 0x80, 0x1F, 0x00, 0xF8 };
-	uint16_t remaining= sizeof(bytes) * 8;
 	uint8_t decodes[]= {
-		0, 1, 0, 1, 2, // reads less than remain % 8
+		1, 1, 2,       // reads less than remain % 8
 		4,             // read == remain % 8
 		9, 8,          // read > 1 byte, then read a whole un-aligned byte
 		15,            // read byte + remainder that lands on boundary
 		4, 16, 4       // read 16 bits across 3 bytes
 	};
+	uint16_t remaining= sizeof(bytes) * 8;
 	for (int i= 0; i < sizeof(decodes); i++) {
 		uint16_t out;
-		userptiny_error_t err= userptiny_decode_bits(&out, bytes+sizeof(bytes), &remaining, decodes[i]);
+		userptiny_error_t err= userptiny_decode_bits_u16(&out, bytes+sizeof(bytes), &remaining, decodes[i]);
 		if (!err)
-			printf("read %d = %X\n", (int)decodes[i], (unsigned)out);
+			printf("u16 %d = %X\n", (int)decodes[i], (unsigned)out);
 		else
-			printf("read %d : %s\n", (int)decodes[i], userptiny_error_text(err));
+			printf("u16 %d : %s\n", (int)decodes[i], userptiny_error_text(err));
+	}
+	// Now do it again as signed integers
+	remaining= sizeof(bytes) * 8;
+	for (int i= 0; i < sizeof(decodes); i++) {
+		int16_t out;
+		userptiny_error_t err= userptiny_decode_bits_s16(&out, bytes+sizeof(bytes), &remaining, decodes[i]);
+		if (!err)
+			printf("s16 %d = %d\n", (int)decodes[i], (int)out);
+		else
+			printf("s16 %d : %s\n", (int)decodes[i], userptiny_error_text(err));
 	}
 }
 /*OUTPUT
-read 0 = 0
-read 1 = 1
-read 0 = 0
-read 1 = 1
-read 2 = 3
-read 4 = 9
-read 9 = 101
-read 8 = 81
-read 15 = 4001
-read 4 = F
-read 16 = 8001
-read 4 = F
+u16 1 = 1
+u16 1 = 1
+u16 2 = 3
+u16 4 = 9
+u16 9 = 101
+u16 8 = 81
+u16 15 = 4001
+u16 4 = F
+u16 16 = 8001
+u16 4 = F
+s16 1 = -1
+s16 1 = -1
+s16 2 = -1
+s16 4 = -7
+s16 9 = -255
+s16 8 = -127
+s16 15 = -16383
+s16 4 = -1
+s16 16 = -32767
+s16 4 = -1
 */
 
-UNIT_TEST(decode_vqty) {
+UNIT_TEST(decode_vint) {
 	uint8_t bytes[]= {
 		0x82, // one byte
 		0x05, 0x80, // two bytes
@@ -47,7 +65,7 @@ UNIT_TEST(decode_vqty) {
 	uint16_t remaining= sizeof(bytes) * 8;
 	for (int i= 0; i < 5; i++) {
 		uint16_t out;
-		err= userptiny_decode_vqty(&out, bytes+sizeof(bytes), &remaining);
+		err= userptiny_decode_vint_u16(&out, bytes+sizeof(bytes), &remaining);
 		if (!err)
 			printf("read = %X\n", (unsigned)out);
 		else
@@ -56,7 +74,7 @@ UNIT_TEST(decode_vqty) {
 	printf("remaining = %u\n", (unsigned)remaining);
 	
 	remaining= sizeof(bytes) * 8;
-	err= userptiny_skip_vqty(5, bytes+sizeof(bytes), &remaining);
+	err= userptiny_skip_vint(5, bytes+sizeof(bytes), &remaining);
 	printf("skip: err=%s remaining=%u\n", err? userptiny_error_text(err) : "", (unsigned) remaining);
 }
 /*OUTPUT
