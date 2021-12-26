@@ -98,6 +98,47 @@ struct userptiny_enc {
 	uint8_t state_stack[];
 };
 
+#define USERPTINY_NODEFLAG_INT      0x0001
+#define USERPTINY_NODEFLAG_SIGNED   0x0002
+#define USERPTINY_NODEFLAG_BIGINT   0x0004
+#define USERPTINY_NODEFLAG_SYM      0x0008
+#define USERPTINY_NODEFLAG_TYPE     0x0010
+#define USERPTINY_NODEFLAG_FLOAT    0x0020
+#define USERPTINY_NODEFLAG_RATIONAL 0x0040
+#define USERPTINY_NODEFLAG_ARRAY    0x0080
+#define USERPTINY_NODEFLAG_RECORD   0x0100
+struct userptiny_node_info {
+	union {
+		struct {
+			union {
+				uint32_t as_uint32;
+				int32_t  as_int32;
+				struct {
+					uint64_t *limbs;
+					uint16_t limb_count;
+				} as_bigint;
+			};
+			uint16_t as_symbol;
+		};
+		float    as_float;
+		double   as_double;
+		uint16_t as_typeref;
+		struct {
+			uint8_t *elems;
+			uint16_t elem_count;
+			uint16_t elem_type;
+			uint16_t elem_bitsize;
+		} as_array;
+		struct {
+			uint8_t *struct_ptr;
+			uint16_t struct_bitsize;
+			uint16_t field_count;
+		} as_record;
+	};
+	uint16_t flags;
+	uint16_t type;
+};
+
 struct userptiny_dec_state {
 	struct userptiny_type
 		*type;
@@ -105,6 +146,7 @@ struct userptiny_dec_state {
 };
 
 struct userptiny_dec {
+	struct userptiny_node_info node;
 	const struct userptiny_scope
 		*scope;
 	uint8_t *input_end;
@@ -122,8 +164,13 @@ userptiny_dec_init(struct userptiny_dec *dec,
                    const struct userptiny_scope *scope,
                    uint8_t *state_storage, size_t state_storage_size);
 
-userptiny_error_t userptiny_dec_set_input(struct userptiny_dec *dec, uint16_t root_type, uint8_t *in, uint16_t in_len);
-userptiny_error_t userptiny_dec_int(struct userptiny_dec *dec, int16_t *out);
+userptiny_error_t userptiny_dec_reset(struct userptiny_dec *dec, uint16_t root_type, uint8_t *in, uint16_t in_len);
+userptiny_error_t userptiny_dec_begin(struct userptiny_dec *dec);
+userptiny_error_t userptiny_dec_seek_elem(struct userptiny_dec *dec, uint16_t idx);
+userptiny_error_t userptiny_dec_seek_field_idx(struct userptiny_dec *dec, uint16_t idx);
+userptiny_error_t userptiny_dec_seek_field_sym(struct userptiny_dec *dec, uint16_t sym_id);
+userptiny_error_t userptiny_dec_next(struct userptiny_dec *dec);
+userptiny_error_t userptiny_dec_end(struct userptiny_dec *dec);
 
 userptiny_error_t userptiny_decode_bits_u16(uint16_t *out, uint8_t *buf_lim, uint16_t *bits_left, uint8_t bits);
 userptiny_error_t userptiny_decode_bits_s16( int16_t *out, uint8_t *buf_lim, uint16_t *bits_left, uint8_t bits);
