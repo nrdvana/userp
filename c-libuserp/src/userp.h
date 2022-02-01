@@ -288,6 +288,48 @@ bool userp_enc_string(userp_enc enc, const char* str);
 
 // -------------------------------- dec.c ------------------------------------
 
+/* Node Info lets a user inspect the aspects of a decoded value.
+ * This struct is used directly by the library, but only about half of it
+ * is made public.  It is presented to the user as a 'const' typedef.
+ */
+#define USERP_NODEFLAG_INT      0x0001
+#define USERP_NODEFLAG_UNSIGNED 0x0002
+#define USERP_NODEFLAG_BIGINT   0x0004
+#define USERP_NODEFLAG_SYM      0x0008
+#define USERP_NODEFLAG_TYPE     0x0010
+#define USERP_NODEFLAG_FLOAT    0x0020
+#define USERP_NODEFLAG_RATIONAL 0x0040
+#define USERP_NODEFLAG_ARRAY    0x0080
+#define USERP_NODEFLAG_RECORD   0x0100
+struct userp_node_info {
+	uint32_t flags;     // indicates which fields are valid.
+	userp_type
+		value_type,     // the data type of the value decoded for this node
+		node_type;      // the data type declared for the node (such as "Any")
+	size_t node_depth;  // the number of parent nodes (records or arrays)
+	int64_t intval;     // for integer types, holds the value if (flags & USERP_NODEFLAG_INT)
+	userp_bstr data;    // for various types, references span of buffer(s) containing data
+	size_t array_dim_count;      // for array types, this lists the
+	const size_t *array_dims;    //   dimensions of the array (usually just one)
+	size_t elem_count;  // For arrays or records, this is the number of elements or fields present
+};
+#ifdef USERP_PRIVATE
+struct userp_node_info_private {
+	struct userp_node_info pub;
+	size_t subtype_count;        // for Choice types containing further types, this lists the
+	const userp_type *subtypes;  //   sequence of nested sub-types encountered while decoding
+	union {
+		struct {
+			bool is_negative;
+			size_t limb_count;
+		} bigint;
+	};
+};
+typedef struct userp_node_info_private node_info;
+#endif
+typedef const struct userp_node_info userp_node_info;
+
+
 userp_dec userp_new_dec(
 	userp_env env, userp_scope scope, userp_type root_type,
 	userp_buffer buffer_ref, uint8_t *bytes, size_t n_bytes
@@ -300,18 +342,6 @@ userp_env userp_dec_env(userp_dec dec);
 userp_scope userp_dec_scope(userp_dec dec);
 void userp_dec_set_reader(userp_dec dec, userp_reader_fn, void *callback_data);
 
-struct userp_node_info {
-	userp_type node_type;
-	size_t node_depth;
-	size_t data_len;
-	const uint8_t *data_start;
-	size_t subtype_count;
-	const userp_type *subtypes;
-	size_t array_dim_count;
-	const size_t *array_dims;
-	size_t elem_count;
-};
-typedef const struct userp_node_info *userp_node_info;
 
 // Parse the current node if not parsed yet and return a struct describing it
 userp_node_info userp_dec_node_info(userp_dec dec);

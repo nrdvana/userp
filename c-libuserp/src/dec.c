@@ -6,6 +6,165 @@ typedef struct userp_dec_frame *frame;
 // static void frame_init(userp_dec dec, frame f, userp_type t);
 // static void frame_destroy(userp_dec dec, frame f);
 
+/*
+### userp_decode_vint
+
+  err= userp_decode_vint(&dest_node, src_input, is_signed);
+
+Decode a variable-length integer from the decoder input, and store it in the dest_node either as
+a plain integer, or as a BigInt (sign, number of "limbs", and userp_bstr of those limbs)
+
+Variable length integers are 1 byte followed either by 1-7 additional bytes, or an array of 8-byte
+"limbs" of a BigInt.  For signed integers, the BigInt notation has a dedicated sign bit, but the
+1-8 byte encodings use the low bit as the sign bit.
+
+#### Unsigned:
+
+    0b.......1              7-bit number
+    0b....XXX0 0x.... (...) 4 + X*8 bit number (little-endian)
+    0bSXXX0000              Sign + 3-bit limb count (8 bytes each). if X=0, read larger word
+    0bS0000000 0x....       Sign, 16-bit limb count. if X=0, read larger word
+    0bS0000000 0x0000 0x........  Sign, 32-bit limb count. If X=0, read larger word, etc
+    (Sign must equal zero, or error)
+
+#### Signed:
+
+    0b......S1              6-bit number, Sign
+    0b...SXXX0 0x.... (...) 3 + X*8 bit number, Sign
+	(bigint encodings remain the same)
+
+*/
+
+userp_error_t
+userp_decode_vint(userp_node_info_private *node, userp_dec_input *in, bool is_signed) {
+	// switch to bytes for the moment
+	size_t bytes_left= in->bits_left >> 3;
+	uint64_t val;
+	if (!bytes_left) {
+		if (!dec_input_next_buffer(in))
+			return USERP_EOVERRUN;
+		bytes_left= in->bits_left >> 3;
+	}
+	val= buf_lim[-bytes_left--];
+	if (val & 0xF) {
+		if (val & 1) {
+			node->pub.intval= val >> 1;
+		} else {
+			int n= (val & 0x0E) >> 1;
+			int shift= 0;
+			val >>= 4;
+			while (n--) {
+				if (!bytes_left) {
+					if (!dec_input_next_buffer(in))
+						return USERP_EOVERRUN;
+					bytes_left= in->bits_left >> 3;
+				}
+				val |= ((uint64_t) buf_lim[-bytes_left--]) << shift;
+				shift += 8;
+			}
+			node->pub.intval= val;
+		}
+		if (is_signed)
+			node->pub.intval= (node->pub.intval & 1)? -(node->pub.intval >> 1) : (node->pub.intval >> 1);
+		node->pub.flags= USERP_NODEFLAG_INT;
+	}
+	else {
+		int sign= val >> 7;
+		size_t limbs= (val >> 4) & 0x7;
+		for (int n= 16; !limbs && n <= sizeof(size_t)*8; n <<= 1) {
+			for (int shift= 0; shift < n: shift+= 8) {
+				if (!bytes_left) {
+					if (!dec_input_next_buffer(in))
+						return USERP_EOVERRUN;
+					bytes_left= in->bits_left >> 3;
+				}
+				limbs |= ((uint16_t) buf_lim[-bytes_left--]) << shift;
+			}
+		}
+		if (!limbs || limbs > (SIZE_MAX >> 3))
+			return USERP_EOVERFLOW;
+		size_t cur_part= in->str_part;
+		size_t byte_ofs= in->str.parts[in->str_part].len - bytes_left;
+		if (!dec_input_skip(in, limbs << 3))
+			return USERP_EOVERRUN;
+		userp_bstr_set_substr(&node->pub.data, in->str, cur_part, byte_ofs, limbs << 3);
+		node->pub.flags= USERP_NODEFLAG_BIGINT;
+	}
+	in->bits_left= bytes_left << 3;
+	return 0;
+}
+
+/*
+### userp_decode_vsize
+
+  err= userp_decode_vsize(&size, src_input);
+
+Decode a variable-length unsigned integer no larger than a size_t.  If the integer is larger, this
+returns USERP_EOVERFLOW.
+
+*/
+
+userp_error_t
+userp_decode_vsize(size_t *out, userp_dec_input *in) {
+	// Optimize the common case of sizes 12 bits or less.
+	if (in->bits_left >= 23) {
+		size_t bytes_left= in->bits_left >> 3;
+		uin8_t *p= in->buf_lim - bytes_left;
+		if (*p & 1) {
+			*out= *p >> 1;
+			in->bits_left= (bytes_left-1) << 3;
+			return true;
+		} else if ((sel & 0xF) == 1) {
+			*out= userp_load_le16(p) >> 4;
+			in->bits_left= (bytes_left-2) << 3;
+			return true;
+		}
+	}
+	node_info node;
+	userp_error_t err= userp_decode_vint(&node, in);
+	if (!err && node->pub.flags == USERP_NODEFLAG_INT && node->pub.intval <= SIZE_MAX) {
+		*out= node->pub.intval;
+		return true;
+	}
+	return false;
+}
+
+// Decode an unsigned variable-length size_t
+#define DECODE_SIZE(dest) \
+    do { \
+		if (in->bits_left >= 8 && (in->buf_lim[-(in->bits_left >> 3)] & 1)) { \
+			(dest)= in->buf_lim[-(in->bits_left >> 3)] >> 1; \
+		else { \
+			size_t tmp; \
+			if ((err= userp_decode_vsize(&tmp, in))) \
+				goto fail_decode_size; \
+			(dest)= tmp; \
+		} \
+	} while (0)
+
+// Decode an unsigned variable-length integer (must fit in size_t)
+// Then resolve relative type reference, if relative
+#define DECODE_TYPEREF(dest) \
+    do { \
+		size_t tmp; \
+		DECODE_SIZE(tmp); \
+		if (!(tmp & 1) && (tmp >> 1) <= scope->type_count) \
+			(dest)= tmp >> 1; \
+		else if (!((dest)= userp_scope_resolve_relative_typeref(scope, tmp))) \
+			goto fail_typeref; \
+	} while (0)
+
+// Decode an unsigned variable-length integer (must fit in size_t)
+// Then resolve relative symbol reference, if relative
+#define DECODE_SYMREF(dest) \
+    do { \
+		size_t tmp; \
+		DECODE_SIZE(tmp); \
+		if (!(tmp & 1) && (tmp >> 1) <= scope->symbol_count) \
+			(dest)= tmp >> 1; \
+		else if (!((dest)= userp_scope_resolve_relative_symref(scope, tmp))) \
+			goto fail_typeref; \
+	} while (0)
 
 /*APIDOC
 ## userp_dec
