@@ -288,6 +288,8 @@ bool userp_enc_string(userp_enc enc, const char* str);
 
 // -------------------------------- dec.c ------------------------------------
 
+#define USERP_DEC_BUFFER_ALIGN 6  /* 2^6 = 64-bit */
+
 /* Node Info lets a user inspect the aspects of a decoded value.
  * This struct is used directly by the library, but only about half of it
  * is made public.  It is presented to the user as a 'const' typedef.
@@ -313,22 +315,11 @@ struct userp_node_info {
 	const size_t *array_dims;    //   dimensions of the array (usually just one)
 	size_t elem_count;  // For arrays or records, this is the number of elements or fields present
 };
-#ifdef USERP_PRIVATE
-struct userp_node_info_private {
-	struct userp_node_info pub;
-	size_t subtype_count;        // for Choice types containing further types, this lists the
-	const userp_type *subtypes;  //   sequence of nested sub-types encountered while decoding
-	union {
-		struct {
-			bool is_negative;
-			size_t limb_count;
-		} bigint;
-	};
-};
-typedef struct userp_node_info_private node_info;
-#endif
+
 typedef const struct userp_node_info userp_node_info;
 
+struct userp_dec;
+typedef struct userp_dec userp_dec;
 
 userp_dec userp_new_dec(
 	userp_env env, userp_scope scope, userp_type root_type,

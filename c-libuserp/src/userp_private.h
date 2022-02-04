@@ -129,7 +129,7 @@ struct userp_env {
 		err, // Most recent error
 		msg; // Most recent non-error message
 	
-	// diagnostic ID names
+	// sequence counter for diagnostic ID names given to new objects
 	int scope_serial;
 	int buffer_serial;
 	int encoder_serial;
@@ -332,45 +332,51 @@ struct userp_enc {
 
 // ----------------------------- dec.c -------------------------------
 
-size_t userp_decode_vqty(void* out, size_t sizeof_out, struct userp_bit_io *in);
+/*
+## Userp Decoder Input
 
-size_t userp_decode_vqty_u64vec(uint64_t *out, size_t count, struct userp_bit_io *in);
+This struct tracks the current position in the sequence of buffers.
+buf_lim points to the byte beyond the end of the buffer, and bits_left is the
+number of bits remaining before that pointer.  buf_lim always ends on a byte
+boundary, and it is not possible to have a non-multiple-of-8 bits in a buffer
+segment.
 
-size_t userp_decode_vqty_u32vec(uint32_t *out, size_t count, struct userp_bit_io *in);
+str is the bstr holding the buffer parts, and str_part is the index of the
+current part within that bstr.
 
-#if SIZE_MAX == 0xFFFFFFFF
-#define userp_decode_vqty_sizevec userp_decode_vqty_u32vec
-#elif SIZE_MAX == 0xFFFFFFFFFFFFFFFF
-#define userp_decode_vqty_sizevec userp_decode_vqty_u64vec
-#else
-#error unhandled SIZE_MAX
-#endif
+*/
 
-static inline bool userp_decode_vqty_quick(size_t *out, struct userp_bit_io *in) {
-	if (in->lim - in->pos > 0 && !(*in->pos & 1)) {
-		*out= *in->pos++ >> 1;
-		return true;
-	}
-	else if (in->lim - in->pos > 1 && !(*in->pos & 2)) {
-		*out= userp_load_le16(in->pos) >> 2;
-		in->pos += 2;
-		return true;
-	}
-	else return sizeof(*out) == userp_decode_vqty(out, sizeof(*out), in);
-}
+struct userp_dec_input {
+	uint8_t *buf_lim;
+	struct userp_bstr *str;
+	size_t bits_left;
+	size_t str_part;
+};
 
-bool userp_decode_bits(void* out, size_t bits, struct userp_bit_io *in);
-
-static inline bool userp_decode_selector(uint64_t *out, size_t bits, struct userp_bit_io *in) {
-	if (in->has_selector) {
-		in->has_selector= 0;
-		*out= in->selector;
-		return true;
-	}
-	assert(bits <= 64);
-	return bits? userp_decode_bits(out, bits, in)
-		: userp_decode_vqty_quick(out, in);
-}
+/*
+struct userp_node_info {
+	uint32_t flags;     // indicates which fields are valid.
+	userp_type
+		value_type,     // the data type of the value decoded for this node
+		node_type;      // the data type declared for the node (such as "Any")
+	size_t node_depth;  // the number of parent nodes (records or arrays)
+	int64_t intval;     // for integer types, holds the value if (flags & USERP_NODEFLAG_INT)
+	userp_bstr data;    // for various types, references span of buffer(s) containing data
+	size_t array_dim_count;      // for array types, this lists the
+	const size_t *array_dims;    //   dimensions of the array (usually just one)
+	size_t elem_count;  // For arrays or records, this is the number of elements or fields present
+};*/
+struct userp_node_info_private {
+	struct userp_node_info pub;
+	size_t subtype_count;        // for Choice types containing further types, this lists the
+	const userp_type *subtypes;  //   sequence of nested sub-types encountered while decoding
+	union {
+		struct {
+			bool is_negative;
+			size_t limb_count;
+		} bigint;
+	};
+};
 
 struct userp_dec {
 	userp_env env;
@@ -394,13 +400,6 @@ struct userp_dec_frame {
 	
 	userp_type array_type, rec_type;
 };
-
-extern userp_dec userp_new_dec_silent(
-	userp_env env, userp_scope scope, userp_type root_type,
-	userp_buffer buffer_ref, uint8_t *bytes, size_t n_bytes
-);
-extern bool userp_grab_dec_silent(userp_env env, userp_dec dec);
-extern void userp_drop_dec_silent(userp_env env, userp_dec dec);
 
 static inline size_t roundup_pow2(size_t s) {
 	--s;
