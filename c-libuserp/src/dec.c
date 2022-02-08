@@ -712,13 +712,18 @@ inline static bool userp_dec_input_align(userp_dec_input *in, unsigned pow2) {
 	else {
 		size_t mask= (1<<pow2)-1;
 		size_t remainder;
-		if (pow2 <= USERP_DEC_BUFFER_ALIGN) {
+		// Alignment requests up to the alignment of the buffer itself
+		// can rely on manipulating the buffer pointers as integers.
+		// However, the time to check this probably isn't worth the savings.
+		//if (pow2 <= in->str->env->buffer_align) {
 			// can use the pointer address for the alignment
 			remainder= mask & ((((intptr_t)in->buf_lim) << 3) - in->bits_left);
-		} else {
+		//} else {
+			// else the alignment is greater than known by the pointer, and
+			// need to inspect the overall offset from the start of the block.
 			userp_bstr_part *part= in->str->parts + in->str_part;
 			remainder= ((part->ofs << 3) + (part->len << 3) - in->bits_left) & mask;
-		}
+		//}
 		return !remainder? true : userp_dec_input_skip_bits(mask + 1 - remainder);
 	}
 }
@@ -900,7 +905,7 @@ userp_decode_vsize(size_t *out, userp_dec_input *in) {
 		if (!(tmp & 1) && (tmp >> 1) <= scope->symbol_count) \
 			(dest)= tmp >> 1; \
 		else if (!((dest)= userp_scope_resolve_relative_symref(scope, tmp))) \
-			goto fail_typeref; \
+			goto fail_symref; \
 	} while (0)
 
 bool userp_decode_bits(void *out, size_t bits, struct userp_bit_io *in) {
@@ -997,21 +1002,22 @@ bool userp_dec_init_node(userp_dec dec, userp_node_info_private *node, userp_dec
 	case TYPE_CLASS_INT:
 		{
 			// First, apply alignment
-			if (type_entry->as_int->align) {
-				// Alignment requests up to the alignment of the buffer itself
-				// can rely on manipulating the buffer pointers as integers.
-				if (type_entry->as_int->align <= dec->env->buffer_align) {
-					...
-				}
-				// else the alignment is greater than known by the pointer, and
-				// need to inspect the overall offset from the start of the block.
-				else {
-					...
-				}
-			}
+			if (type_entry->as_int->align)
+				userp_dec_input_align(in, type_entry->as_int->align);
 			// Next find out if the bytes are contiguous or if they will need
 			// pulled from additional buffers
-			...
+			if (type_entry->as_int->bits <= 56 && in->bits_left >= 64) {
+				// read int64, shift (signed or unsigned), and mask
+				...
+			}
+			else if (type_entry->as_int->bits <= 64) {
+				// iterate reading bytes into int
+				...
+			}
+			else {
+				// need to allocate a BigInt to hold the bits
+				...
+			}
 			return true;
 		}
 		// variable-width integers
@@ -1028,9 +1034,15 @@ bool userp_dec_init_node(userp_dec dec, userp_node_info_private *node, userp_dec
 		}
 	}
 	
-	CATCH(fail_decode_vint) {
+	CATCH(fail_decode_size) {
+		...
 	}
-	CATCH(fail_decode_
+	CATCH(fail_decode_typeref) {
+		...
+	}
+	CATCH(fail_decode_symref) {
+		...
+	}
 }
 
 struct record_context {
