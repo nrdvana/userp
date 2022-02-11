@@ -870,6 +870,7 @@ userp_decode_vsize(size_t *out, userp_dec_input *in) {
 
 // Decode an unsigned variable-length size_t
 // This macro uses 'goto' for errors, which the caller must handle.
+// Caller must also have an 'err' variable.
 #define DECODE_SIZE(dest) \
     do { \
 		if (in->bits_left >= 8 && (in->buf_lim[-(in->bits_left >> 3)] & 1)) { \
@@ -885,6 +886,7 @@ userp_decode_vsize(size_t *out, userp_dec_input *in) {
 // Decode an unsigned variable-length integer (must fit in size_t)
 // Then resolve relative type reference, if relative
 // This macro uses 'goto' for errors, which the caller must handle.
+// Caller must also have an 'err' variable.
 #define DECODE_TYPEREF(dest) \
     do { \
 		size_t tmp; \
@@ -898,6 +900,7 @@ userp_decode_vsize(size_t *out, userp_dec_input *in) {
 // Decode an unsigned variable-length integer (must fit in size_t)
 // Then resolve relative symbol reference, if relative
 // This macro uses 'goto' for errors, which the caller must handle.
+// Caller must also have an 'err' variable.
 #define DECODE_SYMREF(dest) \
     do { \
 		size_t tmp; \
@@ -908,31 +911,84 @@ userp_decode_vsize(size_t *out, userp_dec_input *in) {
 			goto fail_symref; \
 	} while (0)
 
-bool userp_decode_bits(void *out, size_t bits, struct userp_bit_io *in) {
-	unimplemented("decode bits");
-	return false;
+// Decode the next N bits into an unsigned int64, where 0 < N <= 64
+// Returns false if and only if it would overrun the buffer.
+bool userp_decode_bits(uint64_t *out, size_t bits, struct userp_bit_io *in) {
+	uint64_t val;
+	assert(bits > 0 && bits <= 64);
+	// There might be 0-7 leftover bits from the previous byte, so reading more
+	// than 57 bits has the potential to need to touch 9 bytes.  Below that requires
+	// at most 8 bytes, and if the buffer is large enough, can be done in a single read.
+	int remainder= in->bits_left & 7;
+	if (bits <= 57 && in->bits_left >= 57) {
+		val= !remainder? userp_load_le64(in->buf_lim - (in->bits_left >> 3))
+			: userp_load_le64(in->buf_lim - (in->bits_left >> 3) - 1) >> (8 - remainder);
+		in->bits_left -= bits;
+	}
+	else {
+		// else just iteratively read bytes into the accumulator
+		int shift= 0;
+		if (remainder) {
+			val= in->buf_end[-(in->bits_left>>3) - 1] >> (8 - remainder);
+			shift= remainder;
+			in->bits_left -= remainder;
+		} else {
+			val= 0;
+		}
+		// loop starts on whole-byte boundary, and bits_left will be a multiple of 8
+		while (shift < bits) {
+			if (!in->bits_left)
+				if (!userp_dec_input_next_buffer(in))
+					return false;
+			val |= (uint64_t)in->buf_end[-in->bits_left>>3] << shift;
+			in->bits_left -= 8;
+			shift += 8;
+		}
+	}
+	if (bits < 64)
+		val= val << (64 - bits) >> (64 - bits); // clear out upper bits
+	*out= val;
+	return true;
 }
 
-static inline bool userp_decode_bits_u8(unsigned *out, struct userp_bit_io *in) {
-	if (in->accum_bits == 0) {
-		if (in->pos < in->lim) {
-			*out= *in->pos++;
-			return true;
-		}
-	} else if (in->accum_bits < 8) {
-		if (in->pos < in->lim) {
-			in->accum |= ((unsigned) *in->pos++) << in->accum_bits;
-			*out= in->accum & 0xFF;
-			in->accum >>= 8;
-			return true;
-		}
-	} else {
-		*out= in->accum & 0xFF;
-		in->accum >>= 8;
-		in->accum_bits -= 8;
-		return true;
+// Decode the next N bits as twos-complement, where 0 < N <= 64
+// Returns false if and only if it would overrun the buffer.
+bool userp_decode_bits_twos(int64_t *out, size_t bits, struct userp_bit_io *in) {
+	int64_t val;
+	assert(bits > 0 && bits <= 64);
+	// There might be 0-7 leftover bits from the previous byte, so reading more
+	// than 57 bits has the potential to need to touch 9 bytes.  Below that requires
+	// at most 8 bytes, and if the buffer is large enough, can be done in a single read.
+	int remainder= in->bits_left & 7;
+	if (bits <= 57 && in->bits_left >= 57) {
+		val= !remainder? userp_load_le64(in->buf_lim - (in->bits_left >> 3))
+			: userp_load_le64(in->buf_lim - (in->bits_left >> 3) - 1) >> (8 - remainder);
+		in->bits_left -= bits;
 	}
-	return userp_decode_bits(out, 8, in);
+	else {
+		// else just iteratively read bytes into the accumulator
+		int shift= 0;
+		if (remainder) {
+			val= in->buf_end[-(in->bits_left>>3) - 1] >> (8 - remainder);
+			shift= remainder;
+			in->bits_left -= remainder;
+		} else {
+			val= 0;
+		}
+		// loop starts on whole-byte boundary, and bits_left will be a multiple of 8
+		while (shift < bits) {
+			if (!in->bits_left)
+				if (!userp_dec_input_next_buffer(in))
+					return false;
+			val |= (uint64_t)in->buf_end[-in->bits_left>>3] << shift;
+			in->bits_left -= 8;
+			shift += 8;
+		}
+	}
+	if (bits < 64)
+		val= val << (64 - bits) >> (64 - bits); // clear out upper bits and sign extend
+	*out= val;
+	return true;
 }
 
 bool userp_dec_init_node(userp_dec dec, userp_node_info_private *node, userp_dec_input *in) {
@@ -970,11 +1026,11 @@ bool userp_dec_init_node(userp_dec dec, userp_node_info_private *node, userp_dec
 			node->pub.flags= USERP_NODE_IS_SYMBOL;
 			return true;
 		}
-	case TYPE_CLASS_BYTE:
+	case TYPE_CLASS_INT_POW2ALIGN_U8:
 		{
 			size_t bytes_left= in->bits_left >> 3;
 			if (bytes_left) {
-				node->pub.data_start= in->buf_lim - bytes_left;
+				node->pub.intval= in->buf_lim[-bytes_left];
 				in->bits_left= (bytes_left - 1) << 3;
 				node->pub.flags= USERP_NODE_IS_ALIGNED_INT;
 				return true;
@@ -982,7 +1038,7 @@ bool userp_dec_init_node(userp_dec dec, userp_node_info_private *node, userp_dec
 		}
 		// fall through to the generic fixed-width integer implementation
 		if (0) {
-	case TYPE_CLASS_INT_POW2_ALIGNED:
+	case TYPE_CLASS_INT_POW2ALIGN:
 			// The type class is not set to "INT_POW2_ALIGNED" unless the buffer alignment
 			// requirement is at least as large as this integer type.  So, can use the
 			// buffer pointer directly to determine alignment.
@@ -1001,22 +1057,27 @@ bool userp_dec_init_node(userp_dec dec, userp_node_info_private *node, userp_dec
 		// fall through to the generic fixed-width integer implementation
 	case TYPE_CLASS_INT:
 		{
-			// First, apply alignment
-			if (type_entry->as_int->align)
-				userp_dec_input_align(in, type_entry->as_int->align);
-			// Next find out if the bytes are contiguous or if they will need
-			// pulled from additional buffers
-			if (type_entry->as_int->bits <= 56 && in->bits_left >= 64) {
-				// read int64, shift (signed or unsigned), and mask
-				...
-			}
-			else if (type_entry->as_int->bits <= 64) {
-				// iterate reading bytes into int
-				...
-			}
-			else {
-				// need to allocate a BigInt to hold the bits
-				...
+			// Unsigned can read 63 bits, and signed can read 64 bits.
+			// Beyond that needs BigInts.
+			if (type_entry->as_int->twos && type_entry->as_int->bits <= 64) {
+				if (type_entry->as_int->align)
+	case TYPE_CLASS_INT_ALIGNED_TWOS_AS_INT64:
+					userp_dec_input_align(in, type_entry->as_int->align);
+	case TYPE_CLASS_INT_TWOS_AS_INT64:
+				if (!userp_decode_bits_twos(&node->pub.intval, type_entry->as_int->bits, in))
+					goto fail_overrun;
+			} else if (!type_entry->as_int->twos && type_entry->as_int->bits < 64) {
+				if (type_entry->as_int->align)
+	case TYPE_CLASS_INT_ALIGNED_BITS_AS_INT64:
+					userp_dec_input_align(in, type_entry->as_int->align);
+	case TYPE_CLASS_INT_BITS_AS_INT64:
+				uint64_t dest;
+				if (!userp_decode_bits(&dest, type_entry->as_int->bits, in))
+					goto fail_overrun;
+				node->pub.intval= dest;
+			} else {
+				// needs returned as a BigInt
+				unimplemented("Decode BigInt bits");
 			}
 			return true;
 		}
