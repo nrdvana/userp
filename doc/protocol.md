@@ -251,6 +251,57 @@ Reecords are encoded as follows:
     But, in order to reach aditional variable-length fields, it is necessary to read the fields
     that come before them.
 
+Placements:
+  Always-Static     (byte offset from start of static area)
+  Always-Sequential (in sequential order following static porition of the record)
+  Conditional-Bit   (Field will be present if bit in static area is set)
+  Conditional-Defined (Field will be present if another field is present)
+  Conditional-Undefined (Field will be present if another field is not present)
+
+
+Fields can be "Always", "Conditional", or "Extra", and have placement of "Sequential", or a
+bit offset.  
+
+Alternatives:
+  - Selector of often, list of extra, followed by static bits, followed by always, followed by all sselected often, followed by extra
+    - most compact encoding
+    - encoder must declare all in advance, or use two buffers, and must write "often" in correct order
+    - fastest decoding
+    - decoder needs to allocate storage for the list of extra
+    - decoder needs to retain all symbol table and retain all static bits understand all types
+  - Selector of often+seldom, followed by static bits, followed by always, followed by all selected (in order) followed by extra specified one at a time
+    - most compact encoding for known fields
+    - encoder must write all "often" and "seldom" in order
+    - decoder won't have complete list of fields until finishes record
+    - decoder needs to retain all symbol table and retain all static bits understand all types
+  - Static bits with Always and Conditional fields, followed by extra specified one at a time, optional lengths, with nul terminator
+    - less efficient for "often" fields that can't be converted to "conditional"
+    - non-static always/conditional fields must be written in order, all others are ad-hoc
+    - no variable length confusion at start of record
+    - decoder only needs static bits for state, constrained systems could put a cap on it,
+      process all always/conditional first, then discard and iterate ad-hoc
+    - decoder needs to understand all types and translate symbol table
+    - simpler field description
+  - "Extra" count, followed by static (which includes presence bits) followed by always, optional, and extra.
+  - "Extra" definition byte count, followed by extra IDs and types, followed by static (and presence bits) followed by all field data.
+    - Algorithm:
+      If record allows "extra", read byte count (or provided as spare from selector)
+      Decode bytes into <=N integers, each is a field Id or symbol id, and if symbol id, the next int is the type id.
+      Mark a pointer to the start of the "static" area.
+      If the user wants to decode all fields:
+        Decode all the static-placement fields, skipping the Optional ones if bit not set
+        Decode all the sequential-placement fields, skipping the Optional ones if bit not set.
+        Decode all the 'extra' fields, in order provided.
+    - Byte offset of static data means as soon as record begins, can make a pointer to both the
+      static data and the dynamic ints, to iterate them.  Entire record length could be known
+      at this point if all present fields have a fixed length.
+    - Dynamic field+type ints can be decoded in one loop, and buffer can be pre-allocated (possibly oversize)
+    - Dynamic field+type ints could be decoded on demand, too, without caching them.
+    - Presence bits must be part of static data, and not supplied by "leftover" bits, so no need to
+      do awkward things with potentially massive size of "leftovers", meaning leftover can always be
+      a constrained register (count) and not a vector.
+    - All fields have a chance of being aligned to the back of the previous field, for less wasted space.
+
 Userp Stream Protocol 1
 -----------------------
 
@@ -358,6 +409,16 @@ Type definitions are simply encoded records that describe a type.
   - pad         Seldom     Padding
   - mask        Seldom     Integer
   - shift       Seldom     Integer
+
+  - name        Always
+  - parent      Optional
+  - align       Optional   IntU
+  - bits        Optional   IntU
+  - min         Optional   Int
+  - max         Optional   Int
+  - bswap       Optional   ByteSwapType
+  - 
+
 
 ##### NamedInt
 
