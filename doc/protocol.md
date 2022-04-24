@@ -194,113 +194,36 @@ variables of any type by adding one or more `[]` suffixes.
 
 ### Record
 
-A record is a sequence of elements keyed by name.  Records can have fixed and dynamic elements,
-to accommodate both C-style structs or JSON-style objects, or even a mix of the two.
-A record is defined using a sequence of fields.  Each field has a name, type, and Placement.
-A Placement is either a numeric bit offset, `ALWAYS`, `OFTEN` or `SELDOM`.  Fields with numeric
-placement appear at that bit-offset from the start of the record.  Fields with `ALWAYS`
-placement follow the static portion of the record, end-to-end.  If there are fields with
-`OFTEN` placement, a bit field indicates the presence or absence of those fields, which are
-then encoded end-to-end following the `ALWAYS` fields.  Fields with `SELDOM` placement can then
-follow as `(field_id,encoding)` pairs.  A record type may also allow "other" fields which were
-not declared ahead of time.
+A record is a collection of fields keyed by name.  Records can have both static-positioned and
+stream-encoded elements, to accommodate both C-style structs or JSON-style objects, or even a
+mix of the two.  A record is defined by a list of fields, and count of static bytes.  Each
+field has a name and type, and optional fields to indicate whether to load it from the static
+data, and how to determine whether it is present in a record.
 
-  * fields - a list of field definitions, each composed of `(Symbol, Type, Placement)`.
-  * static_bits - optional declaration of total "static" space in record
-  * other_field_type - `Type` (default to "Any") or Null (no other fields allowed)
+  * `fields` - an array of field definitions, each composed of
+    * `name`            - name (Symbol) of field
+    * `type`            - type (TypeRef) of field data
+    * `extra`           - field will only be present if enumerated as an extra field
+    * `static_offset`   - bit (or word) offset from start of static area where field is found
+    * `static_wordsize` - power of 2 word size (in bits) which field will be read from
+    * `static_byteswap` - indicates how to swap bytes of word before reading
+    * `static_shift`    - bit shift of word before reading
+    * `static_mask`     - bit mask of word before reading
+    * `cond_offset`     - bit (or word) offset from start of static area of "field present" flag
+    * `cond_wordsize`   - power of 2 word size (in bits) of boolean flag.  Defait is 1.
+    * `cond_mask`       - bit mask of word before checking for true/false
+  * `static_bits` - optional declaration of total "static" space in record
+  * `other_field_type` - optional Type for ad-hoc 'extra' fields; Null means no ad-hoc fields.
 
 If `static_bits` is given, there will always be this many bits reserved for the static portion
 of the record even if no field occupies it.  This allows for "reserved" fields without needing
-to give them a name or spend time decoding them.  Encoders must fill all unused bits with
-zeroes.
+to give them a name or spend time decoding them.
 
-If the record definition specifies a non-null `other_field_type`, the sequence of encoded
-`SELDOM` fields may contain references to any symbol in the symbol table.  These symbols must
-be distinct from the symbols of any other field in that encoded record.
-
-The record is encoded as minimally as possible, using the information provided in the field
-definitions.  If all fields have placement in the static portion, the record has a fixed length
-and the static portion will be the only thing written.  The record has a known fixed length
-in this case.  If the record consists only of static and `ALWAYS` fields, then the static
-portion will be written followed end-to-end by the encodings of the `ALWAYS` fields (in
-field-declaration order).  The record wil be fixed length if all the `ALWAYS` fields are also
-fixed-length.  If the record contains any `OFTEN`, `SELDOM`, or "other" fields, then there is
-an additional flag to indicate which `OFTEN` fields are present, and how many `SELDOM` or
-"other" fields are present.  This flag contains one bit for each `SELDOM` field indicating
-presence or absence; all present fields will be encoded end-to-end according to their declared
-type.  The remaining bits of the flag are then used as a count for the number of dynamic fields
-to read.  Each field is encoded as a reference to the field list or symbol table, and then a
-type encoded either according to the type of the field or the `other_field_type`.
-
-Reecords are encoded as follows:
-  * If there are any dynamic fields (Often or Seldom placement or `other_field_type`) the
-    record begins with a selector to indicate which Often fields and how many Seldom fields.
-    (selectors can be inherited from a Choice, else they will be decoded as the first N bits
-    or vqty)
-  * The selector has one bit per Often field taken from the low bits of the selector in the
-    order the fields were declared.
-  * The remainder of the selector indicates how many seldom fields are present.
-  * The selector is a finite number of bits, unless `other_field_type` is given, then it is
-    un-bounded.
-  * For each of N Seldom fields, the selector is followed by an encoded Choice of any Seldom
-    field or (if `other_field_type`) any symbol in the symbol table.
-  * If the record contains any `static_bits` (directly specified, or implied by fields with
-    static placement) the `align`ment is applied, followed by that many static bits.
-  * Beyond here, all fields, field order, and types are known.  The location of any field
-    in the static area is known, and fixed-length optional fields can also be determined.
-    But, in order to reach aditional variable-length fields, it is necessary to read the fields
-    that come before them.
-
-Placements:
-  Always-Static     (byte offset from start of static area)
-  Always-Sequential (in sequential order following static porition of the record)
-  Conditional-Bit   (Field will be present if bit in static area is set)
-  Conditional-Defined (Field will be present if another field is present)
-  Conditional-Undefined (Field will be present if another field is not present)
-
-
-Fields can be "Always", "Conditional", or "Extra", and have placement of "Sequential", or a
-bit offset.  
-
-Alternatives:
-  - Selector of often, list of extra, followed by static bits, followed by always, followed by all sselected often, followed by extra
-    - most compact encoding
-    - encoder must declare all in advance, or use two buffers, and must write "often" in correct order
-    - fastest decoding
-    - decoder needs to allocate storage for the list of extra
-    - decoder needs to retain all symbol table and retain all static bits understand all types
-  - Selector of often+seldom, followed by static bits, followed by always, followed by all selected (in order) followed by extra specified one at a time
-    - most compact encoding for known fields
-    - encoder must write all "often" and "seldom" in order
-    - decoder won't have complete list of fields until finishes record
-    - decoder needs to retain all symbol table and retain all static bits understand all types
-  - Static bits with Always and Conditional fields, followed by extra specified one at a time, optional lengths, with nul terminator
-    - less efficient for "often" fields that can't be converted to "conditional"
-    - non-static always/conditional fields must be written in order, all others are ad-hoc
-    - no variable length confusion at start of record
-    - decoder only needs static bits for state, constrained systems could put a cap on it,
-      process all always/conditional first, then discard and iterate ad-hoc
-    - decoder needs to understand all types and translate symbol table
-    - simpler field description
-  - "Extra" count, followed by static (which includes presence bits) followed by always, optional, and extra.
-  - "Extra" definition byte count, followed by extra IDs and types, followed by static (and presence bits) followed by all field data.
-    - Algorithm:
-      If record allows "extra", read byte count (or provided as spare from selector)
-      Decode bytes into <=N integers, each is a field Id or symbol id, and if symbol id, the next int is the type id.
-      Mark a pointer to the start of the "static" area.
-      If the user wants to decode all fields:
-        Decode all the static-placement fields, skipping the Optional ones if bit not set
-        Decode all the sequential-placement fields, skipping the Optional ones if bit not set.
-        Decode all the 'extra' fields, in order provided.
-    - Byte offset of static data means as soon as record begins, can make a pointer to both the
-      static data and the dynamic ints, to iterate them.  Entire record length could be known
-      at this point if all present fields have a fixed length.
-    - Dynamic field+type ints can be decoded in one loop, and buffer can be pre-allocated (possibly oversize)
-    - Dynamic field+type ints could be decoded on demand, too, without caching them.
-    - Presence bits must be part of static data, and not supplied by "leftover" bits, so no need to
-      do awkward things with potentially massive size of "leftovers", meaning leftover can always be
-      a constrained register (count) and not a vector.
-    - All fields have a chance of being aligned to the back of the previous field, for less wasted space.
+Records are encoded as a number of bytes of 'extra' field specification. (omitted if there are
+no 'extra' fields or ad-hoc fields)  The bytes are decoded into an array of field or symbol
+references (and types, for symbol references).  This is followed by the static portion of the
+record (to the alignment of the record type), followed by any non-static 'field', followed
+by the 'extra fields', if any.
 
 Userp Stream Protocol 1
 -----------------------
