@@ -222,7 +222,7 @@ to give them a name or spend time decoding them.
 Records are encoded as a number of bytes of 'extra' field specification. (omitted if there are
 no 'extra' fields or ad-hoc fields)  The bytes are decoded into an array of field or symbol
 references (and types, for symbol references).  This is followed by the static portion of the
-record (to the alignment of the record type), followed by any non-static 'field', followed
+record (to the alignment of the record type), followed by any 'non-static' field, followed
 by the 'extra fields', if any.
 
 Userp Stream Protocol 1

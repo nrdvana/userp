@@ -115,3 +115,78 @@ struct userp_bstr* userp_enc_finish(userp_enc enc) {
 	}
 	return &enc->output;
 }
+
+/* userp_enc_rec_begin
+ *
+ * Configure the encoder to begin writing fields of a record.
+ */
+bool userp_enc_rec_begin(userp_enc enc, userp_type type) {
+	// If the record does not allow 'extra' or 'ad-hoc' fields, then just allocate
+	// at least the static length (aligned) on the end of the curent buffer (or make a new buffer).
+	...
+	// Else there might be dynamic elements.  Create a new buffer to hold the static area and
+	// encoded fields.  Don't finish the previous buffer until the record is finalized.
+	...
+	// Seek to the first field of the record.
+	...
+}
+
+bool userp_enc_rec_declare_fields(userp_enc enc, size_t fields[], size_t field_count) {
+	// Iterate fields building list of 'extra' and 'ad-hoc'.
+	...
+	// If fields are not in order, warn user
+	...
+	// Write out the list of 'extra' and 'ad-hoc' in same order provided
+	// Allocate the static storage region.
+	// Set the fields list, to be iterated as fields are written.  Mark it as final.
+}
+
+bool userp_enc_rec_seek_field(userp_enc enc, size_t field_id) {
+	// If this field has static placement,
+	//  If this field has a mask or shift or byteswap, start a new temporary buffer
+	...
+	//  Else use the static region as-is (making sure it is allocated)
+	// Else, if the field is dynamically placed and the previous field has not been
+	// written, start a new temporary buffer.
+}
+
+/* userp_enc_rec_add_field
+ *
+ * Add an 'ad-hoc' field to the record.
+ */
+bool userp_enc_rec_add_field(userp_enc enc, userp_symbol sym, userp_type type) {
+	// Check if the symbol already exists as a field.
+	...
+	// Does the type match extra_field_type?
+	...
+	// If not all the normal fields have been written, start a new buffer
+	...
+	// Allocate space on the list of extra/adhoc fields, and add this one (but don't mark
+	// as officially added until _commit_field)
+	...
+}
+
+/* userp_enc_rec_commit_field
+ *
+ * Perform any post-write operations needed to encode this field.
+ * This includes things like shift/mask for static placement fields, or recording
+ * the field in the 'extra' set.
+ */
+bool userp_enc_rec_commit_field(userp_enc enc) {
+	...
+}
+
+/* userp_enc_rec_end
+ *
+ * Finish writing the record into the buffer, and clean up data structures.
+ */
+bool userp_enc_rec_end(userp_enc enc) {
+	// If not "run with scissors"
+		// For each conditionally-present field, check that its condition matches the
+		// presence of the field.  If the condition is false and field was written, set it
+		// to true by setting the lowest bit in the mask of the condition.
+	// else
+		// for each present field with a conditional, set the bit for it
+	// append all the buffers into the output
+}
+

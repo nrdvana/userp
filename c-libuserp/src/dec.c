@@ -1113,8 +1113,53 @@ struct record_context {
 	size_t field_detail_alloc;
 };
 
+/* userp_dec_rec_begin
+ *
+ * Read the intro bytes of the record, and allocate the list of 'extra' fields.
+ */
+static bool userp_dec_rec_begin(
+	userp_dec dec,
+	struct record_context *ctx,
+	userp_type rectype
+) {
+	// Can't continue until all extra_bytes are available
+	// If extra_bytes == -1, need to read the count of bytes first
+	...
+	// Assume each byte could become a field ID.  Decode all the vints in the buffer.
+	alloca(...);
+	// Numbers less than the extra field count reference a field, and numbers greater
+	// represent an ad-hoc field, which is a pair of a symbol ID and a type ID.
+	...
+	// Allocate and store the field list, while verifying the fields.  (maybe checking for dups)
+	...
+	// finish initializing the record_context
+}
+
+/* userp_dec_rec_seek_field
+ *
+ * Locate the beginning of the field, and (only if those bytes are available to be read) set the
+ * decoder state to begin decoding that field.
+ */
+static bool userp_dec_rec_seek_field(
+	userp_dec dec,
+	size_t field_idx
+) {
+	// Fail unless field_idx is in bounds
+	...
+	// Does this field have a presence conditional?
+		// read the conditional, if not already loaded
+		// fail unless present
+	// Does the first byte of the field exist in the buffer yet?
+		// If the field is not static placement, seek across the previous fields to locate
+		// the first byte
+		...
+	// finish initializing the decoder to read the field 
+}
+
+
+
 /*
-On a constrained memory system, the decoder doesn' want to have to track too many details.
+On a constrained memory system, the decoder doesn't want to have to track too many details.
 For a record, ideally this could be as small as a pointer to the type and idx of the current field
 and the total count of possible fields.  It would iterate through the "always" fields like normal,
 
